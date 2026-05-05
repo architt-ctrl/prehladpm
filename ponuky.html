@@ -98,6 +98,13 @@
     .alert-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
 
     .link-code{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 9px;font-size:11px;font-family:monospace;word-break:break-all;color:var(--text2)}
+    .suggest-box{position:absolute;z-index:200;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:7px;box-shadow:0 4px 16px rgba(0,0,0,.1);margin-top:2px;max-height:220px;overflow-y:auto}
+    .suggest-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px}
+    .suggest-item:last-child{border-bottom:none}
+    .suggest-item:hover{background:var(--bg3)}
+    .prehled-proj-hdr{padding:10px 14px;font-size:13px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+    .prehled-row{display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--border);gap:10px}
+    .prehled-row:last-child{border-bottom:none}
     .hidden{display:none!important}
     .mt10{margin-top:10px}
     .mt16{margin-top:16px}
@@ -135,6 +142,7 @@
   <div class="main">
     <div class="tabs">
       <div class="tab on" id="tabD" onclick="switchTab('d')">Dopyty</div>
+      <div class="tab" id="tabR" onclick="switchTab('r')">Prehľad CP</div>
       <div class="tab" id="tabP" onclick="switchTab('p')">Profesisti</div>
     </div>
 
@@ -143,6 +151,10 @@
         <button class="btn btn-p btn-sm" onclick="openReqModal()">+ Nový dopyt</button>
       </div>
       <div class="card" id="reqList"><div class="empty">Načítavam...</div></div>
+    </div>
+
+    <div id="secR" class="hidden">
+      <div class="card" id="prehladList"><div class="empty">Načítavam...</div></div>
     </div>
 
     <div id="secP" class="hidden">
@@ -158,6 +170,11 @@
 <div class="overlay hidden" id="modalReq">
 <div class="modal">
   <h3 id="mReqTitle">Nový dopyt</h3>
+  <div class="frow" style="position:relative">
+    <label>Projekt</label>
+    <input class="finput" id="mRSearch" placeholder="Hľadaj podľa názvu alebo čísla..." autocomplete="off" oninput="searchProjects(this.value)">
+    <div id="mRSuggest"></div>
+  </div>
   <div class="frow-2">
     <div class="frow"><label>Číslo projektu</label><input class="finput" id="mRCislo" placeholder="24-021"></div>
     <div class="frow"><label>Názov projektu</label><input class="finput" id="mRNazov" placeholder="BD Nitra"></div>
@@ -238,7 +255,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
-let requests = [], specialists = [], invitations = [], quotes = [], contacts = [];
+let requests = [], specialists = [], invitations = [], quotes = [], contacts = [], caflouProjects = [];
 let editReqId = null, editSpecId = null, inviteReqId = null;
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -285,12 +302,103 @@ async function loadKontakty() {
   } catch(e) {}
 }
 
+// ── PREHĽAD CP ────────────────────────────────────────────────────────────────
+function renderPrehled() {
+  const el = document.getElementById('prehladList');
+  if (!requests.length) { el.innerHTML = '<div class="empty">Žiadne dopyty.</div>'; return; }
+
+  const byProj = {};
+  requests.forEach(r => {
+    const key = r.project_cislo + '||' + r.project_name;
+    if (!byProj[key]) byProj[key] = { cislo: r.project_cislo, name: r.project_name, reqs: [] };
+    byProj[key].reqs.push(r);
+  });
+
+  el.innerHTML = Object.values(byProj).map(proj => {
+    let projTotal = 0;
+    const rows = proj.reqs.map(r => {
+      const invs = invitations.filter(i => i.request_id === r.id);
+      const winner = invs.find(i => i.status === 'selected');
+      const q = winner ? quotes.find(q => q.invitation_id === winner.id) : null;
+      const sp = winner ? specialists.find(s => s.id === winner.specialist_id) : null;
+      let total = 0;
+      if (q?.prices) Object.values(q.prices).forEach(v => { if (v != null) total += Number(v); });
+      projTotal += total;
+      const nSub = invs.filter(i => ['submitted','selected','rejected'].includes(i.status)).length;
+      const statusTxt = winner
+        ? (sp?.name || '?')
+        : invs.length
+          ? `${nSub}/${invs.length} ponúk`
+          : '<span style="color:var(--text3)">—</span>';
+      return `<div class="prehled-row">
+        <span style="flex:1;font-size:13px;font-weight:500">${r.profession}</span>
+        <span style="font-size:12px;color:var(--text2);flex:1">${statusTxt}</span>
+        <span style="font-size:13px;font-weight:${total ? '600' : '400'};color:${total ? 'var(--text)' : 'var(--text3)'};min-width:90px;text-align:right">${total ? total.toLocaleString('sk-SK') + ' €' : '—'}</span>
+      </div>`;
+    }).join('');
+
+    return `<div>
+      <div class="prehled-proj-hdr">
+        <span>${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
+        <span style="color:var(--green);font-weight:700">${projTotal ? projTotal.toLocaleString('sk-SK') + ' €' : ''}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join('');
+}
+
+// ── CAFLOU AUTOCOMPLETE ───────────────────────────────────────────────────────
+async function loadCaflouProjects() {
+  if (!cfg.caflou_key || !cfg.caflou_id || caflouProjects.length) return;
+  try {
+    let all = [], page = 1;
+    while (true) {
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/projects?per=100&page=${page}`, {
+        headers: { 'Authorization': `Bearer ${cfg.caflou_key}` }
+      });
+      const d = await r.json();
+      const items = Array.isArray(d) ? d : (d.data || []);
+      all = all.concat(items);
+      if (items.length < 100) break;
+      page++;
+    }
+    caflouProjects = all;
+  } catch(e) {}
+}
+
+function searchProjects(q) {
+  const box = document.getElementById('mRSuggest');
+  if (!q.trim() || !caflouProjects.length) { box.innerHTML = ''; return; }
+  const ql = q.toLowerCase();
+  const matches = caflouProjects.filter(p =>
+    (p.name || '').toLowerCase().includes(ql) || (p.number || '').toLowerCase().includes(ql)
+  ).slice(0, 8);
+  if (!matches.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="suggest-box">' +
+    matches.map(p => `<div class="suggest-item" onclick="selectProject('${(p.number||'').replace(/'/g,"\\'")}','${(p.name||'').replace(/'/g,"\\'")}')">
+      <span style="color:var(--text3);margin-right:8px">${p.number || ''}</span>${p.name || ''}
+    </div>`).join('') + '</div>';
+}
+
+function selectProject(cislo, name) {
+  document.getElementById('mRCislo').value = cislo;
+  document.getElementById('mRNazov').value = name;
+  document.getElementById('mRSearch').value = (cislo ? cislo + ' – ' : '') + name;
+  document.getElementById('mRSuggest').innerHTML = '';
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#mRSuggest') && !e.target.closest('#mRSearch'))
+    document.getElementById('mRSuggest').innerHTML = '';
+});
+
 // ── TABS ──────────────────────────────────────────────────────────────────────
 function switchTab(t) {
-  document.getElementById('secD').classList.toggle('hidden', t !== 'd');
-  document.getElementById('secP').classList.toggle('hidden', t !== 'p');
-  document.getElementById('tabD').classList.toggle('on', t === 'd');
-  document.getElementById('tabP').classList.toggle('on', t === 'p');
+  ['D','R','P'].forEach(x => {
+    document.getElementById('sec' + x).classList.toggle('hidden', t.toUpperCase() !== x);
+    document.getElementById('tab' + x).classList.toggle('on', t.toUpperCase() === x);
+  });
+  if (t === 'r') renderPrehled();
 }
 
 // ── DOPYTY ────────────────────────────────────────────────────────────────────
@@ -399,6 +507,8 @@ function openReqModal(id) {
   document.getElementById('mReqTitle').textContent = r ? 'Upraviť dopyt' : 'Nový dopyt';
   document.getElementById('mRCislo').value    = r?.project_cislo  || '';
   document.getElementById('mRNazov').value    = r?.project_name   || '';
+  document.getElementById('mRSearch').value   = r ? ((r.project_cislo ? r.project_cislo + ' – ' : '') + r.project_name) : '';
+  document.getElementById('mRSuggest').innerHTML = '';
   document.getElementById('mRProf').value     = r?.profession     || '';
   document.getElementById('mRCurPhase').value = r?.current_phase  || '';
   document.getElementById('mRFolder').value   = r?.folder_url     || '';
@@ -407,6 +517,7 @@ function openReqModal(id) {
   document.querySelectorAll('#phaseChks input').forEach(cb => { cb.checked = phases.includes(cb.value); });
   document.getElementById('mRMsg').innerHTML = '';
   document.getElementById('modalReq').classList.remove('hidden');
+  loadCaflouProjects();
 }
 
 async function saveReq() {
