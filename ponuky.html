@@ -237,7 +237,8 @@ const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
-let requests = [], specialists = [], invitations = [], quotes = [];
+const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
+let requests = [], specialists = [], invitations = [], quotes = [], contacts = [];
 let editReqId = null, editSpecId = null, inviteReqId = null;
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -272,6 +273,16 @@ async function loadAll() {
   requests = r.data || []; specialists = s.data || [];
   invitations = i.data || []; quotes = q.data || [];
   renderRequests(); renderSpecialists();
+  loadKontakty();
+}
+
+async function loadKontakty() {
+  if (!cfg.url) return;
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'getKontakty' }) });
+    const d = await r.json();
+    if (d.ok) { contacts = d.contacts || []; renderSpecialists(); }
+  } catch(e) {}
 }
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
@@ -427,26 +438,88 @@ function openInviteModal(e, reqId) {
   inviteReqId = reqId;
   const r = requests.find(r => r.id === reqId);
   document.getElementById('mInvDesc').textContent = `${r?.project_cislo ? r.project_cislo + ' – ' : ''}${r?.project_name} · ${r?.profession}`;
-  const existing = invitations.filter(i => i.request_id === reqId).map(i => i.specialist_id);
-  document.getElementById('mInvList').innerHTML = specialists.length
-    ? specialists.map(s => {
-        const done = existing.includes(s.id);
-        return `<label style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);cursor:${done ? 'default' : 'pointer'}">
-          <input type="checkbox" value="${s.id}" ${done ? 'disabled checked' : ''}>
-          <span style="flex:1"><strong>${s.name}</strong>${s.company ? ' · ' + s.company : ''} <span style="color:var(--text3);font-size:12px">${s.profession || ''}</span></span>
-          ${done ? '<span class="badge b-sent">Pozvaný</span>' : ''}
-        </label>`;
-      }).join('')
-    : '<p style="font-size:13px;color:var(--text2)">Pridajte najprv profesistov v záložke Profesisti.</p>';
+
+  if (contacts.length) {
+    const allLabels = [...new Set(contacts.flatMap(c => c.labels || []))].sort((a,b) => a.localeCompare(b,'sk'));
+    const prof = r?.profession?.toLowerCase() || '';
+    const match = allLabels.find(l => l.toLowerCase().includes(prof) || prof.includes(l.toLowerCase())) || '';
+    const opts  = allLabels.map(l => `<option value="${l}" ${l === match ? 'selected' : ''}>${l}</option>`).join('');
+    document.getElementById('mInvList').innerHTML = `
+      <div class="frow" style="margin-bottom:10px">
+        <label>Filtr podľa profesie</label>
+        <select class="finput" id="invProfFilter" onchange="renderInviteList('${reqId}')">
+          <option value="">Všetci</option>${opts}
+        </select>
+      </div>
+      <div id="invContactList"></div>`;
+    renderInviteList(reqId);
+  } else {
+    const existing = invitations.filter(i => i.request_id === reqId).map(i => i.specialist_id);
+    document.getElementById('mInvList').innerHTML = specialists.length
+      ? specialists.map(s => {
+          const done = existing.includes(s.id);
+          return `<label style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);cursor:${done ? 'default' : 'pointer'}">
+            <input type="checkbox" value="${s.id}" ${done ? 'disabled checked' : ''}>
+            <span style="flex:1"><strong>${s.name}</strong>${s.company ? ' · ' + s.company : ''} <span style="color:var(--text3);font-size:12px">${s.profession || ''}</span></span>
+            ${done ? '<span class="badge b-sent">Pozvaný</span>' : ''}
+          </label>`;
+        }).join('')
+      : '<p style="font-size:13px;color:var(--text2)">Pridajte najprv profesistov v záložke Profesisti.</p>';
+  }
+
   document.getElementById('mInvMsg').innerHTML = '';
   document.getElementById('modalInvite').classList.remove('hidden');
 }
 
+function renderInviteList(reqId) {
+  const filterVal = document.getElementById('invProfFilter')?.value || '';
+  const existing  = invitations.filter(i => i.request_id === reqId).map(i => {
+    const sp = specialists.find(s => s.id === i.specialist_id);
+    return sp?.email;
+  }).filter(Boolean);
+
+  const filtered = filterVal ? contacts.filter(c => (c.labels || []).includes(filterVal)) : contacts;
+  const el = document.getElementById('invContactList');
+  if (!filtered.length) {
+    el.innerHTML = '<p style="font-size:13px;color:var(--text2);padding-top:8px">Žiadni profesisti pre túto profesiu.</p>';
+    return;
+  }
+  el.innerHTML = filtered.map(c => {
+    const done = existing.includes(c.email);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);cursor:${done ? 'default' : 'pointer'}">
+      <input type="checkbox" data-email="${c.email}" ${done ? 'disabled checked' : ''}>
+      <span style="flex:1"><strong>${c.name}</strong>${c.company ? ' · ' + c.company : ''} <span style="color:var(--text3);font-size:12px">${(c.labels || []).join(', ')}</span></span>
+      ${done ? '<span class="badge b-sent">Pozvaný</span>' : ''}
+    </label>`;
+  }).join('');
+}
+
 async function doInvite() {
-  const sel = [...document.querySelectorAll('#mInvList input:checked:not(:disabled)')];
-  if (!sel.length) { document.getElementById('mInvMsg').innerHTML = '<div class="alert alert-err">Vyberte aspoň jedného.</div>'; return; }
-  const { error } = await sb.from('invitations').insert(sel.map(cb => ({ request_id: inviteReqId, specialist_id: cb.value })));
-  if (error) { document.getElementById('mInvMsg').innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
+  const msgEl = document.getElementById('mInvMsg');
+
+  if (contacts.length) {
+    const sel = [...document.querySelectorAll('#invContactList input[data-email]:checked:not(:disabled)')];
+    if (!sel.length) { msgEl.innerHTML = '<div class="alert alert-err">Vyberte aspoň jedného.</div>'; return; }
+
+    const toUpsert = sel.map(cb => {
+      const c = contacts.find(x => x.email === cb.dataset.email);
+      return { email: c.email, name: c.name, company: c.company || '', profession: (c.labels || []).join(', '), phone: c.phone || '' };
+    });
+    const { data: upserted, error: upsErr } = await sb.from('specialists')
+      .upsert(toUpsert, { onConflict: 'email' }).select('id, email');
+    if (upsErr) { msgEl.innerHTML = `<div class="alert alert-err">${upsErr.message}</div>`; return; }
+
+    const { error } = await sb.from('invitations').insert(
+      upserted.map(u => ({ request_id: inviteReqId, specialist_id: u.id }))
+    );
+    if (error) { msgEl.innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
+  } else {
+    const sel = [...document.querySelectorAll('#mInvList input:checked:not(:disabled)')];
+    if (!sel.length) { msgEl.innerHTML = '<div class="alert alert-err">Vyberte aspoň jedného.</div>'; return; }
+    const { error } = await sb.from('invitations').insert(sel.map(cb => ({ request_id: inviteReqId, specialist_id: cb.value })));
+    if (error) { msgEl.innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
+  }
+
   closeModal('modalInvite');
   await loadAll();
   document.getElementById('rd-' + inviteReqId)?.classList.add('on');
@@ -455,6 +528,34 @@ async function doInvite() {
 // ── PROFESISTI ────────────────────────────────────────────────────────────────
 function renderSpecialists() {
   const el = document.getElementById('specList');
+
+  if (contacts.length) {
+    const byLabel = {};
+    contacts.forEach(c => {
+      const lbls = c.labels && c.labels.length ? c.labels : ['—'];
+      lbls.forEach(l => {
+        if (!byLabel[l]) byLabel[l] = [];
+        if (!byLabel[l].find(x => x.email === c.email)) byLabel[l].push(c);
+      });
+    });
+    el.innerHTML = Object.entries(byLabel).sort((a,b) => a[0].localeCompare(b[0],'sk')).map(([label, ctcs]) =>
+      `<div style="padding:8px 14px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);background:var(--bg3);border-bottom:1px solid var(--border)">${label}</div>` +
+      ctcs.map(c => {
+        const sp = specialists.find(s => s.email === c.email);
+        return `<div class="row-item" style="cursor:default">
+          <div style="flex:1;line-height:1.5">
+            <strong>${c.name}</strong>${c.company ? ` <span style="color:var(--text2)">· ${c.company}</span>` : ''}
+            <br><span style="font-size:12px;color:var(--text2)">${c.email}${c.phone ? ' · ' + c.phone : ''}</span>
+          </div>
+          ${sp
+            ? `<button class="btn btn-g btn-sm" onclick="openSpecModal('${sp.id}')">Upraviť</button>`
+            : `<button class="btn btn-g btn-sm" onclick="addKontakt('${c.email.replace(/'/g,"\\'")}')">Pridať</button>`}
+        </div>`;
+      }).join('')
+    ).join('');
+    return;
+  }
+
   if (!specialists.length) { el.innerHTML = '<div class="empty">Žiadni profesisti. Pridajte prvého.</div>'; return; }
   el.innerHTML = specialists.map(s => `
     <div class="row-item" style="cursor:default">
@@ -465,6 +566,21 @@ function renderSpecialists() {
       </div>
       <button class="btn btn-g btn-sm" onclick="openSpecModal('${s.id}')">Upraviť</button>
     </div>`).join('');
+}
+
+function addKontakt(email) {
+  const c = contacts.find(x => x.email === email);
+  if (!c) return;
+  editSpecId = null;
+  document.getElementById('mSpecTitle').textContent = 'Pridať profesista';
+  document.getElementById('mSName').value    = c.name;
+  document.getElementById('mSCompany').value = c.company || '';
+  document.getElementById('mSEmail').value   = c.email;
+  document.getElementById('mSProf').value    = (c.labels || []).join(', ');
+  document.getElementById('mSPhone').value   = c.phone || '';
+  document.getElementById('mSNotes').value   = '';
+  document.getElementById('mSMsg').innerHTML = '';
+  document.getElementById('modalSpec').classList.remove('hidden');
 }
 
 function openSpecModal(id) {
@@ -482,10 +598,8 @@ function openSpecModal(id) {
 }
 
 async function saveSpec() {
-  console.log('saveSpec called');
   const name  = document.getElementById('mSName').value.trim();
   const email = document.getElementById('mSEmail').value.trim();
-  console.log('name:', name, 'email:', email);
   if (!name || !email) { document.getElementById('mSMsg').innerHTML = '<div class="alert alert-err">Meno a e-mail sú povinné.</div>'; return; }
   const data = { name, email,
     company:    document.getElementById('mSCompany').value.trim(),
