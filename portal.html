@@ -145,9 +145,12 @@ function renderStatus(status, req, spec) {
     </div>`;
 }
 
+let _submitCtx = null;
+
 function renderForm(inv, req, spec, existingQuote) {
   const phases = Array.isArray(req.phases) ? req.phases : [];
   const hasQuote = !!existingQuote;
+  _submitCtx = { invId: inv.id, phases, curPhase: req.current_phase || '' };
 
   const priceRows = phases.map(ph => {
     const safeId = 'p_' + ph.replace(/[^a-z0-9]/gi, '_');
@@ -201,14 +204,14 @@ function renderForm(inv, req, spec, existingQuote) {
         <textarea class="finput" id="notes" placeholder="Podmienky, výhrady, otázky, referencie...">${existingQuote?.notes || ''}</textarea>
       </div>
 
-      <button class="submit-btn" id="submitBtn"
-        onclick="submitQuote('${inv.id}',${JSON.stringify(phases)},'${req.current_phase || ''}')">
+      <button class="submit-btn" id="submitBtn" onclick="submitQuote()">
         ${hasQuote ? 'Aktualizovať ponuku' : 'Odoslať ponuku'}
       </button>
     </div>`;
 }
 
-async function submitQuote(invId, phases, curPhase) {
+async function submitQuote() {
+  const { invId, phases, curPhase } = _submitCtx;
   const btn   = document.getElementById('submitBtn');
   const msgEl = document.getElementById('formMsg');
   btn.disabled = true; btn.textContent = 'Odosielam...';

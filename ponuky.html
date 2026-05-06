@@ -109,9 +109,13 @@
     .mt10{margin-top:10px}
     .mt16{margin-top:16px}
     .empty{padding:24px 16px;color:var(--text2);font-size:13px;text-align:center}
+    .toast{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:14px;font-weight:500;z-index:9999;white-space:nowrap}
+    .toast-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .toast-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
   </style>
 </head>
 <body>
+<div class="toast" id="toast"></div>
 
 <nav class="module-nav">
   <a href="index.html" class="mnav-a">Projekty</a>
@@ -261,6 +265,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
 let requests = [], specialists = [], invitations = [], quotes = [], contacts = [], caflouProjects = [];
 let editReqId = null, editSpecId = null, inviteReqId = null;
+let _loading = false;
 
 // ── AUTH ──────────────────────────────────────────────────────────────────────
 sb.auth.onAuthStateChange(async (event, session) => {
@@ -268,7 +273,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
     document.getElementById('loginWrap').classList.add('hidden');
     document.getElementById('adminWrap').classList.remove('hidden');
     document.getElementById('navEmail').textContent = session.user.email;
-    await loadAll();
+    if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') await loadAll();
   } else {
     document.getElementById('loginWrap').classList.remove('hidden');
     document.getElementById('adminWrap').classList.add('hidden');
@@ -285,16 +290,22 @@ async function sendMagicLink() {
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
 async function loadAll() {
-  const [r, s, i, q] = await Promise.all([
-    sb.from('requests').select('*').order('created_at', { ascending: false }),
-    sb.from('specialists').select('*').order('name'),
-    sb.from('invitations').select('*'),
-    sb.from('quotes').select('*'),
-  ]);
-  requests = r.data || []; specialists = s.data || [];
-  invitations = i.data || []; quotes = q.data || [];
-  renderRequests(); renderSpecialists();
-  loadKontakty();
+  if (_loading) return;
+  _loading = true;
+  try {
+    const [r, s, i, q] = await Promise.all([
+      sb.from('requests').select('*').order('created_at', { ascending: false }),
+      sb.from('specialists').select('*').order('name'),
+      sb.from('invitations').select('*'),
+      sb.from('quotes').select('*'),
+    ]);
+    requests = r.data || []; specialists = s.data || [];
+    invitations = i.data || []; quotes = q.data || [];
+    renderRequests(); renderSpecialists();
+    loadKontakty();
+  } finally {
+    _loading = false;
+  }
 }
 
 async function loadKontakty() {
@@ -537,6 +548,8 @@ async function saveReq() {
     document.getElementById('mRMsg').innerHTML = '<div class="alert alert-err">Vyplňte názov, profesiu a aspoň jednu fázu.</div>';
     return;
   }
+  const btn = document.querySelector('#modalReq .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Ukladám...'; }
   const data = {
     project_cislo:  document.getElementById('mRCislo').value.trim(),
     project_name:   nazov, profession: prof, phases,
@@ -549,8 +562,11 @@ async function saveReq() {
   const { error } = editReqId
     ? await sb.from('requests').update(data).eq('id', editReqId)
     : await sb.from('requests').insert(data);
+  if (btn) { btn.disabled = false; btn.textContent = 'Uložiť'; }
   if (error) { document.getElementById('mRMsg').innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
   closeModal('modalReq');
+  showToast(editReqId ? 'Dopyt upravený' : 'Dopyt vytvorený', 'ok');
+  _loading = false;
   await loadAll();
 }
 
@@ -729,11 +745,16 @@ async function saveSpec() {
     phone:      document.getElementById('mSPhone').value.trim(),
     notes:      document.getElementById('mSNotes').value.trim(),
   };
+  const btn = document.querySelector('#modalSpec .btn-primary');
+  if (btn) { btn.disabled = true; btn.textContent = 'Ukladám...'; }
   const { error } = editSpecId
     ? await sb.from('specialists').update(data).eq('id', editSpecId)
     : await sb.from('specialists').insert(data);
+  if (btn) { btn.disabled = false; btn.textContent = 'Uložiť'; }
   if (error) { document.getElementById('mSMsg').innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
   closeModal('modalSpec');
+  showToast(editSpecId ? 'Profesista upravený' : 'Profesista pridaný', 'ok');
+  _loading = false;
   await loadAll();
 }
 
@@ -742,6 +763,15 @@ function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 document.querySelectorAll('.overlay').forEach(el =>
   el.addEventListener('click', e => { if (e.target === el) el.classList.add('hidden'); })
 );
+
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'toast toast-' + (type || 'ok');
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 3000);
+}
 </script>
 </body>
 </html>
