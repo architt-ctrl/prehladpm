@@ -273,7 +273,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
     document.getElementById('loginWrap').classList.add('hidden');
     document.getElementById('adminWrap').classList.remove('hidden');
     document.getElementById('navEmail').textContent = session.user.email;
-    if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') await loadAll();
+    await loadAll();
   } else {
     document.getElementById('loginWrap').classList.remove('hidden');
     document.getElementById('adminWrap').classList.add('hidden');
@@ -293,16 +293,22 @@ async function loadAll() {
   if (_loading) return;
   _loading = true;
   try {
-    const [r, s, i, q] = await Promise.all([
-      sb.from('requests').select('*').order('created_at', { ascending: false }),
-      sb.from('specialists').select('*').order('name'),
-      sb.from('invitations').select('*'),
-      sb.from('quotes').select('*'),
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000));
+    const [r, s, i, q] = await Promise.race([
+      Promise.all([
+        sb.from('requests').select('*').order('created_at', { ascending: false }),
+        sb.from('specialists').select('*').order('name'),
+        sb.from('invitations').select('*'),
+        sb.from('quotes').select('*'),
+      ]),
+      timeout,
     ]);
     requests = r.data || []; specialists = s.data || [];
     invitations = i.data || []; quotes = q.data || [];
     renderRequests(); renderSpecialists();
     loadKontakty();
+  } catch(e) {
+    document.getElementById('reqList').innerHTML = `<div class="empty">Chyba načítania: ${e.message}. Obnovte stránku.</div>`;
   } finally {
     _loading = false;
   }
