@@ -1323,8 +1323,10 @@ async function syncData() {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
     });
     localStorage.setItem('pmStav', JSON.stringify(stavMap));
+    const toPush = projects.filter(p => !p.aktivita && stavMap[p.cislo] && p.caflou_id);
+    toPush.forEach(p => caflouPatch(p.caflou_id, { custom_column_aktivita: stavMap[p.cislo] }));
     renderAll();
-    showToast(projects.length + ' projektov', 'ok');
+    showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     if (!projects.length) loadDemo();
