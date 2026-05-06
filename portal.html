@@ -112,8 +112,8 @@ async function init() {
     await sb.from('invitations').update({ status: 'viewed' }).eq('id', inv.id);
   }
 
-  if (inv.status === 'selected') { renderStatus('selected', req, spec); return; }
-  if (inv.status === 'rejected') { renderStatus('rejected', req, spec); return; }
+  if (inv.status === 'selected') { renderStatus('selected', req, spec, quote); return; }
+  if (inv.status === 'rejected') { renderStatus('rejected', req, spec, quote); return; }
 
   renderForm(inv, req, spec, quote);
 }
@@ -129,9 +129,26 @@ function renderError(msg) {
     </div>`;
 }
 
-function renderStatus(status, req, spec) {
+function renderStatus(status, req, spec, quote) {
   const sel = status === 'selected';
   const proj = `${req.project_cislo ? req.project_cislo + ' ' : ''}${req.project_name}`;
+  const phases = Array.isArray(req.phases) ? req.phases : [];
+
+  const priceRows = quote && phases.length ? phases.map(ph => {
+    const v = quote.prices?.[ph];
+    return `<tr>
+      <td class="phase-name">${ph}</td>
+      <td style="text-align:right;font-weight:500">${v != null ? Number(v).toLocaleString('sk-SK') + ' € bez DPH' : '—'}</td>
+    </tr>`;
+  }).join('') : '';
+
+  const quoteBlock = quote ? `
+    <div class="divider"></div>
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Vaša odoslaná ponuka</h3>
+    ${priceRows ? `<table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
+    ${quote.deadline ? `<p style="font-size:13px;color:var(--text2);margin-top:10px">Termín: <strong>${new Date(quote.deadline).toLocaleDateString('sk-SK')}</strong></p>` : ''}
+    ${quote.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:6px">Poznámka: ${quote.notes}</p>` : ''}` : '';
+
   document.getElementById('app').innerHTML = `
     <div class="card">
       <div class="status-wrap">
@@ -142,6 +159,7 @@ function renderStatus(status, req, spec) {
           : `Pre projekt <strong>${proj}</strong> bol vybraný iný dodávateľ. Ďakujeme za Vašu ponuku a budeme radi ak sa ozvete pri ďalšom projekte.`
         }</p>
       </div>
+      ${quoteBlock}
     </div>`;
 }
 
