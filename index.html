@@ -1347,6 +1347,7 @@ function parseCaflouProject(p) {
     deadline,
     dniDead:        deadline ? Math.floor((deadline - t) / 86400000) : null,
     opisAkcie:      p.description || '',
+    aktivita:       p.custom_column_aktivita || '',
   };
 }
 
@@ -1538,6 +1539,7 @@ function renderProjects() {
     return;
   }
   list = projects.filter(p => {
+    if (p.caflou_type === 'Interná réžia') return false;
     if (p.faza !== activeFaza) return false;
     return (stavMap[p.cislo] || 'pripravovany') === activeStav;
   });
@@ -1581,7 +1583,7 @@ function projRowHtml(p) {
         <div class="prow-name">${p.nazov}</div>
         ${p.podpodfaza ? `<div class="prow-podfaza">${p.podfaza} › ${p.podpodfaza}</div>`
           : p.podfaza  ? `<div class="prow-podfaza">${p.podfaza}</div>` : ''}
-        ${gem ? `<div class="prow-gemini">${gem}</div>` : ''}
+        ${p.aktivita ? `<div class="prow-gemini" style="color:var(--blue)">${p.aktivita}</div>` : gem ? `<div class="prow-gemini">${gem}</div>` : ''}
       </div>
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
@@ -1623,6 +1625,12 @@ function buildDetailHtml(p) {
       <option value="aktivny"${(stavMap[p.cislo]||'')==='aktivny'?' selected':''}>Aktívny</option>
       <option value="pozastaveny"${(stavMap[p.cislo]||'')==='pozastaveny'?' selected':''}>Pozastavený</option>
     </select>`:''}
+  </div>
+  <div class="pd-section">
+    <div class="pd-label">Aktivita</div>
+    <input class="dennik-input" style="width:100%;box-sizing:border-box" id="akt-${p.cislo}"
+      value="${(p.aktivita||'').replace(/"/g,'&quot;')}" placeholder="Čo sa práve deje…"
+      onchange="saveProjAktivita('${p.cislo}',${p.caflou_id||'null'},this.value)">
   </div>
   <div class="pd-section">
     <div class="pd-label">Denník projektu</div>
@@ -1704,6 +1712,20 @@ function saveProjStav(cislo, val) {
   stavMap[cislo] = val;
   localStorage.setItem('pmStav', JSON.stringify(stavMap));
   renderProjects();
+}
+
+async function saveProjAktivita(cislo, caflou_id, val) {
+  const p = projects.find(x => x.cislo === cislo); if (!p) return;
+  p.aktivita = val;
+  const el = document.getElementById('akt-' + cislo);
+  if (el) el.style.borderColor = 'var(--orange)';
+  try {
+    if (caflou_id) await caflouPatch(caflou_id, { custom_column_aktivita: val });
+    if (el) el.style.borderColor = '';
+    showToast('Aktivita uložená ✓', 'ok');
+  } catch(e) {
+    if (el) el.style.borderColor = 'var(--red)';
+  }
 }
 
 // ── TASKS HTML ────────────────────────────────────────────────────────────

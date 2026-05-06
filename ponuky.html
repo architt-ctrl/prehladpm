@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="sk">
 <head>
   <meta charset="UTF-8">
@@ -202,6 +202,10 @@
       <option value="Studia">Štúdia</option>
       <option value="Inziniering">Inžiniering</option>
     </select>
+  </div>
+  <div class="frow-2">
+    <div class="frow"><label>Kedy dodáme podklady</label><input class="finput" type="date" id="mRPodkladyDatum"></div>
+    <div class="frow"><label>Kedy chceme výsledok</label><input class="finput" type="date" id="mRHotovoDatum"></div>
   </div>
   <div class="frow"><label>Link na podklady (Google Drive)</label><input class="finput" type="url" id="mRFolder" placeholder="https://drive.google.com/..."></div>
   <div class="frow"><label>Poznámka / špecifikácia</label><textarea class="finput" id="mRNotes" rows="3" placeholder="Opis predmetu, osobitné požiadavky..."></textarea></div>
@@ -455,7 +459,10 @@ function buildReqDetail(r) {
   }
 
   const phBadges = phases.map(p => `<span class="badge b-sent" style="margin-right:3px">${p}</span>`).join('');
-  const info = `<div style="margin-bottom:10px;font-size:13px">${phBadges}${r.current_phase ? ` <span style="color:var(--text2);margin-left:4px">Aktuálna:</span> <strong>${r.current_phase}</strong>` : ''}${r.folder_url ? ` &nbsp;<a href="${r.folder_url}" target="_blank" style="color:var(--blue)">Podklady ↗</a>` : ''}</div>`;
+  const fmtD = d => d ? new Date(d).toLocaleDateString('sk-SK') : null;
+  const dateInfo = [r.podklady_datum ? 'Podklady: <strong>' + fmtD(r.podklady_datum) + '</strong>' : null, r.hotovo_datum ? 'Výsledok: <strong>' + fmtD(r.hotovo_datum) + '</strong>' : null].filter(Boolean).join(' · ');
+  const info = `<div style="margin-bottom:6px;font-size:13px">${phBadges}${r.current_phase ? ` <span style="color:var(--text2);margin-left:4px">Aktuálna:</span> <strong>${r.current_phase}</strong>` : ''}${r.folder_url ? ` &nbsp;<a href="${r.folder_url}" target="_blank" style="color:var(--blue)">Podklady ↗</a>` : ''}</div>`;
+  const dateInfoHtml = dateInfo ? ('<div style="font-size:13px;color:var(--text2);margin-bottom:10px">' + dateInfo + '</div>') : '';
   const note = r.notes ? `<p style="font-size:13px;color:var(--text2);margin-bottom:12px">${r.notes}</p>` : '';
   const btns = `<div class="btn-row mt10">
     <button class="btn btn-p btn-sm" onclick="openInviteModal(event,'${r.id}')">+ Pozvať profesistov</button>
@@ -474,7 +481,7 @@ function buildReqDetail(r) {
       </div>`;
     }).join('') + '</div>' : '';
 
-  return info + note + tbl + btns + links;
+  return info + dateInfoHtml + note + tbl + btns + links;
 }
 
 function toggleReq(id) { document.getElementById('rd-' + id)?.classList.toggle('on'); }
@@ -510,9 +517,11 @@ function openReqModal(id) {
   document.getElementById('mRSearch').value   = r ? ((r.project_cislo ? r.project_cislo + ' – ' : '') + r.project_name) : '';
   document.getElementById('mRSuggest').innerHTML = '';
   document.getElementById('mRProf').value     = r?.profession     || '';
-  document.getElementById('mRCurPhase').value = r?.current_phase  || '';
-  document.getElementById('mRFolder').value   = r?.folder_url     || '';
-  document.getElementById('mRNotes').value    = r?.notes          || '';
+  document.getElementById('mRCurPhase').value      = r?.current_phase   || '';
+  document.getElementById('mRPodkladyDatum').value = r?.podklady_datum  || '';
+  document.getElementById('mRHotovoDatum').value   = r?.hotovo_datum    || '';
+  document.getElementById('mRFolder').value        = r?.folder_url      || '';
+  document.getElementById('mRNotes').value         = r?.notes           || '';
   const phases = Array.isArray(r?.phases) ? r.phases : [];
   document.querySelectorAll('#phaseChks input').forEach(cb => { cb.checked = phases.includes(cb.value); });
   document.getElementById('mRMsg').innerHTML = '';
@@ -529,11 +538,13 @@ async function saveReq() {
     return;
   }
   const data = {
-    project_cislo: document.getElementById('mRCislo').value.trim(),
-    project_name:  nazov, profession: prof, phases,
-    current_phase: document.getElementById('mRCurPhase').value,
-    folder_url:    document.getElementById('mRFolder').value.trim(),
-    notes:         document.getElementById('mRNotes').value.trim(),
+    project_cislo:  document.getElementById('mRCislo').value.trim(),
+    project_name:   nazov, profession: prof, phases,
+    current_phase:  document.getElementById('mRCurPhase').value,
+    podklady_datum: document.getElementById('mRPodkladyDatum').value || null,
+    hotovo_datum:   document.getElementById('mRHotovoDatum').value   || null,
+    folder_url:     document.getElementById('mRFolder').value.trim(),
+    notes:          document.getElementById('mRNotes').value.trim(),
   };
   const { error } = editReqId
     ? await sb.from('requests').update(data).eq('id', editReqId)
