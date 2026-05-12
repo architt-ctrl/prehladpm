@@ -154,7 +154,6 @@ function renderStatus(status, req, spec, quote) {
     <div class="divider"></div>
     <h3 style="font-size:14px;font-weight:600;margin-bottom:12px">Vaša odoslaná ponuka</h3>
     ${priceRows ? `<table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
-    ${quote.deadline ? `<p style="font-size:13px;color:var(--text2);margin-top:10px">Termín: <strong>${new Date(quote.deadline).toLocaleDateString('sk-SK')}</strong></p>` : ''}
     ${quote.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:6px">Poznámka: ${quote.notes}</p>` : ''}` : '';
 
   document.getElementById('app').innerHTML = `
@@ -193,12 +192,6 @@ function renderForm(inv, req, spec, existingQuote) {
     </tr>`;
   }).join('');
 
-  const deadlineRow = req.current_phase ? `
-    <div class="frow">
-      <label>Termín pre fázu <strong>${req.current_phase}</strong></label>
-      <input class="finput" type="date" id="deadline" value="${existingQuote?.deadline || ''}">
-      <p class="hint">Predpokladaný dátum odovzdania podkladov</p>
-    </div>` : '';
 
   document.getElementById('app').innerHTML = `
     <div class="card">
@@ -227,8 +220,6 @@ function renderForm(inv, req, spec, existingQuote) {
       </table>
       <p class="hint" style="margin-bottom:16px">Ak fázu neponúkate, nechajte pole prázdne.</p>
 
-      ${deadlineRow}
-
       <div class="frow">
         <label>Poznámka (voliteľné)</label>
         <textarea class="finput" id="notes" placeholder="Podmienky, výhrady, otázky, referencie...">${existingQuote?.notes || ''}</textarea>
@@ -253,12 +244,11 @@ async function submitQuote() {
     prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
   });
 
-  const deadline = curPhase ? (document.getElementById('deadline')?.value || null) : null;
-  const notes    = document.getElementById('notes')?.value.trim() || '';
+  const notes = document.getElementById('notes')?.value.trim() || '';
 
   const { data: existing } = await sb.from('quotes').select('id').eq('invitation_id', invId).single();
 
-  const payload = { prices, deadline, notes, submitted_at: new Date().toISOString() };
+  const payload = { prices, notes, submitted_at: new Date().toISOString() };
   const { error } = existing
     ? await sb.from('quotes').update(payload).eq('invitation_id', invId)
     : await sb.from('quotes').insert({ ...payload, invitation_id: invId });
