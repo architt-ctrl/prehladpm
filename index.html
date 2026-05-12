@@ -1719,12 +1719,14 @@ function buildDetailHtml(p) {
     <div id="pd-ulohy-form-${p.cislo}" style="display:none;margin-top:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;gap:6px;display:none;flex-direction:column">
       <input id="uf-name-${p.cislo}" class="dennik-input" placeholder="Názov úlohy" style="font-size:13px">
       <div style="display:flex;gap:6px">
-        <select id="uf-user-${p.cislo}" class="pd-sel" style="flex:1;font-size:12px">
+        <select id="uf-user-${p.cislo}" class="pd-sel" style="flex:1;font-size:12px" onchange="toggleExtProf('${p.cislo}')">
           <option value="">— kto —</option>
           ${Object.entries(CAFLOU_USERS).map(([id,n])=>`<option value="${id}">${n}</option>`).join('')}
+          <option value="ext">— externý profesista —</option>
         </select>
         <input id="uf-date-${p.cislo}" type="date" class="pd-sel" style="font-size:12px">
       </div>
+      <input id="uf-prof-${p.cislo}" class="dennik-input" placeholder="Profesia (napr. Statik, Elektro...)" style="font-size:13px;display:none">
       <div style="display:flex;gap:6px">
         <button onclick="createCaflouTask('${p.cislo}')" style="flex:1;background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer">Pridať</button>
         <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer">Zrušiť</button>
@@ -2078,16 +2080,24 @@ async function finishCaflouTask(cislo, task_id) {
   } catch(e) {}
 }
 
+function toggleExtProf(cislo) {
+  const uid = document.getElementById('uf-user-' + cislo)?.value;
+  const profEl = document.getElementById('uf-prof-' + cislo);
+  if (profEl) profEl.style.display = uid === 'ext' ? '' : 'none';
+}
+
 async function createCaflouTask(cislo) {
   const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
   const name  = document.getElementById('uf-name-' + cislo)?.value.trim();
   const uid   = document.getElementById('uf-user-' + cislo)?.value;
   const date  = document.getElementById('uf-date-' + cislo)?.value;
+  const prof  = document.getElementById('uf-prof-' + cislo)?.value.trim();
   if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
+  const isExt = uid === 'ext';
   const body = { task: {
     name, project_id: p.caflou_id,
     task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
-    ...(uid  ? { target_user_id: parseInt(uid) } : {}),
+    ...(!isExt && uid ? { target_user_id: parseInt(uid) } : {}),
     ...(date ? { end_time: date + 'T17:00:00+02:00' } : {}),
   }};
   try {
@@ -2099,11 +2109,33 @@ async function createCaflouTask(cislo) {
     if (!r.ok) throw new Error(await r.text());
     document.getElementById('uf-name-' + cislo).value = '';
     document.getElementById('uf-date-' + cislo).value = '';
+    document.getElementById('uf-user-' + cislo).value = '';
+    const profEl = document.getElementById('uf-prof-' + cislo);
+    if (profEl) { profEl.value = ''; profEl.style.display = 'none'; }
     document.getElementById('pd-ulohy-form-' + cislo).style.display = 'none';
     delete caflouTasksCache[cislo];
     await loadCaflouTasks(cislo, p.caflou_id);
-    showToast('Úloha pridaná ✓', 'ok');
+    if (isExt) {
+      await createDopytFromTask(p, name, prof);
+    } else {
+      showToast('Úloha pridaná ✓', 'ok');
+    }
   } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
+async function createDopytFromTask(p, taskName, profession) {
+  try {
+    const { error } = await sb.from('requests').insert({
+      project_cislo: p.cislo,
+      project_name:  p.nazov,
+      profession:    profession || '',
+      phases:        [],
+      notes:         taskName,
+      status:        'active',
+    });
+    if (error) throw new Error(error.message);
+    showToast('Úloha + dopyt vytvorené ✓ — otvorte Ponuky', 'ok');
+  } catch(e) { showToast('Úloha pridaná, dopyt sa nepodarilo: ' + e.message, 'err'); }
 }
 
 function toggleProjDetail(cislo, e) {
