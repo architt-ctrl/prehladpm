@@ -1234,6 +1234,32 @@ let neprit    = JSON.parse(localStorage.getItem('pmNeprit') || '{}');
 let cfg       = JSON.parse(localStorage.getItem('pmCfg3')   || '{}');
 let maily     = [];
 let stavFilter = 'all';
+let caflouTasksCache = {}; // {cislo: tasks[]} — in-memory, cleared on sync
+
+const CAFLOU_TASK_STATUS_IDS = {
+  'Nové':                 1377380,
+  'Pracujeme na tom':     1377381,
+  'Hotové':               1377382,
+  'Čaká sa na klienta':  1383319,
+  'Akceptované':          1394221,
+  'Čaká sa na podklady': 1394501,
+  'Kontrola':             1394502,
+};
+const CAFLOU_TASK_STATUS_ORDER = ['Nové','Pracujeme na tom','Čaká sa na klienta','Čaká sa na podklady','Kontrola','Akceptované','Hotové'];
+const CAFLOU_TASK_STATUS_COLOR = {
+  'Nové':                 'var(--text3)',
+  'Pracujeme na tom':     'var(--blue)',
+  'Čaká sa na klienta':  'var(--orange)',
+  'Čaká sa na podklady': 'var(--orange)',
+  'Kontrola':             '#7c3aed',
+  'Akceptované':          '#0891b2',
+  'Hotové':               'var(--green)',
+};
+const CAFLOU_USERS = {
+  49418:'Alexandra', 49419:'Tomáš', 50217:'Lenka', 50218:'Miroslava',
+  50219:'Jozef', 50357:'Ivan', 51092:'Soňa', 52049:'Andrea',
+  52890:'Erik', 57218:'Veronika', 63559:'Lucia',
+};
 let activeStat = null;
 let stavMap   = JSON.parse(localStorage.getItem('pmStav')   || '{}');  // {cislo: 'pripravovany'|'aktivny'|'pozastaveny'}
 let dennikMap = JSON.parse(localStorage.getItem('pmDennik') || '{}');  // {cislo: [{datum, text}]}
@@ -1334,6 +1360,7 @@ async function syncData() {
     projects = all
       .filter(p => !p.trash && !p.template)
       .map(parseCaflouProject);
+    caflouTasksCache = {};
     projects.forEach(p => {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
     });
@@ -1687,8 +1714,22 @@ function buildDetailHtml(p) {
   </div>
   <div class="pd-section">
     <div class="pd-label">Úlohy</div>
-    <div id="pd-ulohy-${p.cislo}">${buildUlohyHtml(p)}</div>
-    <button onclick="openUlohaForm('${p.cislo}')"
+    <div id="pd-ulohy-${p.cislo}"><div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div></div>
+    <div id="pd-ulohy-form-${p.cislo}" style="display:none;margin-top:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;gap:6px;display:none;flex-direction:column">
+      <input id="uf-name-${p.cislo}" class="dennik-input" placeholder="Názov úlohy" style="font-size:13px">
+      <div style="display:flex;gap:6px">
+        <select id="uf-user-${p.cislo}" class="pd-sel" style="flex:1;font-size:12px">
+          <option value="">— kto —</option>
+          ${Object.entries(CAFLOU_USERS).map(([id,n])=>`<option value="${id}">${n}</option>`).join('')}
+        </select>
+        <input id="uf-date-${p.cislo}" type="date" class="pd-sel" style="font-size:12px">
+      </div>
+      <div style="display:flex;gap:6px">
+        <button onclick="createCaflouTask('${p.cislo}')" style="flex:1;background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer">Pridať</button>
+        <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer">Zrušiť</button>
+      </div>
+    </div>
+    <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='flex';document.getElementById('uf-name-${p.cislo}').focus()"
       style="margin-top:6px;background:var(--text);color:#fff;border:none;
       border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">+ Úloha</button>
   </div>`;
@@ -1940,14 +1981,113 @@ function cycleUlohaStav(cislo, id, e) {
 function refreshUlohy(cislo) {
   const el = document.getElementById('pd-ulohy-' + cislo);
   if (!el) return;
-  const p = projects.find(x => x.cislo === cislo);
-  if (p) el.innerHTML = buildUlohyHtml(p);
+  el.innerHTML = buildCaflouTasksHtml(cislo);
+}
+
+async function loadCaflouTasks(cislo, caflou_id) {
+  const el = document.getElementById('pd-ulohy-' + cislo);
+  if (!el) return;
+  try {
+    let all = [], page = 1, tp = 1;
+    while (page <= tp) {
+      const r = await fetch(
+        `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${caflou_id}&per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+      );
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      all = all.concat(d.results || []);
+      tp = d.total_pages || 1;
+      page++;
+    }
+    caflouTasksCache[cislo] = all;
+    el.innerHTML = buildCaflouTasksHtml(cislo);
+  } catch(e) {
+    el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
+  }
+}
+
+function buildCaflouTasksHtml(cislo) {
+  const tasks = caflouTasksCache[cislo];
+  if (!tasks) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div>';
+  if (!tasks.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy</div>';
+  return tasks.map(t => {
+    const col = CAFLOU_TASK_STATUS_COLOR[t.task_status_name] || 'var(--text3)';
+    const assignee = t.target_user_id ? (CAFLOU_USERS[t.target_user_id] || '') : '';
+    let deadStr = '';
+    if (t.end_time && !t.finished) {
+      const dt = new Date(t.end_time); const now = new Date(); now.setHours(0,0,0,0);
+      const days = Math.floor((dt - now) / 86400000);
+      const dc = days < 0 ? 'var(--red)' : days <= 3 ? 'var(--orange)' : 'var(--text3)';
+      deadStr = `<span style="font-size:10px;color:${dc};flex-shrink:0">${dt.getDate()}.${dt.getMonth()+1}.</span>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">
+      <span onclick="event.stopPropagation();cycleCaflouTaskStatus('${cislo}',${t.id})"
+        style="flex-shrink:0;padding:2px 6px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;
+        background:${col}22;color:${col};border:1px solid ${col}44;white-space:nowrap">${t.task_status_name}</span>
+      <span style="flex:1;${t.finished ? 'opacity:.45;text-decoration:line-through' : ''}">${t.name}</span>
+      ${assignee ? `<span style="font-size:10px;color:var(--text3);flex-shrink:0">${assignee}</span>` : ''}
+      ${deadStr}
+    </div>`;
+  }).join('');
+}
+
+async function cycleCaflouTaskStatus(cislo, task_id) {
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const t = tasks.find(x => x.id === task_id); if (!t) return;
+  const idx = CAFLOU_TASK_STATUS_ORDER.indexOf(t.task_status_name);
+  const next = CAFLOU_TASK_STATUS_ORDER[(idx + 1) % CAFLOU_TASK_STATUS_ORDER.length];
+  t.task_status_name = next;
+  t.task_status_id = CAFLOU_TASK_STATUS_IDS[next];
+  t.finished = (next === 'Hotové');
+  refreshUlohy(cislo);
+  try {
+    await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: { task_status_id: t.task_status_id } })
+    });
+  } catch(e) {}
+}
+
+async function createCaflouTask(cislo) {
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  const name  = document.getElementById('uf-name-' + cislo)?.value.trim();
+  const uid   = document.getElementById('uf-user-' + cislo)?.value;
+  const date  = document.getElementById('uf-date-' + cislo)?.value;
+  if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
+  const body = { task: {
+    name, project_id: p.caflou_id,
+    task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
+    ...(uid  ? { target_user_id: parseInt(uid) } : {}),
+    ...(date ? { end_time: date + 'T17:00:00+02:00' } : {}),
+  }};
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error(await r.text());
+    document.getElementById('uf-name-' + cislo).value = '';
+    document.getElementById('uf-date-' + cislo).value = '';
+    document.getElementById('pd-ulohy-form-' + cislo).style.display = 'none';
+    delete caflouTasksCache[cislo];
+    await loadCaflouTasks(cislo, p.caflou_id);
+    showToast('Úloha pridaná ✓', 'ok');
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
 }
 
 function toggleProjDetail(cislo, e) {
   if (e) e.stopPropagation();
   const el = document.getElementById('detail-' + cislo);
-  if (el) el.classList.toggle('open');
+  if (!el) return;
+  const wasOpen = el.classList.contains('open');
+  el.classList.toggle('open');
+  if (!wasOpen && !caflouTasksCache[cislo]) {
+    const p = projects.find(x => x.cislo === cislo);
+    if (p?.caflou_id) loadCaflouTasks(cislo, p.caflou_id);
+  }
 }
 
 function openUlohaForm(cislo) {
