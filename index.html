@@ -2052,7 +2052,6 @@ async function cycleCaflouTaskStatus(cislo, task_id) {
   const next = CAFLOU_TASK_STATUS_ORDER[(idx + 1) % CAFLOU_TASK_STATUS_ORDER.length];
   t.task_status_name = next;
   t.task_status_id = CAFLOU_TASK_STATUS_IDS[next];
-  t.finished = (next === 'Hotové');
   refreshUlohy(cislo);
   try {
     await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
