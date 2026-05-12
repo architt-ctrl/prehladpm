@@ -26,7 +26,7 @@ All mutable state is in module-level `let` variables:
 |---|---|---|
 | `projects` | — | Array loaded from Caflou API |
 | `stavMap` | `pmStav` | `{cislo: 'pripravovany'\|'aktivny'\|'pozastaveny'}` |
-| `dennikMap` | `pmDennik` | `{cislo: [{datum, text}]}` — also written to Caflou comments |
+| `dennikMap` | `pmDennik` | `{cislo: [{datum, text}]}` — primary storage is Supabase `dennik` table; also written to Caflou comments as backup |
 | `geminiMap` | `pmGemini` | `{cislo: 'AI summary text'}` |
 | `ulohy` | `pmUlohy` | `{cislo: [{id,profesia,stav,...}]}` |
 | `cfg` | `pmCfg3` | `{caflou_key, caflou_id, url (Gemini Apps Script)}` |
@@ -38,8 +38,20 @@ All mutable state is in module-level `let` variables:
 - `syncData()` fetches all projects from `https://app.caflou.com/api/v1/{caflou_id}/projects` (paginated, per=100). Caflou supports CORS (`*`) so calls are made directly from the browser.
 - `parseCaflouProject(p)` maps each Caflou project using `CAFLOU_STATUS_MAP` (status→fáza/podfáza) and `CAFLOU_TYPE_PODFAZA` (type overrides podfáza).
 - `saveProjCaflouStatus()` PATCHes `project_status_id` back to Caflou when fáza changes in the dashboard.
-- `caflouAddComment()` writes denník entries to Caflou as project comments (`POST /comments`).
+- `caflouAddComment()` writes denník entries to Caflou as project comments (`POST /comments`) as backup.
 - Credentials stored in `caflou.env` (gitignored) and in localStorage. If no credentials, `loadDemo()` loads hardcoded sample data.
+
+### Data flow – Supabase (denník)
+
+Same Supabase project as `ponuky.html` (`cfjkomqxzqflotrqxfyl.supabase.co`, anon key in `index.html`).
+
+- `dennik` table: `(id uuid, cislo text, datum text, text text, created_at timestamptz)`
+- RLS enabled with open policy (`using (true) with check (true)`)
+- `syncData()` fetches all denník rows ordered by `created_at desc` → builds `dennikMap`
+- `pridajDennik()` inserts new row to Supabase + updates localStorage + writes to Caflou
+- Display: `buildDennikListHtml(cislo)` shows 3 newest entries; older ones hidden behind "Zobraziť staršie" toggle
+- **Caflou comments API** cannot be used for reading history — filters are ignored server-side, returns 20 items/page across 1000+ pages of bot activity. Supabase is the only reliable cross-device store.
+- One-time history recovery: `recover-dennik.ps1` (in repo) scans all Caflou comment pages and imports `kind=human, commented_type=Project` entries to Supabase.
 
 ### Caflou status → fáza mapping (`CAFLOU_STATUS_MAP`)
 
