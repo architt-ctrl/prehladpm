@@ -1335,6 +1335,20 @@ async function syncData() {
     try {
       const { data: rows } = await sb.from('dennik').select('*').order('created_at', { ascending: false });
       if (rows) {
+        // Jednorazová migrácia: ak Supabase je prázdny a localStorage má dáta, nahraj ich
+        if (rows.length === 0) {
+          const local = JSON.parse(localStorage.getItem('pmDennik') || '{}');
+          const toMigrate = [];
+          Object.entries(local).forEach(([cislo, entries]) => {
+            (entries || []).forEach(e => { if (e.text) toMigrate.push({ cislo, datum: e.datum || '?', text: e.text }); });
+          });
+          if (toMigrate.length) {
+            await sb.from('dennik').insert(toMigrate);
+            // Znova načítaj
+            const { data: rows2 } = await sb.from('dennik').select('*').order('created_at', { ascending: false });
+            rows.push(...(rows2 || []));
+          }
+        }
         const newDennik = {};
         rows.forEach(r => {
           if (!newDennik[r.cislo]) newDennik[r.cislo] = [];
