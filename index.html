@@ -1325,6 +1325,35 @@ async function syncData() {
     localStorage.setItem('pmStav', JSON.stringify(stavMap));
     const toPush = projects.filter(p => !p.aktivita && stavMap[p.cislo] && p.caflou_id);
     toPush.forEach(p => caflouPatch(p.caflou_id, { custom_column_aktivita: stavMap[p.cislo] }));
+
+    // Načítaj denník z Caflou komentárov
+    const caflouIdMap = {};
+    projects.forEach(p => { if (p.caflou_id) caflouIdMap[p.caflou_id] = p.cislo; });
+    try {
+      let cAll = [], cp = 1, ctp = 1;
+      while (cp <= ctp) {
+        const cr = await fetch(
+          `https://app.caflou.com/api/v1/${cfg.caflou_id}/comments?commented_type=Project&per=100&page=${cp}`,
+          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+        );
+        const cd = await cr.json();
+        cAll = cAll.concat(cd.results || []);
+        ctp = cd.total_pages || 1;
+        cp++;
+      }
+      const newDennik = {};
+      cAll.forEach(c => {
+        const cislo = caflouIdMap[c.commented_id];
+        if (!cislo || !c.text) return;
+        if (!newDennik[cislo]) newDennik[cislo] = [];
+        const dt = new Date(c.created_at || Date.now());
+        const datum = `${dt.getDate()}.${dt.getMonth()+1}.${dt.getFullYear()}`;
+        newDennik[cislo].push({ datum, text: c.text });
+      });
+      dennikMap = newDennik;
+      localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+    } catch(ce) { /* zachovaj existujúci dennikMap ak fetch zlyhá */ }
+
     renderAll();
     showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
   } catch(e) {
