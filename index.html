@@ -1419,6 +1419,7 @@ function parseCaflouProject(p) {
     projektant:     '',
     lopta:          '',
     caflou_id:      p.id,
+    caflou_task_ids: p.task_ids || [],
     caflou_status:  p.project_status_name || '',
     caflou_type:    p.project_type_name   || '',
     deadline,
@@ -1987,6 +1988,8 @@ function refreshUlohy(cislo) {
 async function loadCaflouTasks(cislo, caflou_id) {
   const el = document.getElementById('pd-ulohy-' + cislo);
   if (!el) return;
+  const proj = projects.find(x => x.cislo === cislo);
+  const taskIdSet = new Set(proj?.caflou_task_ids || []);
   try {
     let all = [], page = 1, tp = 1;
     while (page <= tp) {
@@ -1996,7 +1999,9 @@ async function loadCaflouTasks(cislo, caflou_id) {
       );
       const d = await r.json();
       if (d.error) throw new Error(d.error);
-      all = all.concat(d.results || []);
+      const batch = (d.results || []).filter(t => taskIdSet.has(t.id));
+      all = all.concat(batch);
+      if (taskIdSet.size > 0 && all.length >= taskIdSet.size) break;
       tp = d.total_pages || 1;
       page++;
     }
