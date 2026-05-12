@@ -1207,7 +1207,12 @@ nav {
   </div>
 </nav>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+
 // ── STATE ─────────────────────────────────────────────────────────────────
 let projects  = [];
 let ponuky    = JSON.parse(localStorage.getItem('pmPonuky3') || '[]');
@@ -1326,32 +1331,18 @@ async function syncData() {
     const toPush = projects.filter(p => !p.aktivita && stavMap[p.cislo] && p.caflou_id);
     toPush.forEach(p => caflouPatch(p.caflou_id, { custom_column_aktivita: stavMap[p.cislo] }));
 
-    // Načítaj denník z Caflou komentárov
-    const caflouIdMap = {};
-    projects.forEach(p => { if (p.caflou_id) caflouIdMap[p.caflou_id] = p.cislo; });
+    // Načítaj denník zo Supabase
     try {
-      let cAll = [], cp = 1, ctp = 1;
-      while (cp <= ctp) {
-        const cr = await fetch(
-          `https://app.caflou.com/api/v1/${cfg.caflou_id}/comments?commented_type=Project&per=100&page=${cp}`,
-          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
-        );
-        const cd = await cr.json();
-        cAll = cAll.concat(cd.results || []);
-        ctp = cd.total_pages || 1;
-        cp++;
+      const { data: rows } = await sb.from('dennik').select('*').order('created_at', { ascending: false });
+      if (rows) {
+        const newDennik = {};
+        rows.forEach(r => {
+          if (!newDennik[r.cislo]) newDennik[r.cislo] = [];
+          newDennik[r.cislo].push({ datum: r.datum, text: r.text });
+        });
+        dennikMap = newDennik;
+        localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
       }
-      const newDennik = {};
-      cAll.forEach(c => {
-        const cislo = caflouIdMap[c.commented_id];
-        if (!cislo || !c.text) return;
-        if (!newDennik[cislo]) newDennik[cislo] = [];
-        const dt = new Date(c.created_at || Date.now());
-        const datum = `${dt.getDate()}.${dt.getMonth()+1}.${dt.getFullYear()}`;
-        newDennik[cislo].push({ datum, text: c.text });
-      });
-      dennikMap = newDennik;
-      localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
     } catch(ce) { /* zachovaj existujúci dennikMap ak fetch zlyhá */ }
 
     renderAll();
@@ -1705,6 +1696,8 @@ async function pridajDennik(cislo) {
       <div class="dennik-datum">${d.datum}</div>
       <div class="dennik-text">${d.text}</div>
     </div>`).join('')}</div>`;
+  // Ulož do Supabase
+  try { await sb.from('dennik').insert({ cislo, datum, text }); } catch(e) {}
   // Ulož aj do Caflou
   const p = projects.find(x => x.cislo === cislo);
   if (p?.caflou_id) {
