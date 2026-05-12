@@ -2010,12 +2010,14 @@ async function loadCaflouTasks(cislo, caflou_id) {
 function buildCaflouTasksHtml(cislo) {
   const tasks = caflouTasksCache[cislo];
   if (!tasks) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div>';
-  if (!tasks.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy</div>';
-  return tasks.map(t => {
+  const active   = tasks.filter(t => !t.finished);
+  const doneCount = tasks.length - active.length;
+  if (!active.length && !doneCount) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy</div>';
+  const rows = active.map(t => {
     const col = CAFLOU_TASK_STATUS_COLOR[t.task_status_name] || 'var(--text3)';
     const assignee = t.target_user_id ? (CAFLOU_USERS[t.target_user_id] || '') : '';
     let deadStr = '';
-    if (t.end_time && !t.finished) {
+    if (t.end_time) {
       const dt = new Date(t.end_time); const now = new Date(); now.setHours(0,0,0,0);
       const days = Math.floor((dt - now) / 86400000);
       const dc = days < 0 ? 'var(--red)' : days <= 3 ? 'var(--orange)' : 'var(--text3)';
@@ -2025,11 +2027,17 @@ function buildCaflouTasksHtml(cislo) {
       <span onclick="event.stopPropagation();cycleCaflouTaskStatus('${cislo}',${t.id})"
         style="flex-shrink:0;padding:2px 6px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;
         background:${col}22;color:${col};border:1px solid ${col}44;white-space:nowrap">${t.task_status_name}</span>
-      <span style="flex:1;${t.finished ? 'opacity:.45;text-decoration:line-through' : ''}">${t.name}</span>
+      <span style="flex:1">${t.name}</span>
       ${assignee ? `<span style="font-size:10px;color:var(--text3);flex-shrink:0">${assignee}</span>` : ''}
       ${deadStr}
+      <button onclick="event.stopPropagation();finishCaflouTask('${cislo}',${t.id})"
+        title="Ukončiť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
+        width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--text3);
+        display:flex;align-items:center;justify-content:center">✓</button>
     </div>`;
   }).join('');
+  const doneNote = doneCount ? `<div style="font-size:10px;color:var(--text3);padding:4px 0">${doneCount} ukončených úloh skrytých</div>` : '';
+  return rows + doneNote;
 }
 
 async function cycleCaflouTaskStatus(cislo, task_id) {
@@ -2046,6 +2054,22 @@ async function cycleCaflouTaskStatus(cislo, task_id) {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ task: { task_status_id: t.task_status_id } })
+    });
+  } catch(e) {}
+}
+
+async function finishCaflouTask(cislo, task_id) {
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const t = tasks.find(x => x.id === task_id); if (!t) return;
+  t.task_status_name = 'Hotové';
+  t.task_status_id = CAFLOU_TASK_STATUS_IDS['Hotové'];
+  t.finished = true;
+  refreshUlohy(cislo);
+  try {
+    await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: { task_status_id: CAFLOU_TASK_STATUS_IDS['Hotové'], finished: true } })
     });
   } catch(e) {}
 }
