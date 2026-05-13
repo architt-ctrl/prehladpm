@@ -262,6 +262,20 @@
 </div>
 </div>
 
+<!-- MODAL: Zadať ceny -->
+<div class="overlay hidden" id="modalCeny">
+<div class="modal">
+  <h3 id="mCenyTitle">Zadať ceny</h3>
+  <div id="mCenyFields" style="margin-bottom:14px"></div>
+  <div class="frow"><label>Poznámka</label><textarea class="finput" id="mCenyNotes" rows="2"></textarea></div>
+  <div id="mCenyMsg"></div>
+  <div class="btn-row">
+    <button class="btn btn-p" onclick="saveCeny()">Uložiť</button>
+    <button class="btn btn-g" onclick="closeModal('modalCeny')">Zavrieť</button>
+  </div>
+</div>
+</div>
+
 <script>
 const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
@@ -474,7 +488,10 @@ function buildReqDetail(r) {
         ${cells}
         <td>${dl}</td>
         <td><span class="badge b-${inv.status}">${statusLabel(inv.status)}</span></td>
-        <td>${act}</td>
+        <td style="white-space:nowrap">
+          ${act}
+          <button class="btn btn-g btn-sm" onclick="openCenyModal('${inv.id}','${r.id}')">✎ Ceny</button>
+        </td>
       </tr>`;
     }).join('');
     tbl = `<div style="overflow-x:auto"><table class="qtable"><thead><tr><th>Profesista</th>${phHdr}<th>Termín</th><th>Stav</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -549,6 +566,54 @@ async function deleteSpec(id) {
 }
 
 function copyTxt(t) { navigator.clipboard.writeText(t).catch(() => {}); }
+
+let _cenyInvId = null, _cenyReqId = null;
+
+function openCenyModal(invId, reqId) {
+  _cenyInvId = invId;
+  _cenyReqId = reqId;
+  const inv = invitations.find(i => i.id === invId);
+  const req = requests.find(r => r.id === reqId);
+  const sp  = specialists.find(s => s.id === inv?.specialist_id);
+  const q   = quotes.find(q => q.invitation_id === invId);
+  const phases = Array.isArray(req?.phases) ? req.phases : [];
+  document.getElementById('mCenyTitle').textContent = 'Ceny – ' + (sp?.name || '?');
+  document.getElementById('mCenyNotes').value = q?.notes || '';
+  document.getElementById('mCenyMsg').innerHTML = '';
+  document.getElementById('mCenyFields').innerHTML = phases.map(p => {
+    const val = q?.prices?.[p] ?? '';
+    return `<div class="frow"><label>${p}</label>
+      <input class="finput" type="number" id="cp-${p.replace(/\//g,'-')}" value="${val}" placeholder="0 €"></div>`;
+  }).join('');
+  document.getElementById('modalCeny').classList.remove('hidden');
+}
+
+async function saveCeny() {
+  const req = requests.find(r => r.id === _cenyReqId);
+  const phases = Array.isArray(req?.phases) ? req.phases : [];
+  const prices = {};
+  phases.forEach(p => {
+    const v = document.getElementById('cp-' + p.replace(/\//g, '-'))?.value;
+    if (v !== '' && v != null) prices[p] = Number(v);
+  });
+  const notes = document.getElementById('mCenyNotes').value.trim();
+  const existing = quotes.find(q => q.invitation_id === _cenyInvId);
+  let error;
+  if (existing) {
+    ({ error } = await sb.from('quotes').update({ prices, notes, submitted_at: new Date().toISOString() }).eq('id', existing.id));
+  } else {
+    ({ error } = await sb.from('quotes').insert({ invitation_id: _cenyInvId, prices, notes, submitted_at: new Date().toISOString() }));
+  }
+  if (!error) {
+    await sb.from('invitations').update({ status: 'submitted' }).eq('id', _cenyInvId);
+  }
+  if (error) { document.getElementById('mCenyMsg').innerHTML = `<div style="color:var(--red);font-size:13px">${error.message}</div>`; return; }
+  closeModal('modalCeny');
+  showToast('Ceny uložené ✓', 'ok');
+  _loading = false;
+  await loadAll();
+  document.getElementById('rd-' + _cenyReqId)?.classList.add('on');
+}
 
 // ── REQUEST MODAL ─────────────────────────────────────────────────────────────
 function openReqModal(id) {
