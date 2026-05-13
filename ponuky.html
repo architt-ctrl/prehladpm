@@ -490,6 +490,7 @@ function buildReqDetail(r) {
     <button class="btn btn-p btn-sm" onclick="openInviteModal(event,'${r.id}')">+ Pozvať profesistov</button>
     <button class="btn btn-g btn-sm" onclick="openReqModal('${r.id}')">Upraviť</button>
     ${r.status === 'active' ? `<button class="btn btn-g btn-sm" onclick="closeReq(event,'${r.id}')">Uzavrieť</button>` : ''}
+    <button class="btn btn-sm" onclick="deleteReq(event,'${r.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">Vymazať</button>
   </div>`;
 
   const links = invs.length ? `<div class="mt16"><p style="font-size:12px;color:var(--text2);margin-bottom:8px">Linky pre profesistov (skopírovať a poslať emailom):</p>` +
@@ -524,6 +525,26 @@ async function selectWinner(e, invId, reqId) {
 async function closeReq(e, id) {
   e.stopPropagation();
   await sb.from('requests').update({ status: 'closed' }).eq('id', id);
+  await loadAll();
+}
+
+async function deleteReq(e, id) {
+  e.stopPropagation();
+  if (!confirm('Vymazať dopyt aj so všetkými pozvánkami a ponukami?')) return;
+  const invIds = invitations.filter(i => i.request_id === id).map(i => i.id);
+  if (invIds.length) await sb.from('quotes').delete().in('invitation_id', invIds);
+  await sb.from('invitations').delete().eq('request_id', id);
+  await sb.from('requests').delete().eq('id', id);
+  showToast('Dopyt vymazaný', 'ok');
+  _loading = false;
+  await loadAll();
+}
+
+async function deleteSpec(id) {
+  if (!confirm('Vymazať profesistа?')) return;
+  await sb.from('specialists').delete().eq('id', id);
+  showToast('Profesista vymazaný', 'ok');
+  _loading = false;
   await loadAll();
 }
 
@@ -716,6 +737,7 @@ function renderSpecialists() {
         <br><span style="font-size:12px;color:var(--text2)">${s.email}${s.phone ? ' · ' + s.phone : ''}</span>
       </div>
       <button class="btn btn-g btn-sm" onclick="openSpecModal('${s.id}')">Upraviť</button>
+      <button class="btn btn-sm" onclick="deleteSpec('${s.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">×</button>
     </div>`).join('');
 }
 
