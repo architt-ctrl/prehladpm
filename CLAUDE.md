@@ -115,6 +115,29 @@ CAFLOU_USERS             // user_id → meno
 
 `geminiZhrnVsetky()` calls Apps Script (`cfg.url`) action `zhrniProjekt` for each visible project. Result stored in `geminiMap`.
 
+`geminiZhrnPortfolio()` — tlačidlo **Stav** v headeri. Zbiera posledné 3 denník záznamy zo všetkých nearcivovaných projektov + posledných 30 emailov zo SHEET_MAILY. Posiela do Apps Script `action: 'zhrniPortfolio'`. Výsledok zobrazí v `#portfolioModal`.
+
+**Apps Script akcie** (`cfg.url`, `doPost` → if/else if, nie switch):
+- `zhrniProjekt` — zhrnutie jedného projektu (cislo, nazov, faza, text)
+- `navrhniUlohy` — navrhne úlohy z denník záznamu (text) → `{ulohy:[{profesia,popis}]}`
+- `getMaily` — maily pre jeden projekt (cislo) zo SHEET_MAILY → `{maily:[...]}`
+- `getKontakty` — Google Contacts cez People API → `{contacts:[...]}`
+- `zhrniPortfolio` — celkový stav portfólia (text = všetky denníky) + čítа SHEET_MAILY priamo
+
+**Apps Script gotchas:**
+- Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
+- Po každej zmene kódu treba aktualizovať nasadenie (Deploy → Manage → nová verzia)
+- Trigger `sledujMaily` — time-driven, každú hodinu; hľadá `newer_than:1d label:inbox`
+- `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`
+
+### Externý profesista → automatický dopyt
+
+Pri vytváraní úlohy v dashboarde: dropdown obsahuje aj **"— externý profesista —"** (value=`ext`). Po výbere sa zobrazí pole Profesia. Pri odoslaní sa vytvorí Caflou úloha + automaticky INSERT do Supabase `requests` (projekt, profesia, názov úlohy v notes). Draft dopyt sa objaví v ponuky.html.
+
+### Vyhľadávanie projektov
+
+`searchQuery` — globálna premenná. Search input v `phase-bar`. Keď je neprázdny, `renderProjects()` zobrazí všetky zodpovedajúce projekty naprieč všetkými fázami s farebnými fáza badges. Plné project rows s detail divmi — projekt možno rozkliknúť priamo vo výsledkoch.
+
 ## Other files
 
 ### ponuky.html
@@ -137,6 +160,8 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 - Caflou project search in request modal — dropdown appears after typing
 
 **request modal fields:** project (Caflou search), profession, phases (checkboxes), notes, `folder_url` (Podklady na nacenenie), `folder_url_work` (Podklady na vypracovanie)
+
+**Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
 
 ### portal.html
 
