@@ -1726,7 +1726,7 @@ function projRowHtml(p) {
         <div class="prow-name">${p.nazov}</div>
         ${p.podpodfaza ? `<div class="prow-podfaza">${p.podfaza} › ${p.podpodfaza}</div>`
           : p.podfaza  ? `<div class="prow-podfaza">${p.podfaza}</div>` : ''}
-        ${(stavMap[p.cislo] || p.aktivita) ? `<div class="prow-gemini" style="color:var(--blue)">${stavMap[p.cislo] || p.aktivita}</div>` : gem ? `<div class="prow-gemini">${gem}</div>` : ''}
+        ${gem ? `<div class="prow-gemini">${gem}</div>` : ''}
       </div>
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
