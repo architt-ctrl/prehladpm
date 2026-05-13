@@ -163,6 +163,10 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
 
+**Manuálne zadanie cien:** tlačidlo "✎ Ceny" v každom riadku tabuľky profesistov → `openCenyModal(invId, reqId)` → modal s inputmi pre každú fázu + poznámka → `saveCeny()` INSERT/UPDATE do `quotes`, status → `submitted`. Stav modalu v `_cenyInvId`, `_cenyReqId`.
+
+**Aktivita sa nezobrazuje v riadku projektu** — je redundantná so stavovým filtrom. `projRowHtml` zobrazuje len Gemini zhrnutie (`gem`), nie `stavMap[p.cislo]`.
+
 ### portal.html
 
 Specialist-facing quote submission form. Accessed via token link: `portal.html?token=UUID`.
