@@ -1336,25 +1336,6 @@ function setSearch(q) {
   renderProjects();
 }
 
-function switchToProject(cislo) {
-  const p = projects.find(x => x.cislo === cislo); if (!p) return;
-  searchQuery = '';
-  const si = document.getElementById('searchInput'); if (si) si.value = '';
-  activeFaza = p.faza;
-  if (p.faza !== 'Archív') {
-    activeStav = stavMap[p.cislo] || 'pripravovany';
-    document.getElementById('stabPrip').classList.toggle('active', activeStav === 'pripravovany');
-    document.getElementById('stabAkt').classList.toggle('active', activeStav === 'aktivny');
-    document.getElementById('stabPoz').classList.toggle('active', activeStav === 'pozastaveny');
-  }
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.toggle('active', t.dataset.faza === p.faza));
-  document.getElementById('phaseBar').style.display = p.faza === 'Archív' ? 'none' : '';
-  renderProjects();
-  setTimeout(() => {
-    const el = document.getElementById('detail-' + cislo);
-    if (el) { toggleProjDetail(cislo); el.scrollIntoView({ behavior:'smooth', block:'center' }); }
-  }, 50);
-}
 
 // ── CONFIG ─────────────────────────────────────────────────────────────────
 function toggleCfg() { document.getElementById('cfgWrap').classList.toggle('hidden'); }
@@ -1643,12 +1624,22 @@ function renderProjects() {
     el.innerHTML = list.length
       ? list.map(p => {
           const fc = FAZA_COLOR[p.faza] || 'var(--text3)';
-          return `<div class="proj-row" onclick="switchToProject('${p.cislo}')">
-            <div class="prow-num">${p.cislo}</div>
-            <div class="prow-body">
-              <div class="prow-name">${p.nazov}</div>
-              <div class="prow-podfaza"><span style="color:${fc};font-weight:600">${p.faza}</span>${p.podfaza?' · '+p.podfaza:''}</div>
+          const fazaBadge = `<span style="color:${fc};font-size:10px;font-weight:600">${p.faza}</span>`;
+          const gem = geminiMap[p.cislo] || '';
+          return `<div class="prow-wrap">
+            <div class="prow" onclick="toggleProjDetail('${p.cislo}',event)">
+              <div class="prow-num">${p.cislo}</div>
+              <div class="prow-body">
+                <div class="prow-name">${p.nazov}</div>
+                <div class="prow-podfaza">${fazaBadge}${p.podfaza ? ' · ' + p.podfaza : ''}</div>
+                ${gem ? `<div class="prow-gemini">${gem}</div>` : ''}
+              </div>
+              <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
+                style="background:none;border:1px solid var(--border);border-radius:5px;
+                width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
+                display:flex;align-items:center;justify-content:center;flex-shrink:0;">✎</button>
             </div>
+            <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>
           </div>`;
         }).join('')
       : emptyHtml('Žiadny projekt nezodpovedá hľadaniu');
