@@ -33,6 +33,9 @@ All mutable state is in module-level `let` variables:
 | `activeFaza` | — | Current tab: `'Štúdia'\|'Projekcia'\|'Inžiniering'\|'Archív'` |
 | `activeStav` | — | Current status filter: `'pripravovany'\|'aktivny'\|'pozastaveny'` |
 | `caflouTasksCache` | — | `{cislo: [task,...]}` — lazy-loaded Caflou tasks per project; cleared on syncData |
+| `extSpecCache` | — | `{cislo: {taskName: specialistName}}` — loaded from Supabase at task load time |
+| `extSpecOverride` | `pmExtSpecOverride` | `{task_id: specialistName}` — manual specialist assignment for old ext tasks |
+| `specialistsList` | — | `[{id,name,profession}]` — cached from Supabase, loaded once on first task open |
 
 ### Data flow – Caflou
 
@@ -97,32 +100,50 @@ batch.filter(t => taskIdSet.has(t.id))
 
 **Status constants:**
 ```javascript
-CAFLOU_TASK_STATUS_IDS  // name → Caflou status ID
-CAFLOU_TASK_STATUS_ORDER // cycle order for status badge click
+CAFLOU_TASK_STATUS_IDS   // name → Caflou status ID (interné úlohy)
+CAFLOU_TASK_STATUS_ORDER // display order (interné úlohy)
 CAFLOU_TASK_STATUS_COLOR // badge color per status
 CAFLOU_USERS             // user_id → meno
+// PENDING: CAFLOU_EXT_TASK_STATUS_IDS + CAFLOU_EXT_TASK_STATUS_ORDER pre externé úlohy
+// (Jozef vytvoril nové statusy v Caflou, treba zistiť IDs – priradiť ich k nejakej úlohe
+//  a spustiť PowerShell query: všetky tasky → group by task_status_id)
 ```
+
+**Caflou API nemá endpoint pre zoznam statusov** — IDs sa zistia len z úloh ktoré daný status používajú.
 
 **Important distinction:**
 - `task_status_name === 'Hotové'` = úloha dokončená, ale stále **aktívna** (viditeľná)
 - `t.finished === true` = úloha **ukončená** (skrytá, počítaná v "N ukončených skrytých")
-- `cycleCaflouTaskStatus` cykluje statusy bez zmeny `t.finished`
+- `setCaflouTaskStatus(cislo, task_id, statusName)` — mení status, aktualizuje cache, volá `refreshUlohy`, PATCHuje Caflou
 - `finishCaflouTask` (✓ tlačidlo) nastaví `finished=true` a skryje úlohu
 
+**Task layout (two rows):**
+- Riadok 1: názov úlohy (flex:1) + tlačidlá ✎ ✓ ✕
+- Riadok 2: status `<select>` dropdown (sfarbený) + meno osoby + deadline
+- Externé úlohy zobrazujú špecialistu (zelené); interné zobrazujú Caflou assignee (šedé)
+
 **Interné / Externé kategórie:**
-- Rozdelenie podľa Caflou tagu `ext` na tasku: `(t.tags||[]).includes('ext')` = externá
-- Externá úloha sa vytvorí s `tags: ['ext']` v POST body
-- V edit forme: tlačidlo **"Interné ✓" / "Externé ✓"** (`id="ttype-{editKey}"`, `data-ext="0/1"`) — len vizuálny toggle, uloží sa až pri **Uložiť**
+- Rozdelenie podľa Caflou tagu `ext`: `(t.tags||[]).includes('ext')` = externá
+- Externé úlohy sa zobrazujú prvé, potom interné
+- Tag pri uložení: `t.tags = newExt ? ['ext'] : []` — žiadne skladanie tagov
+- V edit forme: tlačidlo **"Interné ✓" / "Externé ✓"** (`id="ttype-{editKey}"`, `data-ext="0/1"`) — vizuálny toggle, uloží sa až pri **Uložiť**
 - `toggleTaskExtBtn(editKey)` — prepína text/data-ext bez PATCHu
-- `saveCaflouTaskEdit` číta `extBtn.dataset.ext` a zahrnie `tags` do PATCH
 - **Caflou custom fields na taskoch nie sú dostupné cez API** — vracajú prázdne pole
 
-**Editovanie a mazanie:**
-- Edit forma má aj pole pre zmenu názvu (`id="tn-{editKey}"`) — PATCHuje `name`
-- ✕ tlačidlo → `deleteCaflouTask(cislo, task_id)` — confirm → DELETE na Caflou API
-- `deleteCaflouTask` odstraní task z cache a zavolá `refreshUlohy`
+**Špecialist na externej úlohe:**
+- `extSpecCache[cislo] = {taskName: specialistName}` — načítané zo Supabase (requests→invitations[selected]→specialists) pri `loadCaflouTasks`
+- `extSpecOverride[task_id] = specialistName` — manuálne priradenie pre staré úlohy, uložené v `localStorage('pmExtSpecOverride')`
+- Priorita: `extSpecOverride[t.id]` → `extSpecCache[cislo][t.name]`
+- V edit forme ext úlohy: dropdown profesia (auto-detekovaná z názvu úlohy) + dropdown špecialistov filtrovaný podľa profesie
+- `loadSpecialists()` — fetchne `specialists` zo Supabase raz, cachuje v `specialistsList`
+- `filterSpecDropdown(editKey)` — prefiltruje specialist select podľa vybranej profesie
+- Profesia sa auto-detekuje z názvu úlohy: `uniqueProfs.find(p => t.name.toLowerCase().includes(p.toLowerCase()))`
 
-**Functions:** `loadCaflouTasks(cislo, caflou_id)`, `buildCaflouTasksHtml(cislo)`, `cycleCaflouTaskStatus(cislo, task_id)`, `finishCaflouTask(cislo, task_id)`, `createCaflouTask(cislo)`, `toggleTaskExtBtn(editKey)`, `deleteCaflouTask(cislo, task_id)`
+**Editovanie a mazanie:**
+- Edit forma má pole pre zmenu názvu (`id="tn-{editKey}"`), user select, date, ext toggle, specialist select (len pre ext)
+- ✕ tlačidlo → `deleteCaflouTask(cislo, task_id)` — confirm → DELETE na Caflou API → remove from cache → refreshUlohy
+
+**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`
 
 ### Gemini integration
 
@@ -181,6 +202,13 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 **Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
 
 **Manuálne zadanie cien:** tlačidlo "✎ Ceny" v každom riadku tabuľky profesistov → `openCenyModal(invId, reqId)` → modal s inputmi pre každú fázu + poznámka → `saveCeny()` INSERT/UPDATE do `quotes`, status → `submitted`. Stav modalu v `_cenyInvId`, `_cenyReqId`.
+
+**Pozvanie profesistov (invite modal):**
+- Zoznam kontaktov z Google Contacts je rozdelený do sekcií podľa tagov (`<details>` expandable)
+- Sekcia zodpovedajúca profesii dopytu sa automaticky otvorí
+- `renderInviteList` funkcia bola odstránená — sekcie sú renderované priamo v `openInviteModal`
+- Selector pre vybrané checkboxy: `#mInvList input[data-email]:checked:not(:disabled)`
+- Pri upserte do `specialists`: `profession = (c.labels||[])[0] || ''` — len prvý tag, nie join
 
 **Aktivita sa nezobrazuje v riadku projektu** — je redundantná so stavovým filtrom. `projRowHtml` zobrazuje len Gemini zhrnutie (`gem`), nie `stavMap[p.cislo]`.
 
