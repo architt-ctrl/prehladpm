@@ -2118,7 +2118,9 @@ function buildCaflouTasksHtml(cislo) {
     const selOpts = userOpts.replace(`value="${t.target_user_id || ''}"`, `value="${t.target_user_id || ''}" selected`);
     const safeName = t.name.replace(/"/g, '&quot;');
     const specName = (extSpecCache[cislo]||{})[t.name] || '';
-    const personName = specName || assignee;
+    const isExt = (t.tags||[]).includes('ext');
+    const personName = isExt ? specName : assignee;
+    const personColor = specName ? 'var(--green)' : 'var(--text3)';
     const statusOpts = CAFLOU_TASK_STATUS_ORDER.map(s =>
       `<option value="${s}"${s === t.task_status_name ? ' selected' : ''}>${s}</option>`).join('');
     return `<div style="border-bottom:1px solid var(--border)">
@@ -2142,7 +2144,7 @@ function buildCaflouTasksHtml(cislo) {
           onclick="event.stopPropagation()"
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
-        ${personName ? `<span style="font-size:10px;color:${specName?'var(--green)':'var(--text3)'};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
+        ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
       </div>
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
