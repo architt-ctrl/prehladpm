@@ -2161,8 +2161,10 @@ function buildCaflouTasksHtml(cislo) {
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
         </div>
         ${isExt ? (() => {
-          const curSpecProf = specName ? ((specialistsList||[]).find(s=>s.name===specName)?.profession||'') : '';
           const uniqueProfs = [...new Set((specialistsList||[]).map(s=>s.profession||'').filter(Boolean))].sort();
+          const specProfFromSelected = specName ? ((specialistsList||[]).find(s=>s.name===specName)?.profession||'') : '';
+          const tnameLower = t.name.toLowerCase();
+          const curSpecProf = specProfFromSelected || uniqueProfs.find(p=>tnameLower.includes(p.toLowerCase())) || '';
           const profOpts = `<option value="">— všetky profesie —</option>` +
             uniqueProfs.map(p=>`<option value="${p}"${curSpecProf===p?' selected':''}>${p}</option>`).join('');
           const filteredSpecs = curSpecProf ? (specialistsList||[]).filter(s=>s.profession===curSpecProf) : (specialistsList||[]);
