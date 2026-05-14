@@ -2246,7 +2246,7 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   if (name) t.name = name;
   t.target_user_id = uid ? parseInt(uid) : null;
   t.end_time = date ? date + 'T17:00:00+02:00' : null;
-  t.tags = newExt ? [...(t.tags||[]).filter(x=>x!=='ext'), 'ext'] : (t.tags||[]).filter(x=>x!=='ext');
+  t.tags = newExt ? ['ext'] : [];
   caflouTaskEditSet.delete(key);
   refreshUlohy(cislo);
   try {
