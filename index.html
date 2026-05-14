@@ -2117,14 +2117,13 @@ function buildCaflouTasksHtml(cislo) {
     const curDate = t.end_time ? t.end_time.substring(0,10) : '';
     const selOpts = userOpts.replace(`value="${t.target_user_id || ''}"`, `value="${t.target_user_id || ''}" selected`);
     const safeName = t.name.replace(/"/g, '&quot;');
+    const specName = (extSpecCache[cislo]||{})[t.name] || '';
+    const personName = specName || assignee;
+    const statusOpts = CAFLOU_TASK_STATUS_ORDER.map(s =>
+      `<option value="${s}"${s === t.task_status_name ? ' selected' : ''}>${s}</option>`).join('');
     return `<div style="border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:6px;padding:5px 0;font-size:12px">
-        <span onclick="event.stopPropagation();cycleCaflouTaskStatus('${cislo}',${t.id})"
-          style="flex-shrink:0;padding:2px 6px;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;
-          background:${col}22;color:${col};border:1px solid ${col}44;white-space:nowrap">${t.task_status_name}</span>
-        <span style="flex:1">${t.name}</span>
-        ${(extSpecCache[cislo]||{})[t.name] ? `<span style="font-size:10px;color:var(--green);flex-shrink:0;font-weight:500">${(extSpecCache[cislo]||{})[t.name]}</span>` : (assignee ? `<span style="font-size:10px;color:var(--text3);flex-shrink:0">${assignee}</span>` : '')}
-        ${deadStr}
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
+        <span style="flex:1;font-weight:500">${t.name}</span>
         <button onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})"
           title="Upraviť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
@@ -2137,6 +2136,14 @@ function buildCaflouTasksHtml(cislo) {
           title="Vymazať" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--red);
           display:flex;align-items:center;justify-content:center">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 5px 0">
+        <select onchange="event.stopPropagation();setCaflouTaskStatus('${cislo}',${t.id},this.value)"
+          onclick="event.stopPropagation()"
+          style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
+          background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
+        ${personName ? `<span style="font-size:10px;color:${specName?'var(--green)':'var(--text3)'};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
+        ${deadStr}
       </div>
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
         <input id="tn-${editKey}" value="${safeName}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
@@ -2162,13 +2169,11 @@ function buildCaflouTasksHtml(cislo) {
   return html + doneNote;
 }
 
-async function cycleCaflouTaskStatus(cislo, task_id) {
+async function setCaflouTaskStatus(cislo, task_id, statusName) {
   const tasks = caflouTasksCache[cislo]; if (!tasks) return;
   const t = tasks.find(x => x.id === task_id); if (!t) return;
-  const idx = CAFLOU_TASK_STATUS_ORDER.indexOf(t.task_status_name);
-  const next = CAFLOU_TASK_STATUS_ORDER[(idx + 1) % CAFLOU_TASK_STATUS_ORDER.length];
-  t.task_status_name = next;
-  t.task_status_id = CAFLOU_TASK_STATUS_IDS[next];
+  t.task_status_name = statusName;
+  t.task_status_id = CAFLOU_TASK_STATUS_IDS[statusName];
   refreshUlohy(cislo);
   try {
     await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
