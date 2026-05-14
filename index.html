@@ -2073,6 +2073,7 @@ async function loadCaflouTasks(cislo, caflou_id) {
       page++;
     }
     caflouTasksCache[cislo] = all;
+    if (all.length) console.log('Caflou task fields:', Object.keys(all[0]).filter(k => k.startsWith('custom')));
     el.innerHTML = buildCaflouTasksHtml(cislo);
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
