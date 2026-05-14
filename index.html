@@ -1291,6 +1291,8 @@ let activeStav = 'pripravovany';
 let searchQuery = '';
 const caflouTaskEditSet = new Set();
 const extSpecCache = {}; // {cislo: {taskName: specialistName}}
+const extSpecOverride = JSON.parse(localStorage.getItem('pmExtSpecOverride') || '{}'); // {task_id: specialistName}
+let specialistsList = null;
 
 // ── CAFLOU STATUS MAP ─────────────────────────────────────────────────────
 const CAFLOU_STATUS_MAP = {
@@ -2056,6 +2058,7 @@ function refreshUlohy(cislo) {
 async function loadCaflouTasks(cislo, caflou_id) {
   const el = document.getElementById('pd-ulohy-' + cislo);
   if (!el) return;
+  loadSpecialists();
   const proj = projects.find(x => x.cislo === cislo);
   const taskIdSet = new Set(proj?.caflou_task_ids || []);
   try {
@@ -2117,7 +2120,7 @@ function buildCaflouTasksHtml(cislo) {
     const curDate = t.end_time ? t.end_time.substring(0,10) : '';
     const selOpts = userOpts.replace(`value="${t.target_user_id || ''}"`, `value="${t.target_user_id || ''}" selected`);
     const safeName = t.name.replace(/"/g, '&quot;');
-    const specName = (extSpecCache[cislo]||{})[t.name] || '';
+    const specName = extSpecOverride[String(t.id)] || (extSpecCache[cislo]||{})[t.name] || '';
     const isExt = (t.tags||[]).includes('ext');
     const personName = isExt ? specName : assignee;
     const personColor = specName ? 'var(--green)' : 'var(--text3)';
@@ -2152,11 +2155,15 @@ function buildCaflouTasksHtml(cislo) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <select id="tu-${editKey}" class="pd-sel" style="flex:1;min-width:120px;font-size:12px">${selOpts}</select>
           <input id="td-${editKey}" type="date" value="${curDate}" class="pd-sel" style="font-size:12px;flex:1;min-width:110px">
-          <button id="ttype-${editKey}" data-ext="${(t.tags||[]).includes('ext')?'1':'0'}" onclick="event.stopPropagation();toggleTaskExtBtn('${editKey}')"
-            style="background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text3);white-space:nowrap">${(t.tags||[]).includes('ext')?'Externé ✓':'Interné ✓'}</button>
+          <button id="ttype-${editKey}" data-ext="${isExt?'1':'0'}" onclick="event.stopPropagation();toggleTaskExtBtn('${editKey}')"
+            style="background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text3);white-space:nowrap">${isExt?'Externé ✓':'Interné ✓'}</button>
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
         </div>
+        ${isExt ? `<select id="tspec-${editKey}" class="pd-sel" style="font-size:12px;width:100%">
+          <option value="">— bez špecialistu —</option>
+          ${(specialistsList||[]).map(s=>`<option value="${s.name}"${specName===s.name?' selected':''}>${s.name}${s.profession?' ('+s.profession+')':''}</option>`).join('')}
+        </select>` : ''}
       </div>
     </div>`;
   }
@@ -2219,6 +2226,12 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   const date  = document.getElementById('td-' + key)?.value;
   const extBtn = document.getElementById('ttype-' + key);
   const newExt = extBtn?.dataset.ext === '1';
+  const specEl = document.getElementById('tspec-' + key);
+  if (specEl) {
+    if (specEl.value) extSpecOverride[String(task_id)] = specEl.value;
+    else delete extSpecOverride[String(task_id)];
+    localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
+  }
   if (name) t.name = name;
   t.target_user_id = uid ? parseInt(uid) : null;
   t.end_time = date ? date + 'T17:00:00+02:00' : null;
@@ -2258,6 +2271,14 @@ async function deleteCaflouTask(cislo, task_id) {
       headers: { Authorization: `Bearer ${cfg.caflou_key}` }
     });
   } catch(e) {}
+}
+
+async function loadSpecialists() {
+  if (specialistsList !== null) return;
+  try {
+    const { data } = await sb.from('specialists').select('id,name,profession').order('name');
+    specialistsList = data || [];
+  } catch(e) { specialistsList = []; }
 }
 
 function toggleExtProf(cislo) {
