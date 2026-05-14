@@ -2160,10 +2160,19 @@ function buildCaflouTasksHtml(cislo) {
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
         </div>
-        ${isExt ? `<select id="tspec-${editKey}" class="pd-sel" style="font-size:12px;width:100%">
-          <option value="">— bez špecialistu —</option>
-          ${(specialistsList||[]).map(s=>`<option value="${s.name}"${specName===s.name?' selected':''}>${s.name}${s.profession?' ('+s.profession+')':''}</option>`).join('')}
-        </select>` : ''}
+        ${isExt ? (() => {
+          const curSpecProf = specName ? ((specialistsList||[]).find(s=>s.name===specName)?.profession||'') : '';
+          const uniqueProfs = [...new Set((specialistsList||[]).map(s=>s.profession||'').filter(Boolean))].sort();
+          const profOpts = `<option value="">— všetky profesie —</option>` +
+            uniqueProfs.map(p=>`<option value="${p}"${curSpecProf===p?' selected':''}>${p}</option>`).join('');
+          const filteredSpecs = curSpecProf ? (specialistsList||[]).filter(s=>s.profession===curSpecProf) : (specialistsList||[]);
+          const specOpts = `<option value="">— bez špecialistu —</option>` +
+            filteredSpecs.map(s=>`<option value="${s.name}"${specName===s.name?' selected':''}>${s.name}</option>`).join('');
+          return `<div style="display:flex;gap:6px">
+            <select id="tsprof-${editKey}" class="pd-sel" style="flex:1;font-size:12px" onchange="filterSpecDropdown('${editKey}')">${profOpts}</select>
+            <select id="tspec-${editKey}" class="pd-sel" style="flex:1;font-size:12px">${specOpts}</select>
+          </div>`;
+        })() : ''}
       </div>
     </div>`;
   }
@@ -2279,6 +2288,17 @@ async function loadSpecialists() {
     const { data } = await sb.from('specialists').select('id,name,profession').order('name');
     specialistsList = data || [];
   } catch(e) { specialistsList = []; }
+}
+
+function filterSpecDropdown(editKey) {
+  const profSel = document.getElementById('tsprof-' + editKey);
+  const specSel = document.getElementById('tspec-' + editKey);
+  if (!profSel || !specSel || !specialistsList) return;
+  const prof = profSel.value;
+  const filtered = prof ? specialistsList.filter(s => s.profession === prof) : specialistsList;
+  const cur = specSel.value;
+  specSel.innerHTML = '<option value="">— bez špecialistu —</option>' +
+    filtered.map(s => `<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
 }
 
 function toggleExtProf(cislo) {
