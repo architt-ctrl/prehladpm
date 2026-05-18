@@ -312,7 +312,7 @@ async function loadAll() {
   if (_loading) return;
   _loading = true;
   try {
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000));
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000));
     const [r, s, i, q] = await Promise.race([
       Promise.all([
         sb.from('requests').select('*').order('created_at', { ascending: false }),
@@ -327,7 +327,7 @@ async function loadAll() {
     renderRequests(); renderSpecialists();
     loadKontakty();
   } catch(e) {
-    document.getElementById('reqList').innerHTML = `<div class="empty">Chyba načítania: ${e.message}. Obnovte stránku.</div>`;
+    document.getElementById('reqList').innerHTML = `<div class="empty">Chyba načítania: ${e.message}. <button onclick="_loading=false;loadAll()" style="margin-left:8px;padding:4px 10px;cursor:pointer">Skúsiť znova</button></div>`;
   } finally {
     _loading = false;
   }
