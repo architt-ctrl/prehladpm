@@ -506,7 +506,9 @@ function buildReqDetail(r) {
   const btns = `<div class="btn-row mt10">
     <button class="btn btn-p btn-sm" onclick="openInviteModal(event,'${r.id}')">+ Pozvať profesistov</button>
     <button class="btn btn-g btn-sm" onclick="openReqModal('${r.id}')">Upraviť</button>
-    ${r.status === 'active' ? `<button class="btn btn-g btn-sm" onclick="closeReq(event,'${r.id}')">Uzavrieť</button>` : ''}
+    ${r.status === 'active'
+      ? `<button class="btn btn-g btn-sm" onclick="closeReq(event,'${r.id}')">Uzavrieť</button>`
+      : `<button class="btn btn-g btn-sm" onclick="reopenReq(event,'${r.id}')">Znovu otvoriť</button>`}
     <button class="btn btn-sm" onclick="deleteReq(event,'${r.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">Vymazať</button>
   </div>`;
 
@@ -563,6 +565,12 @@ async function selectWinner(e, invId, reqId) {
 async function closeReq(e, id) {
   e.stopPropagation();
   await sb.from('requests').update({ status: 'closed' }).eq('id', id);
+  await loadAll();
+}
+
+async function reopenReq(e, id) {
+  e.stopPropagation();
+  await sb.from('requests').update({ status: 'active' }).eq('id', id);
   await loadAll();
 }
 
