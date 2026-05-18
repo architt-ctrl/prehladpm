@@ -156,7 +156,7 @@ CAFLOU_USERS             // user_id → meno
 - `navrhniUlohy` — navrhne úlohy z denník záznamu (text) → `{ulohy:[{profesia,popis}]}`
 - `getMaily` — maily pre jeden projekt (cislo) zo SHEET_MAILY → `{maily:[...]}`
 - `getKontakty` — Google Contacts cez People API → `{contacts:[...]}`
-- `zhrniPortfolio` — celkový stav portfólia (text = všetky denníky) + čítа SHEET_MAILY priamo
+- `zhrniPortfolio` — celkový stav portfólia (text = denníky aktívnych projektov so zápismi, 1 záznam/projekt)
 
 **Apps Script gotchas:**
 - Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
@@ -165,8 +165,10 @@ CAFLOU_USERS             // user_id → meno
 - `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`
 - `doPost` **musí mať try-catch** okolo celého tela — inak nekachnutý exception vráti HTML bez CORS hlavičiek → prehliadač dostane "Failed to fetch"
 - Gemini model: `gemini-2.0-flash` (nie `gemini-2.5-flash` — nižšia kvóta na free tier)
-- `akcia_zhrniPortfolio` **nepoužíva SYSTEM_PROMPT** — prompt by bol príliš dlhý (429). Používa vlastný krátky prompt priamo vo funkcii
-- Frontend `geminiZhrnPortfolio` posiela len aktívne projekty, max 2 denník záznamy/projekt, celkovo max 6000 znakov
+- `akcia_zhrniPortfolio` **nepoužíva SYSTEM_PROMPT** ani SHEET_MAILY — prompt by bol príliš dlhý (429). Používa vlastný krátky prompt, max 4000 znakov
+- Frontend `geminiZhrnPortfolio` posiela len aktívne projekty **so zápismi**, 1 najnovší záznam/projekt, max 3000 znakov; fetch má AbortController timeout 60s
+- `volajGemini` retry sleep: 5s (nie 30s) — rýchlejšie zlyhanie pri rate limite; po 3 pokusoch hodí zrozumiteľnú správu
+- Apps Script kód záloha: `appscript/Code.gs` v repozitári (treba manuálne kopírovať do editora pri zmenách)
 
 ### Externý profesista → automatický dopyt
 
@@ -190,7 +192,7 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Key patterns:**
 - `_loading` guard prevents concurrent `loadAll()` calls
-- `loadAll()` has 10s timeout — shows error instead of infinite spinner
+- `loadAll()` has 30s timeout — shows error with "Skúsiť znova" button instead of infinite spinner
 - `loadCaflouProjects()` uses `d.results` (not `d.data`), filter `!p.trash && !p.template`
 - `searchProjects()` uses `p.order_number` (not `p.number`)
 - Save functions (`saveReq`, `saveSpec`) set `_loading = false` before calling `loadAll()`
@@ -200,6 +202,8 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 **request modal fields:** project (Caflou search), profession, phases (checkboxes), notes, `folder_url` (Podklady na nacenenie), `folder_url_work` (Podklady na vypracovanie)
 
 **Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
+
+**Uzatváranie/otváranie dopytov:** `closeReq(e, id)` → status `closed`. `reopenReq(e, id)` → status `active`. Tlačidlo sa prepína podľa aktuálneho stavu.
 
 **Manuálne zadanie cien:** tlačidlo "✎ Ceny" v každom riadku tabuľky profesistov → `openCenyModal(invId, reqId)` → modal s inputmi pre každú fázu + poznámka → `saveCeny()` INSERT/UPDATE do `quotes`, status → `submitted`. Stav modalu v `_cenyInvId`, `_cenyReqId`.
 
