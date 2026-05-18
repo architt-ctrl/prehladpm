@@ -2588,17 +2588,14 @@ async function geminiZhrnPortfolio() {
     p.faza !== 'Archív' && p.caflou_type !== 'Interná réžia' &&
     (stavMap[p.cislo] || 'pripravovany') === 'aktivny'
   );
-  const all = projects.filter(p =>
-    p.faza !== 'Archív' && p.caflou_type !== 'Interná réžia'
-  );
-  const lines = active.map(p => {
-    const entries = (dennikMap[p.cislo] || []).slice(0, 2)
-      .map(d => '  ' + d.datum + ': ' + d.text).join('\n');
-    return `### ${p.cislo} ${p.nazov} [${p.faza}${p.podfaza?' › '+p.podfaza:''}]${entries ? '\n' + entries : '\n  (žiadne záznamy)'}`;
+  const withEntries = active.filter(p => (dennikMap[p.cislo] || []).length > 0);
+  const lines = withEntries.map(p => {
+    const e = (dennikMap[p.cislo] || [])[0];
+    return `${p.cislo} ${p.nazov} [${p.faza}${p.podfaza?' › '+p.podfaza:''}]\n  ${e.datum}: ${e.text}`;
   }).join('\n\n');
 
-  const rawText = `Aktívnych projektov: ${active.length} / Celkovo: ${all.length}\n\n${lines}`;
-  const text = rawText.length > 6000 ? rawText.slice(0, 6000) + '\n…(skrátené)' : rawText;
+  const rawText = `Aktívnych: ${active.length} (so zápismi: ${withEntries.length})\n\n${lines}`;
+  const text = rawText.length > 3000 ? rawText.slice(0, 3000) + '\n…(skrátené)' : rawText;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60000);

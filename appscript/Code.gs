@@ -290,34 +290,15 @@ function akcia_getKontakty(req) {
 // ── ZHRNI PORTFOLIO ───────────────────────────────────────────────────────
 // POZOR: nepoužíva SYSTEM_PROMPT — prompt by bol príliš dlhý (429 rate limit)
 function akcia_zhrniPortfolio(req) {
-  var mailyText = '';
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var ws = ss.getSheetByName(SHEET_MAILY);
-    if (ws) {
-      var data = ws.getDataRange().getValues();
-      var posledne = data.slice(Math.max(1, data.length - 10));
-      mailyText = posledne
-        .filter(function(r) { return r[0] && r[5]; })
-        .map(function(r) {
-          return r[0] + ' | ' + (r[1]||'') + ' | ' + (r[3]||'') +
-                 ' | ' + (r[5]||'') +
-                 (r[8] ? ' -> AKCIA: ' + r[8] : '');
-        }).join('\n');
-    }
-  } catch(e) {}
-
   var prompt =
     'Si PM asistent architektonického ateliéra. Tím: Tomas (šéf), Jozef (PM), Mirka, Veronika (architektky), Erik, Lucia, Sona (projektanti).\n\n' +
-    'Zhrn celkový stav portfólia. Odpovedz v slovenčine, štruktúruj takto:\n' +
+    'Zhrn celkový stav portfólia na základe denníkov. Odpovedz v slovenčine, štruktúruj takto:\n' +
     'KRITICKÉ / vyžaduje okamžitú pozornosť\n' +
     'TENTO TÝŽDEŇ – na čo sa zamerať\n' +
     'CELKOVÝ STAV (2-3 vety)\n\n' +
-    'DENNÍKY PROJEKTOV:\n' + (req.text || '(žiadne záznamy)') + '\n\n' +
-    'POSLEDNÉ MAILY (dátum | projekt | od | téma | akcia):\n' +
-    (mailyText || '(žiadne maily)');
+    'DENNÍKY:\n' + (req.text || '(žiadne záznamy)');
 
-  if (prompt.length > 7000) prompt = prompt.slice(0, 7000) + '\n…(skrátené)';
+  if (prompt.length > 4000) prompt = prompt.slice(0, 4000) + '\n…(skrátené)';
   var zhrnutie = volajGemini(prompt);
   return { ok: true, zhrnutie: zhrnutie };
 }
