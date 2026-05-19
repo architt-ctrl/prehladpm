@@ -197,13 +197,25 @@ function doPost(e) {
 }
 
 function akcia_zhrniProjekt(req) {
+  var mailyText = '';
+  if (req.maily && req.maily.length) {
+    mailyText = '\n\nPosledné emaily:\n' + req.maily.map(function(m) {
+      var parts = [m.datum, m.od_koho, m.tema];
+      if (m.dohodnute) parts.push('Dohodnuté: ' + m.dohodnute);
+      if (m.akcia_potrebna && m.akcia_popis) parts.push('Akcia: ' + m.akcia_popis);
+      return parts.filter(Boolean).join(' | ');
+    }).join('\n');
+  }
   var prompt = SYSTEM_PROMPT + '\n\n' +
     'Projekt: ' + req.cislo + ' – ' + (req.nazov||'') + '\n' +
     'Fáza: ' + (req.faza||'') + '\n\n' +
-    'Posledné záznamy z denníka:\n' + (req.text||'(žiadne záznamy)') + '\n\n' +
-    'Napíš 1-2 vety o aktuálnom stave projektu. ' +
-    'Sústreď sa na to čo bolo naposledy riešené a čo je ďalší krok. ' +
-    'Odpovedz len samotným zhrnutím, bez uvodzoviek ani predhovoru.';
+    'Záznamy z denníka (posledné):\n' + (req.text||'(žiadne záznamy)') +
+    mailyText + '\n\n' +
+    'Napíš zhrnutie aktuálneho stavu projektu. ' +
+    'Ak sú viaceré odlišné otvorené témy (napr. riešenie sietí, stavebné povolenie, ' +
+    'zapracovanie zmien), rozdeľ zhrnutie do krátkych odrážok – každá téma jeden riadok začínajúci „• ". ' +
+    'Ak je len jedna téma, napíš 1-2 vety bez odrážok. ' +
+    'Odpovedz len samotným zhrnutím, bez predhovoru ani uvodzoviek.';
   var zhrnutie = volajGemini(prompt);
   return { ok: true, zhrnutie: zhrnutie };
 }
