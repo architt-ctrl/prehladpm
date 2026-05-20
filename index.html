@@ -1433,52 +1433,55 @@ async function openVytazenieModal() {
   if (_vytazenieCache) { el.innerHTML = _vytazenieCache; return; }
   el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
   try {
-    const workload = {}; // specName → [{taskName, projectName, cislo, status, faza, fromCache}]
+    // Mapa task_id → projekt (len aktívne projekty)
+    const projByTaskId = {};
+    projects.filter(p => p.faza !== 'Archív').forEach(p =>
+      (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
+    );
 
-    // 1. Primary: ext úlohy z už-načítaného caflouTasksCache (otvorené projekty v tejto session)
-    for (const [cislo, tasks] of Object.entries(caflouTasksCache)) {
-      const proj = projects.find(p => p.cislo === cislo);
-      if (!proj) continue;
-      for (const t of tasks) {
-        if (t.finished) continue;
-        if (!(t.tags||[]).includes('ext')) continue;
-        const specName = extSpecOverride[String(t.id)] || (extSpecCache[cislo]||{})[t.name] || '';
-        if (!specName) continue;
-        if (!workload[specName]) workload[specName] = [];
-        workload[specName].push({ taskName: t.name, projectName: proj.nazov, cislo, status: t.task_status_name||'—', faza: proj.faza, fromCache: true });
-      }
+    // Supabase: globálna mapa {cislo: {taskName: specName}} zo selected/submitted invitations
+    const sbSpecMap = {};
+    try {
+      const { data: invData } = await sb.from('invitations')
+        .select('specialist_id, requests!inner(notes, project_cislo)')
+        .in('status', ['selected', 'submitted']);
+      const sIds = [...new Set((invData||[]).map(i => i.specialist_id))];
+      const { data: sData } = sIds.length ? await sb.from('specialists').select('id,name').in('id', sIds) : { data: [] };
+      const sById = Object.fromEntries((sData||[]).map(s => [s.id, s.name]));
+      (invData||[]).forEach(inv => {
+        const c = inv.requests?.project_cislo, n = inv.requests?.notes, sn = sById[inv.specialist_id];
+        if (c && n && sn) { if (!sbSpecMap[c]) sbSpecMap[c] = {}; sbSpecMap[c][n] = sn; }
+      });
+    } catch(e) {}
+
+    const workload = {};
+    const addEntry = (specName, taskName, proj, status, invStatus) => {
+      if (!workload[specName]) workload[specName] = [];
+      const dup = workload[specName].some(x => x.cislo === proj.cislo && x.taskName === taskName);
+      if (!dup) workload[specName].push({ taskName, projectName: proj.nazov, cislo: proj.cislo, status, invStatus, faza: proj.faza });
+    };
+
+    // Scan všetkých Caflou úloh (paginated) – špecialist = extSpecOverride alebo sbSpecMap
+    let page = 1, hasMore = true;
+    while (hasMore) {
+      el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam strana ${page}…</div>`;
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+      const d = await r.json();
+      (d.results || []).forEach(t => {
+        if (t.finished || t.trash) return;
+        const p = projByTaskId[t.id]; if (!p) return;
+        const specName = extSpecOverride[String(t.id)] || (sbSpecMap[p.cislo]||{})[t.name] || '';
+        if (specName) addEntry(specName, t.name, p, t.task_status_name||'—', null);
+      });
+      hasMore = !!d.next_page;
+      page++;
     }
 
-    // 2. Doplnok: Supabase ponuky (invitations) – pridaj čo ešte nie je z úloh
-    const { data: invs } = await sb.from('invitations')
-      .select('specialist_id, status, requests!inner(notes, project_cislo)')
-      .neq('status', 'rejected');
-    const specIds = [...new Set((invs||[]).map(i => i.specialist_id))];
-    const { data: specs } = specIds.length
-      ? await sb.from('specialists').select('id,name').in('id', specIds)
-      : { data: [] };
-    const specNameById = Object.fromEntries((specs||[]).map(s => [s.id, s.name]));
-    (invs||[]).forEach(inv => {
-      const cislo = inv.requests?.project_cislo;
-      const taskName = inv.requests?.notes;
-      const specName = specNameById[inv.specialist_id];
-      if (!cislo || !taskName || !specName) return;
-      const proj = projects.find(p => p.cislo === cislo);
-      if (!proj) return;
-      const already = (workload[specName]||[]).some(x => x.cislo === cislo && x.taskName === taskName);
-      if (already) return;
-      if (!workload[specName]) workload[specName] = [];
-      workload[specName].push({ taskName, projectName: proj.nazov, cislo, status: '—', invStatus: inv.status, faza: proj.faza });
-    });
-
     // 3. Render
-    const cachedProjCount = Object.keys(caflouTasksCache).length;
     const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
     if (!sorted.length) {
-      el.innerHTML = `<div style="color:var(--text3);padding:12px;text-align:center">
-        Žiadne pridelené externé úlohy
-        ${cachedProjCount === 0 ? '<br><span style="font-size:11px">Otvor projekty v prehľade – úlohy sa načítajú pri prvom otvorení.</span>' : ''}
-      </div>`;
+      el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelené externé úlohy</div>';
       return;
     }
     const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
