@@ -3041,7 +3041,7 @@ async function toggleTaskNotes(cislo, taskId) {
       const d = await r.json();
       const all = d.result || d.results || d.data || [];
       taskNotesCache[taskId] = all
-        .filter(c => String(c.commented_id) === String(taskId))
+        .filter(c => String(c.commented_id) === String(taskId) && (c.text || '').trim())
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
         .map(c => {
           const raw = c.text || '';
