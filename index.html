@@ -1293,6 +1293,8 @@ const CAFLOU_STATUS_TO_FAZA_TAG = {
 const TASK_FAZA_LABEL = { 'AŠ':'Arch. štúdia', 'SZ':'Stav. zámer', 'DSP':'DSP', 'PS':'Projekt stavby', 'RP':'Real. projekt', 'INŽ':'Inžiniering' };
 const TASK_FAZA_COLOR = { 'AŠ':'#7c5cbf', 'SZ':'#2196F3', 'DSP':'#FF9800', 'PS':'#4CAF50', 'RP':'#E53935', 'INŽ':'#00BCD4' };
 let caflouTaskFazaFilter = {}; // {cislo: tag|null}
+let caflouTaskSelectMode = {}; // {cislo: bool}
+let caflouTaskSelected = {};   // {cislo: Set<task_id>}
 let activeStat = null;
 let stavMap   = JSON.parse(localStorage.getItem('pmStav')   || '{}');  // {cislo: 'pripravovany'|'aktivny'|'pozastaveny'}
 let dennikMap = JSON.parse(localStorage.getItem('pmDennik') || '{}');  // {cislo: [{datum, text}]}
@@ -2150,6 +2152,92 @@ function setTaskFazaFilter(cislo, tag) {
   caflouTaskFazaFilter[cislo] = caflouTaskFazaFilter[cislo] === tag ? null : tag;
   refreshUlohy(cislo);
 }
+function toggleTaskSelectMode(cislo) {
+  caflouTaskSelectMode[cislo] = !caflouTaskSelectMode[cislo];
+  caflouTaskSelected[cislo] = new Set();
+  refreshUlohy(cislo);
+}
+function toggleTaskSelection(cislo, taskId) {
+  if (!caflouTaskSelected[cislo]) caflouTaskSelected[cislo] = new Set();
+  if (caflouTaskSelected[cislo].has(taskId)) caflouTaskSelected[cislo].delete(taskId);
+  else caflouTaskSelected[cislo].add(taskId);
+  refreshUlohy(cislo);
+}
+function bulkSelectAll(cislo) {
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const curFilter = caflouTaskFazaFilter[cislo] || null;
+  const active = (curFilter ? tasks.filter(t => !t.finished && getTaskFazaTag(t) === curFilter) : tasks.filter(t => !t.finished));
+  const selSet = caflouTaskSelected[cislo] || new Set();
+  if (selSet.size === active.length) caflouTaskSelected[cislo] = new Set();
+  else caflouTaskSelected[cislo] = new Set(active.map(t => t.id));
+  refreshUlohy(cislo);
+}
+async function bulkSetStatus(cislo, statusName) {
+  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const ids = [...selSet];
+  ids.forEach(id => {
+    const t = tasks.find(x => x.id === id); if (!t) return;
+    t.task_status_name = statusName;
+    t.task_status_id = CAFLOU_TASK_STATUS_IDS[statusName];
+  });
+  refreshUlohy(cislo);
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  await Promise.all(ids.map(id => fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task: { task_status_id: CAFLOU_TASK_STATUS_IDS[statusName] } })
+  }).catch(() => {})));
+}
+async function bulkSetFaza(cislo, tag) {
+  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const newFaza = tag === '__none' ? null : tag;
+  const ids = [...selSet];
+  ids.forEach(id => {
+    const t = tasks.find(x => x.id === id); if (!t) return;
+    t.tags = [(t.tags||[]).includes('ext') ? 'ext' : null, newFaza].filter(Boolean);
+  });
+  refreshUlohy(cislo);
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  await Promise.all(ids.map(id => {
+    const t = tasks.find(x => x.id === id); if (!t) return Promise.resolve();
+    return fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: { tags: t.tags } })
+    }).catch(() => {});
+  }));
+}
+async function bulkFinishTasks(cislo) {
+  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
+  if (!confirm(`Ukončiť ${selSet.size} označených úloh?`)) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const ids = [...selSet];
+  ids.forEach(id => { const t = tasks.find(x => x.id === id); if (t) t.finished = true; });
+  caflouTaskSelected[cislo] = new Set();
+  refreshUlohy(cislo);
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  await Promise.all(ids.map(id => fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task: { finished: true } })
+  }).catch(() => {})));
+}
+async function bulkDeleteTasks(cislo) {
+  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
+  if (!confirm(`Vymazať ${selSet.size} označených úloh? Táto akcia je nevratná.`)) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const ids = [...selSet];
+  ids.forEach(id => { const idx = tasks.findIndex(x => x.id === id); if (idx !== -1) tasks.splice(idx, 1); });
+  caflouTaskSelected[cislo] = new Set();
+  refreshUlohy(cislo);
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  await Promise.all(ids.map(id => fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+  }).catch(() => {})));
+}
 function buildCaflouTasksHtml(cislo) {
   const tasks = caflouTasksCache[cislo];
   if (!tasks) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div>';
@@ -2159,14 +2247,20 @@ function buildCaflouTasksHtml(cislo) {
   const curFilter = caflouTaskFazaFilter[cislo] || null;
   const active = curFilter ? allActive.filter(t => getTaskFazaTag(t) === curFilter) : allActive;
   const usedTags = [...new Set(allActive.map(getTaskFazaTag).filter(Boolean))];
-  const filterHtml = usedTags.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">` +
+  const selectMode = !!caflouTaskSelectMode[cislo];
+  const selSet = caflouTaskSelected[cislo] || new Set();
+  const selToggleBtn = `<button onclick="event.stopPropagation();toggleTaskSelectMode('${cislo}')"
+    style="margin-left:auto;flex-shrink:0;font-size:10px;padding:2px 8px;border-radius:10px;cursor:pointer;font-weight:600;
+    border:1px solid ${selectMode?'var(--text)':'var(--border)'};color:${selectMode?'var(--text)':'var(--text3)'};background:transparent">
+    ${selectMode ? '✕ zrušiť' : '☑ vybrať'}</button>`;
+  const filterHtml = `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px;align-items:center">` +
     usedTags.map(tag => {
       const col = TASK_FAZA_COLOR[tag];
-      const active = curFilter === tag;
+      const isActive = curFilter === tag;
       return `<button onclick="event.stopPropagation();setTaskFazaFilter('${cislo}','${tag}')"
         style="font-size:10px;padding:2px 7px;border-radius:10px;cursor:pointer;font-weight:600;
-        border:1px solid ${col};color:${active?'#fff':col};background:${active?col:'transparent'}">${tag}</button>`;
-    }).join('') + `</div>` : '';
+        border:1px solid ${col};color:${isActive?'#fff':col};background:${isActive?col:'transparent'}">${tag}</button>`;
+    }).join('') + selToggleBtn + `</div>`;
   const userOpts = `<option value="">— bez priradenia —</option>` +
     Object.entries(CAFLOU_USERS).map(([id,n]) => `<option value="${id}">${n}</option>`).join('');
   function rowHtml(t) {
@@ -2180,7 +2274,7 @@ function buildCaflouTasksHtml(cislo) {
       deadStr = `<span style="font-size:10px;color:${dc};flex-shrink:0">${dt.getDate()}.${dt.getMonth()+1}.</span>`;
     }
     const editKey = cislo + '-' + t.id;
-    const editOpen = caflouTaskEditSet.has(editKey);
+    const editOpen = !selectMode && caflouTaskEditSet.has(editKey);
     const curDate = t.end_time ? t.end_time.substring(0,10) : '';
     const selOpts = userOpts.replace(`value="${t.target_user_id || ''}"`, `value="${t.target_user_id || ''}" selected`);
     const safeName = t.name.replace(/"/g, '&quot;');
@@ -2193,9 +2287,10 @@ function buildCaflouTasksHtml(cislo) {
       `<option value="${s}"${s === t.task_status_name ? ' selected' : ''}>${s}</option>`).join('');
     const fazaOpts = `<option value="">— bez typu —</option>` +
       TASK_FAZA_TAGS.map(f=>`<option value="${f}"${fazaTag===f?' selected':''}>${f} – ${TASK_FAZA_LABEL[f]}</option>`).join('');
-    return `<div style="border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
-        <span style="flex:1;font-weight:500">${t.name}</span>
+    const isChecked = selSet.has(t.id);
+    const checkboxHtml = selectMode ? `<input type="checkbox" ${isChecked?'checked':''} onclick="event.stopPropagation();toggleTaskSelection('${cislo}',${t.id})"
+      style="width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--text)">` : '';
+    const actionBtns = selectMode ? '' : `
         <button onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})"
           title="Upraviť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
@@ -2207,9 +2302,14 @@ function buildCaflouTasksHtml(cislo) {
         <button onclick="event.stopPropagation();deleteCaflouTask('${cislo}',${t.id})"
           title="Vymazať" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--red);
-          display:flex;align-items:center;justify-content:center">✕</button>
+          display:flex;align-items:center;justify-content:center">✕</button>`;
+    return `<div style="border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
+        ${checkboxHtml}
+        <span style="flex:1;font-weight:500">${t.name}</span>
+        ${actionBtns}
       </div>
-      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 5px 0">
+      <div style="display:flex;align-items:center;gap:6px;padding:2px 0 5px 0;${selectMode?'padding-left:21px':''}">
         <select onchange="event.stopPropagation();setCaflouTaskStatus('${cislo}',${t.id},this.value)"
           onclick="event.stopPropagation()"
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
@@ -2253,9 +2353,37 @@ function buildCaflouTasksHtml(cislo) {
   const external = active.filter(t => (t.tags || []).includes('ext'));
   let html = filterHtml;
   if (!active.length && curFilter) html += `<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy pre filter ${curFilter}</div>`;
-  if (external.length) html += label('Externé', !filterHtml) + external.map(rowHtml).join('');
-  if (internal.length) html += label('Interné', !filterHtml && !external.length) + internal.map(rowHtml).join('');
+  if (external.length) html += label('Externé', false) + external.map(rowHtml).join('');
+  if (internal.length) html += label('Interné', false) + internal.map(rowHtml).join('');
   const doneNote = doneCount ? `<div style="font-size:10px;color:var(--text3);padding:4px 0">${doneCount} ukončených úloh skrytých</div>` : '';
+  if (selectMode) {
+    const selCount = selSet.size;
+    const bulkStatusOpts = `<option value="">— status —</option>` +
+      CAFLOU_TASK_STATUS_ORDER.map(s => `<option value="${s}">${s}</option>`).join('');
+    const bulkFazaOpts = `<option value="">— fáza —</option>` +
+      TASK_FAZA_TAGS.map(f => `<option value="${f}">${f}</option>`).join('') +
+      `<option value="__none">bez fázy</option>`;
+    const bulkBar = `<div onclick="event.stopPropagation()" style="margin-top:6px;padding:6px 8px;background:var(--bg3);
+      border:1px solid var(--border);border-radius:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:600;color:var(--text2);flex-shrink:0">Označené: ${selCount}</span>
+      <button onclick="event.stopPropagation();bulkSelectAll('${cislo}')"
+        style="font-size:10px;padding:2px 7px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:none;color:var(--text3)">
+        ${selCount === active.length ? 'Zrušiť všetky' : 'Vybrať všetky'}</button>
+      <select onchange="event.stopPropagation();if(this.value){bulkSetStatus('${cislo}',this.value);this.value=''}"
+        onclick="event.stopPropagation()" ${selCount===0?'disabled':''}
+        style="font-size:11px;border:1px solid var(--border);border-radius:6px;padding:2px 4px;background:var(--bg2);color:var(--text2);cursor:pointer">${bulkStatusOpts}</select>
+      <select onchange="event.stopPropagation();if(this.value){bulkSetFaza('${cislo}',this.value);this.value=''}"
+        onclick="event.stopPropagation()" ${selCount===0?'disabled':''}
+        style="font-size:11px;border:1px solid var(--border);border-radius:6px;padding:2px 4px;background:var(--bg2);color:var(--text2);cursor:pointer">${bulkFazaOpts}</select>
+      <button onclick="event.stopPropagation();bulkFinishTasks('${cislo}')" ${selCount===0?'disabled':''}
+        style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--border);background:none;color:var(--text3);${selCount===0?'opacity:0.4':''}">
+        ✓ Ukončiť</button>
+      <button onclick="event.stopPropagation();bulkDeleteTasks('${cislo}')" ${selCount===0?'disabled':''}
+        style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--red)44;background:none;color:var(--red);${selCount===0?'opacity:0.4':''}">
+        ✕ Vymazať</button>
+    </div>`;
+    return html + doneNote + bulkBar;
+  }
   return html + doneNote;
 }
 
@@ -2448,6 +2576,9 @@ function toggleProjDetail(cislo, e) {
     caflouTaskFazaFilter[cislo] = CAFLOU_STATUS_TO_FAZA_TAG[p?.caflou_status] || null;
     if (p?.caflou_id && !caflouTasksCache[cislo]) loadCaflouTasks(cislo, p.caflou_id);
     else if (caflouTasksCache[cislo]) refreshUlohy(cislo);
+  } else {
+    caflouTaskSelectMode[cislo] = false;
+    caflouTaskSelected[cislo] = new Set();
   }
 }
 
