@@ -2878,6 +2878,14 @@ async function addTaskNote(cislo, taskId) {
     if (!taskNotesCache[taskId]) taskNotesCache[taskId] = [];
     taskNotesCache[taskId].unshift(data);
     refreshUlohy(cislo);
+    // Backup: post to Caflou task comment so team sees it in Caflou
+    if (cfg.caflou_key && cfg.caflou_id) {
+      fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/comments`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: { text: datum + ': ' + text, commented_type: 'Task', commented_id: taskId } })
+      }).catch(() => {});
+    }
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     inp.disabled = false;
