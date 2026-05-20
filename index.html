@@ -1424,61 +1424,84 @@ function saveCfg() {
 }
 
 // ── VYTAŽENIE ─────────────────────────────────────────────────────────────
-const INV_STATUS_SK    = { sent:'Pozvaný', viewed:'Pozrel', submitted:'Ponúkol cenu', selected:'Vybraný' };
-const INV_STATUS_COLOR = { sent:'var(--text3)', viewed:'var(--orange)', submitted:'var(--blue)', selected:'var(--green)' };
+let _vytazenieCache = null; // invalidated on syncData
 
 async function openVytazenieModal() {
   document.getElementById('vytazenieModal').classList.remove('hidden');
   const el = document.getElementById('vytazenieContent');
-  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  if (_vytazenieCache) { el.innerHTML = _vytazenieCache; return; }
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam úlohy…</div>';
   try {
-    const { data: invData, error } = await sb.from('invitations')
-      .select('status,specialist_id,request_id')
-      .in('status', ['sent','viewed','submitted','selected']);
-    if (error) throw error;
-    if (!invData?.length) { el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelenia</div>'; return; }
+    // 1. Build task_id → project map from all projects
+    const projByTaskId = {};
+    projects.forEach(p => (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; }));
 
-    const specIds = [...new Set(invData.map(i => i.specialist_id))];
-    const reqIds  = [...new Set(invData.map(i => i.request_id))];
-    const [{ data: specs }, { data: reqs }] = await Promise.all([
-      sb.from('specialists').select('id,name,profession').in('id', specIds),
-      sb.from('requests').select('id,project_cislo,project_name,notes,profession,status').in('id', reqIds),
-    ]);
+    // 2. Load specialist name overrides from Supabase (selected invitations)
+    const sbSpecMap = {}; // {project_cislo: {taskName: specName}}
+    try {
+      const { data: invs } = await sb.from('invitations')
+        .select('specialist_id, requests!inner(notes, project_cislo)')
+        .eq('status', 'selected');
+      const specIds = [...new Set((invs||[]).map(i => i.specialist_id))];
+      const { data: specs } = specIds.length
+        ? await sb.from('specialists').select('id,name').in('id', specIds)
+        : { data: [] };
+      const specNameById = Object.fromEntries((specs||[]).map(s => [s.id, s.name]));
+      (invs||[]).forEach(inv => {
+        const cislo = inv.requests?.project_cislo;
+        const taskName = inv.requests?.notes;
+        const specName = specNameById[inv.specialist_id];
+        if (cislo && taskName && specName) {
+          if (!sbSpecMap[cislo]) sbSpecMap[cislo] = {};
+          sbSpecMap[cislo][taskName] = specName;
+        }
+      });
+    } catch(e) {}
 
-    const reqById  = Object.fromEntries((reqs||[]).map(r => [r.id, r]));
-    const specById = Object.fromEntries((specs||[]).map(s => [s.id, s]));
+    // 3. Fetch all Caflou tasks (paginated), collect active ext tasks with specialist
+    const workload = {}; // specName → [{taskName, projectName, cislo, status, faza}]
+    let page = 1, hasMore = true, pageCount = 0;
+    while (hasMore) {
+      el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam strana ${page}…</div>`;
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+      const d = await r.json();
+      (d.result||[]).forEach(t => {
+        if (t.finished || !(t.tags||[]).includes('ext')) return;
+        const p = projByTaskId[t.id]; if (!p) return;
+        const specName = extSpecOverride[String(t.id)] || (sbSpecMap[p.cislo]||{})[t.name] || '';
+        if (!specName) return;
+        if (!workload[specName]) workload[specName] = [];
+        workload[specName].push({ taskName: t.name, projectName: p.nazov, cislo: p.cislo, status: t.task_status_name || '—', faza: p.faza });
+      });
+      hasMore = !!d.next_page;
+      page++;
+    }
 
-    const workload = {};
-    invData.forEach(inv => {
-      const req = reqById[inv.request_id];
-      if (!req || req.status === 'closed') return;
-      if (!workload[inv.specialist_id]) workload[inv.specialist_id] = [];
-      workload[inv.specialist_id].push({ req, status: inv.status });
-    });
-
+    // 4. Render
     const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
-    if (!sorted.length) { el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne aktívne pridelenia</div>'; return; }
-
-    el.innerHTML = sorted.map(([specId, items]) => {
-      const spec = specById[specId] || { name:'Neznámy', profession:'' };
-      const rows = items.map(({ req, status }) => {
-        const col  = INV_STATUS_COLOR[status] || 'var(--text3)';
-        const stSk = INV_STATUS_SK[status] || status;
-        const label = req.notes || req.profession || '—';
+    if (!sorted.length) {
+      _vytazenieCache = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelené externé úlohy</div>';
+      el.innerHTML = _vytazenieCache; return;
+    }
+    const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
+    _vytazenieCache = sorted.map(([specName, items]) => {
+      const rows = items.map(item => {
+        const col = TASK_STATUS_COL[item.status] || 'var(--text3)';
         return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border)44;font-size:12px">
-          <span style="flex:1;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${req.project_cislo||''} – ${req.project_name||''}</span>
-          <span style="color:var(--text3);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">${label}</span>
-          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${stSk}</span>
+          <span style="flex:1;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.cislo} – ${item.projectName}</span>
+          <span style="color:var(--text3);font-size:11px;flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.taskName}</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${item.status}</span>
         </div>`;
       }).join('');
       return `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <span style="font-weight:600;font-size:13px">${spec.name}</span>
-          <span style="font-size:11px;color:var(--text3)">${spec.profession||''}</span>
+          <span style="font-weight:600;font-size:13px">${specName}</span>
           <span style="margin-left:auto;font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--bg3);color:var(--text2)">${items.length}</span>
         </div>${rows}
       </div>`;
     }).join('');
+    el.innerHTML = _vytazenieCache;
   } catch(e) {
     el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
   }
@@ -1506,6 +1529,7 @@ async function syncData() {
       .filter(p => !p.trash && !p.template)
       .map(parseCaflouProject);
     caflouTasksCache = {};
+    _vytazenieCache = null;
     projects.forEach(p => {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
     });
