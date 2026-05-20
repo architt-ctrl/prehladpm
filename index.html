@@ -2270,7 +2270,7 @@ async function loadCaflouTasks(cislo, caflou_id) {
   if (!el) return;
   loadSpecialists();
   const proj = projects.find(x => x.cislo === cislo);
-  const taskIdSet = new Set(proj?.caflou_task_ids || []);
+  const taskIdSet = new Set((proj?.caflou_task_ids || []).map(Number));
   try {
     let all = [], page = 1, tp = 1;
     while (page <= tp) {
@@ -2280,7 +2280,7 @@ async function loadCaflouTasks(cislo, caflou_id) {
       );
       const d = await r.json();
       if (d.error) throw new Error(d.error);
-      const batch = (d.results || []).filter(t => taskIdSet.has(t.id));
+      const batch = (d.results || []).filter(t => taskIdSet.has(Number(t.id)));
       all = all.concat(batch);
       if (taskIdSet.size > 0 && all.length >= taskIdSet.size) break;
       tp = d.total_pages || 1;
@@ -2663,8 +2663,11 @@ function toggleTaskEdit(cislo, task_id) {
 }
 
 async function saveCaflouTaskEdit(cislo, task_id) {
-  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
-  const t = tasks.find(x => x.id === task_id); if (!t) return;
+  const tid = Number(task_id);
+  const tasks = caflouTasksCache[cislo];
+  if (!tasks) { showToast('Chyba: úlohy nie sú načítané pre ' + cislo, 'err'); return; }
+  const t = tasks.find(x => Number(x.id) === tid);
+  if (!t) { showToast('Chyba: úloha ' + tid + ' nenájdená (cache: ' + tasks.slice(0,5).map(x=>x.id).join(',') + ')', 'err'); return; }
   const key = cislo + '-' + task_id;
   const name  = document.getElementById('tn-' + key)?.value.trim();
   const uid   = document.getElementById('tu-' + key)?.value;
