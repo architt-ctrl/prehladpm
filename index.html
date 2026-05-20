@@ -1433,9 +1433,23 @@ async function openVytazenieModal() {
   if (_vytazenieCache) { el.innerHTML = _vytazenieCache; return; }
   el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
   try {
-    const workload = {}; // specName → [{taskName, projectName, cislo, status, faza}]
+    const workload = {}; // specName → [{taskName, projectName, cislo, status, faza, fromCache}]
 
-    // 1. Primary source: Supabase invitations (sent/viewed/submitted/selected = aktívni)
+    // 1. Primary: ext úlohy z už-načítaného caflouTasksCache (otvorené projekty v tejto session)
+    for (const [cislo, tasks] of Object.entries(caflouTasksCache)) {
+      const proj = projects.find(p => p.cislo === cislo);
+      if (!proj) continue;
+      for (const t of tasks) {
+        if (t.finished) continue;
+        if (!(t.tags||[]).includes('ext')) continue;
+        const specName = extSpecOverride[String(t.id)] || (extSpecCache[cislo]||{})[t.name] || '';
+        if (!specName) continue;
+        if (!workload[specName]) workload[specName] = [];
+        workload[specName].push({ taskName: t.name, projectName: proj.nazov, cislo, status: t.task_status_name||'—', faza: proj.faza, fromCache: true });
+      }
+    }
+
+    // 2. Doplnok: Supabase ponuky (invitations) – pridaj čo ešte nie je z úloh
     const { data: invs } = await sb.from('invitations')
       .select('specialist_id, status, requests!inner(notes, project_cislo)')
       .neq('status', 'rejected');
@@ -1451,45 +1465,19 @@ async function openVytazenieModal() {
       if (!cislo || !taskName || !specName) return;
       const proj = projects.find(p => p.cislo === cislo);
       if (!proj) return;
-      // Get task status from cache if available
-      let taskStatus = '—';
-      if (caflouTasksCache[cislo]) {
-        const t = caflouTasksCache[cislo].find(x => x.name === taskName && !x.finished);
-        if (t) taskStatus = t.task_status_name || '—';
-      }
+      const already = (workload[specName]||[]).some(x => x.cislo === cislo && x.taskName === taskName);
+      if (already) return;
       if (!workload[specName]) workload[specName] = [];
-      workload[specName].push({ taskName, projectName: proj.nazov, cislo, status: taskStatus, invStatus: inv.status, faza: proj.faza });
+      workload[specName].push({ taskName, projectName: proj.nazov, cislo, status: '—', invStatus: inv.status, faza: proj.faza });
     });
 
-    // 2. Secondary: extSpecOverride from already-cached task data
-    for (const [taskIdStr, specName] of Object.entries(extSpecOverride)) {
-      const taskId = parseInt(taskIdStr);
-      const proj = projects.find(p => (p.caflou_task_ids||[]).includes(taskId));
-      if (!proj) continue;
-      const cached = caflouTasksCache[proj.cislo];
-      if (!cached) continue;
-      const t = cached.find(x => x.id === taskId && !x.finished);
-      if (!t) continue;
-      const already = (workload[specName]||[]).some(x => x.taskName === t.name && x.cislo === proj.cislo);
-      if (already) continue;
-      if (!workload[specName]) workload[specName] = [];
-      workload[specName].push({ taskName: t.name, projectName: proj.nazov, cislo: proj.cislo, status: t.task_status_name||'—', faza: proj.faza });
-    }
-
     // 3. Render
+    const cachedProjCount = Object.keys(caflouTasksCache).length;
     const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
     if (!sorted.length) {
-      const diagInvs = (invs||[]).length;
-      const diagSpecs = (specs||[]).length;
-      const diagSpecIds = [...new Set((invs||[]).map(i=>i.specialist_id))].length;
-      const diagProj0 = (invs||[]).length ? (() => { const c=(invs[0].requests||{}).project_cislo; return projects.find(p=>p.cislo===c) ? 'ok' : `projekt '${c}' nenájdený`; })() : 'n/a';
-      el.innerHTML = `<div style="color:var(--text3);padding:12px;font-size:11px">
-        Žiadne pridelené externé úlohy<br>
-        <span style="color:var(--text3);opacity:0.7">
-          invitations: ${diagInvs} | specIds: ${diagSpecIds} | specialists načítaných: ${diagSpecs}<br>
-          projekt test: ${diagProj0}<br>
-          projects.length: ${projects.length}
-        </span>
+      el.innerHTML = `<div style="color:var(--text3);padding:12px;text-align:center">
+        Žiadne pridelené externé úlohy
+        ${cachedProjCount === 0 ? '<br><span style="font-size:11px">Otvor projekty v prehľade – úlohy sa načítajú pri prvom otvorení.</span>' : ''}
       </div>`;
       return;
     }
