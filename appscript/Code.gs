@@ -319,6 +319,7 @@ function akcia_zhrniPortfolio(req) {
 
 // ── GEMINI VOLANIE ────────────────────────────────────────────────────────
 function volajGemini(prompt) {
+  var code, rawText;
   for (var pokus = 0; pokus < 3; pokus++) {
     var response = UrlFetchApp.fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=' + GEMINI_API_KEY,
@@ -332,15 +333,25 @@ function volajGemini(prompt) {
         muteHttpExceptions: true
       }
     );
-    var code = response.getResponseCode();
-    if (code === 503 || code === 429) { Utilities.sleep(5000); continue; }
-    var result = JSON.parse(response.getContentText());
+    code = response.getResponseCode();
+    rawText = response.getContentText();
+    if (code === 503) { Utilities.sleep(5000); continue; }
+    if (code === 429) {
+      try {
+        var errBody = JSON.parse(rawText);
+        var msg = (errBody.error && errBody.error.message) ? errBody.error.message : rawText.slice(0, 200);
+        throw new Error('Gemini 429: ' + msg);
+      } catch(pe) { if (pe.message.indexOf('429') !== -1) throw pe; }
+      throw new Error('Gemini 429: ' + rawText.slice(0, 200));
+    }
+    if (code !== 200) throw new Error('Gemini HTTP ' + code + ': ' + rawText.slice(0, 200));
+    var result = JSON.parse(rawText);
     if (!result.candidates || !result.candidates[0]) {
-      throw new Error('Prázdna odpoveď: ' + JSON.stringify(result).slice(0, 200));
+      throw new Error('Gemini prázdna odpoveď: ' + JSON.stringify(result).slice(0, 200));
     }
     return result.candidates[0].content.parts[0].text;
   }
-  throw new Error(code === 429 ? 'Gemini rate limit – počkaj minútu a skús znova' : 'Gemini nedostupný po 3 pokusoch');
+  throw new Error('Gemini HTTP ' + code + ' po 3 pokusoch: ' + (rawText||'').slice(0, 200));
 }
 
 function testPeople() {
