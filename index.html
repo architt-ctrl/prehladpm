@@ -2166,10 +2166,13 @@ function toggleTaskSelection(cislo, taskId) {
 function bulkSelectAll(cislo) {
   const tasks = caflouTasksCache[cislo]; if (!tasks) return;
   const curFilter = caflouTaskFazaFilter[cislo] || null;
-  const active = (curFilter ? tasks.filter(t => !t.finished && getTaskFazaTag(t) === curFilter) : tasks.filter(t => !t.finished));
+  // include untagged tasks (always visible) when filter is active
+  const visible = curFilter
+    ? tasks.filter(t => !t.finished && (getTaskFazaTag(t) === curFilter || !getTaskFazaTag(t)))
+    : tasks.filter(t => !t.finished);
   const selSet = caflouTaskSelected[cislo] || new Set();
-  if (selSet.size === active.length) caflouTaskSelected[cislo] = new Set();
-  else caflouTaskSelected[cislo] = new Set(active.map(t => t.id));
+  if (selSet.size === visible.length) caflouTaskSelected[cislo] = new Set();
+  else caflouTaskSelected[cislo] = new Set(visible.map(t => t.id));
   refreshUlohy(cislo);
 }
 async function bulkSetStatus(cislo, statusName) {
@@ -2371,10 +2374,18 @@ function buildCaflouTasksHtml(cislo) {
     `<div style="font-size:10px;font-weight:600;color:var(--text3);padding:${first?'4px':'8px'} 0 2px 0;text-transform:uppercase;letter-spacing:0.5px">${txt}</div>`;
   const internal = active.filter(t => !(t.tags || []).includes('ext'));
   const external = active.filter(t => (t.tags || []).includes('ext'));
+  // untagged tasks always visible even when filter is active
+  const untagged = curFilter ? allActive.filter(t => !getTaskFazaTag(t)) : [];
+  const untaggedExt = untagged.filter(t => (t.tags||[]).includes('ext'));
+  const untaggedInt = untagged.filter(t => !(t.tags||[]).includes('ext'));
   let html = filterHtml;
-  if (!active.length && curFilter) html += `<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy pre filter ${curFilter}</div>`;
   if (external.length) html += label('Externé', false) + external.map(rowHtml).join('');
   if (internal.length) html += label('Interné', false) + internal.map(rowHtml).join('');
+  if (untagged.length) {
+    html += `<div style="font-size:10px;font-weight:600;color:var(--text3);padding:8px 0 2px 0;text-transform:uppercase;letter-spacing:0.5px;opacity:0.6">Bez tagu</div>`;
+    if (untaggedExt.length) html += untaggedExt.map(rowHtml).join('');
+    if (untaggedInt.length) html += untaggedInt.map(rowHtml).join('');
+  }
   const doneNote = doneCount ? `<div style="font-size:10px;color:var(--text3);padding:4px 0">${doneCount} ukončených úloh skrytých</div>` : '';
   if (selectMode) {
     const selCount = selSet.size;
