@@ -1479,8 +1479,19 @@ async function openVytazenieModal() {
     // 3. Render
     const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
     if (!sorted.length) {
-      _vytazenieCache = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelené externé úlohy</div>';
-      el.innerHTML = _vytazenieCache; return;
+      const diagInvs = (invs||[]).length;
+      const diagSpecs = (specs||[]).length;
+      const diagSpecIds = [...new Set((invs||[]).map(i=>i.specialist_id))].length;
+      const diagProj0 = (invs||[]).length ? (() => { const c=(invs[0].requests||{}).project_cislo; return projects.find(p=>p.cislo===c) ? 'ok' : `projekt '${c}' nenájdený`; })() : 'n/a';
+      el.innerHTML = `<div style="color:var(--text3);padding:12px;font-size:11px">
+        Žiadne pridelené externé úlohy<br>
+        <span style="color:var(--text3);opacity:0.7">
+          invitations: ${diagInvs} | specIds: ${diagSpecIds} | specialists načítaných: ${diagSpecs}<br>
+          projekt test: ${diagProj0}<br>
+          projects.length: ${projects.length}
+        </span>
+      </div>`;
+      return;
     }
     const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
     const INV_STATUS_COL = { 'selected':'var(--green)', 'submitted':'var(--blue)', 'viewed':'var(--text3)', 'sent':'var(--text3)' };
