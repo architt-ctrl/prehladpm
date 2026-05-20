@@ -2297,6 +2297,41 @@ async function bulkDeleteTasks(cislo) {
     headers: { Authorization: `Bearer ${cfg.caflou_key}` }
   }).catch(() => {})));
 }
+async function createDopytFromTask(cislo, taskId) {
+  const p = projects.find(x => x.cislo === cislo); if (!p) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const t = tasks.find(x => x.id === taskId); if (!t) return;
+  const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
+  const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
+  const profession = uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '';
+  try {
+    const { error } = await sb.from('requests').insert({
+      project_cislo: p.cislo, project_name: p.nazov,
+      profession, phases: [], notes: t.name, status: 'active',
+    });
+    if (error) throw new Error(error.message);
+    showToast('Dopyt vytvorený ✓', 'ok');
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
+async function bulkCreateDopyty(cislo) {
+  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
+  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
+  const p = projects.find(x => x.cislo === cislo); if (!p) return;
+  const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
+  const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
+  const rows = tasks.filter(t => selSet.has(t.id)).map(t => ({
+    project_cislo: p.cislo, project_name: p.nazov,
+    profession: uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '',
+    phases: [], notes: t.name, status: 'active',
+  }));
+  try {
+    const { error } = await sb.from('requests').insert(rows);
+    if (error) throw new Error(error.message);
+    showToast(`${rows.length} ${rows.length === 1 ? 'dopyt vytvorený' : 'dopyty vytvorené'} ✓`, 'ok');
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
 function buildCaflouTasksHtml(cislo) {
   const tasks = caflouTasksCache[cislo];
   if (!tasks) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div>';
@@ -2350,6 +2385,10 @@ function buildCaflouTasksHtml(cislo) {
     const checkboxHtml = selectMode ? `<input type="checkbox" ${isChecked?'checked':''} onclick="event.stopPropagation();toggleTaskSelection('${cislo}',${t.id})"
       style="width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--text)">` : '';
     const actionBtns = selectMode ? '' : `
+        ${isExt ? `<button onclick="event.stopPropagation();createDopytFromTask('${cislo}',${t.id})"
+          title="Vytvoriť dopyt" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
+          width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
+          display:flex;align-items:center;justify-content:center">📋</button>` : ''}
         <button onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})"
           title="Upraviť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
@@ -2458,6 +2497,9 @@ function buildCaflouTasksHtml(cislo) {
       <button onclick="event.stopPropagation();bulkDeleteTasks('${cislo}')" ${selCount===0?'disabled':''}
         style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--red)44;background:none;color:var(--red);${selCount===0?'opacity:0.4':''}">
         ✕ Vymazať</button>
+      <button onclick="event.stopPropagation();bulkCreateDopyty('${cislo}')" ${selCount===0?'disabled':''}
+        style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--blue)44;background:none;color:var(--blue);${selCount===0?'opacity:0.4':''}">
+        📋 Dopyty</button>
     </div>`;
     return html + doneNote + bulkBar;
   }
