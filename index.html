@@ -738,6 +738,13 @@ nav {
     </svg>
     <span class="hbtn-lbl">Stav</span>
   </button>
+  <button class="hbtn" onclick="openVytazenieModal()" title="Vytaženie profesistov">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+    </svg>
+    <span class="hbtn-lbl">Tím</span>
+  </button>
   <button class="hbtn" onclick="toggleCfg()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="12" r="3"></circle>
@@ -1184,6 +1191,16 @@ nav {
 <div class="toast" id="toast"></div>
 
 <!-- MODAL – STAV PORTFÓLIA (Gemini) -->
+<div class="overlay hidden" id="vytazenieModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Vytaženie profesistov</h3>
+    <div id="vytazenieContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('vytazenieModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="portfolioModal">
   <div class="modal" style="max-width:600px">
     <h3>Celkový stav portfólia</h3>
@@ -1404,6 +1421,67 @@ function saveCfg() {
   document.getElementById('cfgWrap').classList.add('hidden');
   showToast('Uložené – synchronizujem…', 'ok');
   syncData();
+}
+
+// ── VYTAŽENIE ─────────────────────────────────────────────────────────────
+const INV_STATUS_SK    = { sent:'Pozvaný', viewed:'Pozrel', submitted:'Ponúkol cenu', selected:'Vybraný' };
+const INV_STATUS_COLOR = { sent:'var(--text3)', viewed:'var(--orange)', submitted:'var(--blue)', selected:'var(--green)' };
+
+async function openVytazenieModal() {
+  document.getElementById('vytazenieModal').classList.remove('hidden');
+  const el = document.getElementById('vytazenieContent');
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  try {
+    const { data: invData, error } = await sb.from('invitations')
+      .select('status,specialist_id,request_id')
+      .in('status', ['sent','viewed','submitted','selected']);
+    if (error) throw error;
+    if (!invData?.length) { el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelenia</div>'; return; }
+
+    const specIds = [...new Set(invData.map(i => i.specialist_id))];
+    const reqIds  = [...new Set(invData.map(i => i.request_id))];
+    const [{ data: specs }, { data: reqs }] = await Promise.all([
+      sb.from('specialists').select('id,name,profession').in('id', specIds),
+      sb.from('requests').select('id,project_cislo,project_name,notes,profession,status').in('id', reqIds),
+    ]);
+
+    const reqById  = Object.fromEntries((reqs||[]).map(r => [r.id, r]));
+    const specById = Object.fromEntries((specs||[]).map(s => [s.id, s]));
+
+    const workload = {};
+    invData.forEach(inv => {
+      const req = reqById[inv.request_id];
+      if (!req || req.status === 'closed') return;
+      if (!workload[inv.specialist_id]) workload[inv.specialist_id] = [];
+      workload[inv.specialist_id].push({ req, status: inv.status });
+    });
+
+    const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
+    if (!sorted.length) { el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne aktívne pridelenia</div>'; return; }
+
+    el.innerHTML = sorted.map(([specId, items]) => {
+      const spec = specById[specId] || { name:'Neznámy', profession:'' };
+      const rows = items.map(({ req, status }) => {
+        const col  = INV_STATUS_COLOR[status] || 'var(--text3)';
+        const stSk = INV_STATUS_SK[status] || status;
+        const label = req.notes || req.profession || '—';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border)44;font-size:12px">
+          <span style="flex:1;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${req.project_cislo||''} – ${req.project_name||''}</span>
+          <span style="color:var(--text3);font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0">${label}</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${stSk}</span>
+        </div>`;
+      }).join('');
+      return `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-weight:600;font-size:13px">${spec.name}</span>
+          <span style="font-size:11px;color:var(--text3)">${spec.profession||''}</span>
+          <span style="margin-left:auto;font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--bg3);color:var(--text2)">${items.length}</span>
+        </div>${rows}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
+  }
 }
 
 // ── SYNC ──────────────────────────────────────────────────────────────────
