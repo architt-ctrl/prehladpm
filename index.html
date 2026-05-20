@@ -1439,29 +1439,21 @@ async function openVytazenieModal() {
       (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
     );
 
-    // Supabase: globálna mapa {cislo: {taskName: specName}} zo selected/submitted invitations
-    const sbSpecMap = {};
+    // Supabase: task_specialists → mapa task_id → specialist_name
+    const tsMap = {};
     try {
-      const { data: invData } = await sb.from('invitations')
-        .select('specialist_id, requests!inner(notes, project_cislo)')
-        .in('status', ['selected', 'submitted']);
-      const sIds = [...new Set((invData||[]).map(i => i.specialist_id))];
-      const { data: sData } = sIds.length ? await sb.from('specialists').select('id,name').in('id', sIds) : { data: [] };
-      const sById = Object.fromEntries((sData||[]).map(s => [s.id, s.name]));
-      (invData||[]).forEach(inv => {
-        const c = inv.requests?.project_cislo, n = inv.requests?.notes, sn = sById[inv.specialist_id];
-        if (c && n && sn) { if (!sbSpecMap[c]) sbSpecMap[c] = {}; sbSpecMap[c][n] = sn; }
-      });
+      const { data: ts } = await sb.from('task_specialists').select('task_id,specialist_name');
+      (ts||[]).forEach(row => { tsMap[String(row.task_id)] = row.specialist_name; });
     } catch(e) {}
 
     const workload = {};
-    const addEntry = (specName, taskName, proj, status, invStatus) => {
+    const addEntry = (specName, taskName, proj, status) => {
       if (!workload[specName]) workload[specName] = [];
       const dup = workload[specName].some(x => x.cislo === proj.cislo && x.taskName === taskName);
-      if (!dup) workload[specName].push({ taskName, projectName: proj.nazov, cislo: proj.cislo, status, invStatus, faza: proj.faza });
+      if (!dup) workload[specName].push({ taskName, projectName: proj.nazov, cislo: proj.cislo, status, faza: proj.faza });
     };
 
-    // Scan všetkých Caflou úloh (paginated) – špecialist = extSpecOverride alebo sbSpecMap
+    // Scan všetkých Caflou úloh (paginated) – špecialist = task_specialists alebo extSpecOverride
     let page = 1, hasMore = true;
     while (hasMore) {
       el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam strana ${page}…</div>`;
@@ -1471,8 +1463,8 @@ async function openVytazenieModal() {
       (d.results || []).forEach(t => {
         if (t.finished || t.trash) return;
         const p = projByTaskId[t.id]; if (!p) return;
-        const specName = extSpecOverride[String(t.id)] || (sbSpecMap[p.cislo]||{})[t.name] || '';
-        if (specName) addEntry(specName, t.name, p, t.task_status_name||'—', null);
+        const specName = tsMap[String(t.id)] || extSpecOverride[String(t.id)] || '';
+        if (specName) addEntry(specName, t.name, p, t.task_status_name||'—');
       });
       hasMore = !!d.next_page;
       page++;
@@ -1485,18 +1477,13 @@ async function openVytazenieModal() {
       return;
     }
     const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
-    const INV_STATUS_COL = { 'selected':'var(--green)', 'submitted':'var(--blue)', 'viewed':'var(--text3)', 'sent':'var(--text3)' };
-    const INV_STATUS_LBL = { 'selected':'vybraný', 'submitted':'cena odoslaná', 'viewed':'pozrel', 'sent':'pozvaný' };
     _vytazenieCache = sorted.map(([specName, items]) => {
       const rows = items.map(item => {
-        const showStatus = item.status !== '—' ? item.status : null;
-        const showInv = item.invStatus ? INV_STATUS_LBL[item.invStatus] || item.invStatus : null;
-        const badgeText = showStatus || showInv || '—';
-        const col = showStatus ? (TASK_STATUS_COL[item.status] || 'var(--text3)') : (INV_STATUS_COL[item.invStatus] || 'var(--text3)');
+        const col = TASK_STATUS_COL[item.status] || 'var(--text3)';
         return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border)44;font-size:12px">
           <span style="flex:1;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.cislo} – ${item.projectName}</span>
           <span style="color:var(--text3);font-size:11px;flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.taskName}</span>
-          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${badgeText}</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${item.status}</span>
         </div>`;
       }).join('');
       return `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
@@ -2270,18 +2257,9 @@ async function loadCaflouTasks(cislo, caflou_id) {
     }
     caflouTasksCache[cislo] = all;
     try {
-      const { data: reqs } = await sb.from('requests').select('id,profession,notes').eq('project_cislo', cislo);
-      if (reqs?.length) {
-        const reqIds = reqs.map(r => r.id);
-        const { data: invs } = await sb.from('invitations').select('request_id,specialist_id').eq('status','selected').in('request_id', reqIds);
-        if (invs?.length) {
-          const specIds = [...new Set(invs.map(i => i.specialist_id))];
-          const { data: specs } = await sb.from('specialists').select('id,name').in('id', specIds);
-          const specById = Object.fromEntries((specs||[]).map(s => [s.id, s.name]));
-          const invByReq = Object.fromEntries((invs||[]).map(i => [i.request_id, specById[i.specialist_id]||'']));
-          extSpecCache[cislo] = Object.fromEntries(reqs.map(r => [r.notes, invByReq[r.id]||'']));
-        } else { extSpecCache[cislo] = {}; }
-      }
+      const { data: ts } = await sb.from('task_specialists').select('task_id,specialist_name').eq('project_cislo', cislo);
+      (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
+      if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
     } catch(e) {}
     el.innerHTML = buildCaflouTasksHtml(cislo);
   } catch(e) {
@@ -2668,6 +2646,11 @@ async function saveCaflouTaskEdit(cislo, task_id) {
     if (specEl.value) extSpecOverride[String(task_id)] = specEl.value;
     else delete extSpecOverride[String(task_id)];
     localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
+    if (specEl.value) {
+      sb.from('task_specialists').upsert({ task_id, task_name: t.name, project_cislo: cislo, specialist_name: specEl.value, updated_at: new Date().toISOString() }).catch(() => {});
+    } else {
+      sb.from('task_specialists').delete().eq('task_id', task_id).catch(() => {});
+    }
     if (newExt && specEl.value) linkSpecialistToProject(cislo, specEl.value).catch(() => {});
   }
   if (name) t.name = name;
