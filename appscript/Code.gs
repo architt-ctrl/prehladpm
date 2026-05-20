@@ -198,7 +198,7 @@ function doPost(e) {
 
 function akcia_zhrniProjekt(req) {
   // Ak maily neprídu z frontendu, načítame ich interne (jeden request namiesto dvoch)
-  var maily = (req.maily && req.maily.length) ? req.maily : (akcia_getMaily(req).maily || []);
+  var maily = (req.maily && req.maily.length) ? req.maily : (akcia_getMaily(req).maily || []).slice(-6);
   var mailyText = '';
   if (maily.length) {
     mailyText = '\n\nPosledné emaily:\n' + maily.map(function(m) {
