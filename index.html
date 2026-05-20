@@ -1207,6 +1207,17 @@ nav {
   </div>
 </div>
 
+<!-- MODAL – ŠABLÓNY ÚLOH -->
+<div class="overlay hidden" id="tmplMgrModal">
+  <div class="modal" style="max-width:540px">
+    <h3 id="tmplMgrTitle">Šablóny úloh</h3>
+    <div id="tmplMgrContent" style="min-height:60px;max-height:65vh;overflow-y:auto"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('tmplMgrModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
 <!-- NAV -->
 <nav>
   <div class="ntab active" id="ntStudia" onclick="goTab(&#39;Studia&#39;)">
@@ -1295,6 +1306,11 @@ const TASK_FAZA_COLOR = { 'AŠ':'#7c5cbf', 'SZ':'#2196F3', 'DSP':'#FF9800', 'PS'
 let caflouTaskFazaFilter = {}; // {cislo: tag|null}
 let caflouTaskSelectMode = {}; // {cislo: bool}
 let caflouTaskSelected = {};   // {cislo: Set<task_id>}
+let taskTemplates = null;      // [{id, name, tasks}] — loaded once from Supabase
+let _tmplLoading = false;
+let _tmplEditId = null;
+let _tmplEditName = '';
+let _tmplEditTasks = [];
 let activeStat = null;
 let stavMap   = JSON.parse(localStorage.getItem('pmStav')   || '{}');  // {cislo: 'pripravovany'|'aktivny'|'pozastaveny'}
 let dennikMap = JSON.parse(localStorage.getItem('pmDennik') || '{}');  // {cislo: [{datum, text}]}
@@ -1834,9 +1850,25 @@ function buildDetailHtml(p) {
         <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer">Zrušiť</button>
       </div>
     </div>
-    <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='flex';document.getElementById('uf-name-${p.cislo}').focus()"
-      style="margin-top:6px;background:var(--text);color:#fff;border:none;
-      border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;">+ Úloha</button>
+    <div id="pd-tmpl-${p.cislo}" style="display:none;margin-top:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;gap:8px;flex-direction:column">
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="tmpl-sel-${p.cislo}" class="pd-sel" style="flex:1;font-size:12px" onchange="renderTmplPicker('${p.cislo}',this.value)">
+          <option value="">— vyber šablónu —</option>
+        </select>
+        <button onclick="openTmplMgr()" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text3);cursor:pointer;flex-shrink:0;white-space:nowrap">Spravovať</button>
+      </div>
+      <div id="tmpl-tasks-${p.cislo}"></div>
+      <div style="display:flex;gap:6px">
+        <button onclick="applyTmplTasks('${p.cislo}')" style="flex:1;background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:600;cursor:pointer">Načítať označené</button>
+        <button onclick="document.getElementById('pd-tmpl-${p.cislo}').style.display='none'" style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer">Zrušiť</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+      <button onclick="document.getElementById('pd-ulohy-form-${p.cislo}').style.display='flex';document.getElementById('uf-name-${p.cislo}').focus()"
+        style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">+ Úloha</button>
+      <button onclick="openTmplPicker('${p.cislo}')"
+        style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📋 Šablóna</button>
+    </div>
   </div>`;
 }
 
@@ -2537,6 +2569,213 @@ function filterSpecDropdown(editKey) {
   const cur = specSel.value;
   specSel.innerHTML = '<option value="">— bez špecialistu —</option>' +
     filtered.map(s => `<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
+}
+
+// ── ŠABLÓNY ÚLOH ─────────────────────────────────────────────────────────
+async function loadTaskTemplates() {
+  if (taskTemplates !== null || _tmplLoading) return;
+  _tmplLoading = true;
+  try {
+    const { data, error } = await sb.from('task_templates').select('*').order('created_at');
+    if (error) throw new Error(error.message);
+    taskTemplates = data || [];
+  } catch(e) { taskTemplates = []; showToast('Chyba načítania šablón: ' + e.message, 'err'); }
+  finally { _tmplLoading = false; }
+}
+
+async function openTmplMgr() {
+  document.getElementById('tmplMgrModal').classList.remove('hidden');
+  document.getElementById('tmplMgrContent').innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 0">Načítavam…</div>';
+  await loadTaskTemplates();
+  renderTmplMgrList();
+}
+
+function renderTmplMgrList() {
+  document.getElementById('tmplMgrTitle').textContent = 'Šablóny úloh';
+  const templates = taskTemplates || [];
+  let html = '';
+  if (!templates.length) html += '<div style="font-size:12px;color:var(--text3);padding:8px 0">Žiadne šablóny.</div>';
+  else html += templates.map(t => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;font-size:13px;font-weight:500">${t.name}</span>
+      <span style="font-size:11px;color:var(--text3);flex-shrink:0">${(t.tasks||[]).length} úloh</span>
+      <button onclick="openTmplEdit('${t.id}')"
+        style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text2);cursor:pointer">Upraviť</button>
+      <button onclick="deleteTmpl('${t.id}')"
+        style="font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid var(--red)44;background:none;color:var(--red);cursor:pointer">✕</button>
+    </div>`).join('');
+  html += `<button onclick="openTmplEdit(null)"
+    style="margin-top:12px;background:var(--text);color:#fff;border:none;border-radius:7px;
+    padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">+ Nová šablóna</button>`;
+  document.getElementById('tmplMgrContent').innerHTML = html;
+}
+
+function openTmplEdit(id) {
+  const tmpl = id ? (taskTemplates||[]).find(t => t.id === id) : null;
+  _tmplEditId = id || null;
+  _tmplEditName = tmpl?.name || '';
+  _tmplEditTasks = tmpl ? JSON.parse(JSON.stringify(tmpl.tasks || [])) : [];
+  renderTmplEditForm();
+}
+
+function _syncTmplEdit() {
+  _tmplEditName = document.getElementById('tmpl-edit-name')?.value ?? _tmplEditName;
+  _tmplEditTasks = _tmplEditTasks.map((_, idx) => ({
+    name: document.getElementById(`ttr-name-${idx}`)?.value?.trim() || '',
+    faza: document.getElementById(`ttr-faza-${idx}`)?.value || null,
+    ext:  document.getElementById(`ttr-ext-${idx}`)?.dataset.ext === '1',
+  }));
+}
+
+function renderTmplEditForm() {
+  document.getElementById('tmplMgrTitle').textContent = _tmplEditId ? 'Upraviť šablónu' : 'Nová šablóna';
+  const fazaOpts = (cur) => `<option value="">—</option>` +
+    TASK_FAZA_TAGS.map(f => `<option value="${f}"${f===cur?' selected':''}>${f}</option>`).join('');
+  const taskRows = _tmplEditTasks.map((t, idx) => `
+    <div style="display:flex;gap:5px;align-items:center;margin-bottom:4px">
+      <input id="ttr-name-${idx}" value="${(t.name||'').replace(/"/g,'&quot;')}" placeholder="Názov úlohy"
+        class="pd-sel" style="flex:1;font-size:12px">
+      <select id="ttr-faza-${idx}" class="pd-sel" style="font-size:11px;width:58px">${fazaOpts(t.faza)}</select>
+      <button id="ttr-ext-${idx}" data-ext="${t.ext?'1':'0'}" onclick="toggleTmplTaskExt(${idx})"
+        style="font-size:10px;padding:2px 7px;border-radius:6px;border:1px solid var(--border);background:none;
+        color:${t.ext?'var(--green)':'var(--text3)'};cursor:pointer;white-space:nowrap;flex-shrink:0">${t.ext?'Ext':'Int'}</button>
+      <button onclick="removeTmplTaskRow(${idx})"
+        style="width:22px;height:22px;flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
+        cursor:pointer;font-size:12px;color:var(--red)">✕</button>
+    </div>`).join('');
+  document.getElementById('tmplMgrContent').innerHTML = `
+    <div style="margin-bottom:8px">
+      <input id="tmpl-edit-name" value="${_tmplEditName.replace(/"/g,'&quot;')}" placeholder="Názov šablóny"
+        class="dennik-input" style="width:100%;box-sizing:border-box;font-size:14px;font-weight:600">
+    </div>
+    <div id="ttr-list" style="margin-bottom:6px">${taskRows}</div>
+    <button onclick="addTmplTaskRow()"
+      style="font-size:11px;padding:2px 10px;border-radius:6px;border:1px solid var(--border);background:none;
+      color:var(--text3);cursor:pointer;margin-bottom:12px">+ úloha</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="saveTmplEdit()"
+        style="flex:1;background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 14px;
+        font-size:12px;font-weight:600;cursor:pointer">Uložiť</button>
+      ${_tmplEditId ? `<button onclick="deleteTmpl('${_tmplEditId}')"
+        style="background:none;border:1px solid var(--red)44;border-radius:7px;padding:6px 14px;
+        font-size:12px;cursor:pointer;color:var(--red)">Vymazať šablónu</button>` : ''}
+      <button onclick="renderTmplMgrList()"
+        style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 14px;
+        font-size:12px;cursor:pointer">← Späť</button>
+    </div>`;
+}
+
+function toggleTmplTaskExt(idx) {
+  _syncTmplEdit();
+  _tmplEditTasks[idx].ext = !_tmplEditTasks[idx].ext;
+  renderTmplEditForm();
+}
+
+function addTmplTaskRow() {
+  _syncTmplEdit();
+  _tmplEditTasks.push({ name: '', faza: null, ext: false });
+  renderTmplEditForm();
+  setTimeout(() => document.getElementById(`ttr-name-${_tmplEditTasks.length - 1}`)?.focus(), 50);
+}
+
+function removeTmplTaskRow(idx) {
+  _syncTmplEdit();
+  _tmplEditTasks.splice(idx, 1);
+  renderTmplEditForm();
+}
+
+async function saveTmplEdit() {
+  _syncTmplEdit();
+  if (!_tmplEditName.trim()) { showToast('Zadaj názov šablóny', 'err'); return; }
+  const name = _tmplEditName.trim();
+  const tasks = _tmplEditTasks.filter(t => t.name.trim()).map(t => ({
+    name: t.name.trim(), faza: t.faza || null, ext: !!t.ext
+  }));
+  try {
+    if (_tmplEditId) {
+      const { error } = await sb.from('task_templates').update({ name, tasks }).eq('id', _tmplEditId);
+      if (error) throw new Error(error.message);
+      const found = (taskTemplates||[]).find(t => t.id === _tmplEditId);
+      if (found) { found.name = name; found.tasks = tasks; }
+    } else {
+      const { data, error } = await sb.from('task_templates').insert({ name, tasks }).select().single();
+      if (error) throw new Error(error.message);
+      if (!taskTemplates) taskTemplates = [];
+      taskTemplates.push(data);
+    }
+    showToast('Šablóna uložená ✓', 'ok');
+    renderTmplMgrList();
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
+async function deleteTmpl(id) {
+  if (!confirm('Vymazať šablónu?')) return;
+  try {
+    const { error } = await sb.from('task_templates').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+    taskTemplates = (taskTemplates||[]).filter(t => t.id !== id);
+    showToast('Šablóna vymazaná', 'ok');
+    renderTmplMgrList();
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
+async function openTmplPicker(cislo) {
+  const el = document.getElementById('pd-tmpl-' + cislo);
+  if (!el) return;
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  await loadTaskTemplates();
+  const sel = document.getElementById('tmpl-sel-' + cislo);
+  if (sel) {
+    sel.innerHTML = '<option value="">— vyber šablónu —</option>' +
+      (taskTemplates||[]).map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  }
+  document.getElementById('tmpl-tasks-' + cislo).innerHTML = '';
+  el.style.display = 'flex';
+}
+
+function renderTmplPicker(cislo, tmplId) {
+  const container = document.getElementById('tmpl-tasks-' + cislo);
+  if (!container) return;
+  const tmpl = (taskTemplates||[]).find(t => t.id === tmplId);
+  if (!tmpl || !tmpl.tasks.length) { container.innerHTML = ''; return; }
+  container.innerHTML = tmpl.tasks.map((t, idx) => {
+    const fazaCol = t.faza ? TASK_FAZA_COLOR[t.faza] : null;
+    return `<label style="display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--border);cursor:pointer;font-size:12px">
+      <input type="checkbox" checked data-idx="${idx}" style="width:14px;height:14px;accent-color:var(--text)">
+      <span style="flex:1">${t.name}</span>
+      ${fazaCol ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;color:#fff;background:${fazaCol}">${t.faza}</span>` : ''}
+      <span style="font-size:10px;color:${t.ext?'var(--green)':'var(--text3)'}">${t.ext?'Ext':'Int'}</span>
+    </label>`;
+  }).join('');
+}
+
+async function applyTmplTasks(cislo) {
+  const container = document.getElementById('tmpl-tasks-' + cislo);
+  if (!container) return;
+  const checked = [...container.querySelectorAll('input[type=checkbox]:checked')];
+  if (!checked.length) { showToast('Označ aspoň jednu úlohu', 'err'); return; }
+  const tmplId = document.getElementById('tmpl-sel-' + cislo)?.value;
+  const tmpl = (taskTemplates||[]).find(t => t.id === tmplId);
+  if (!tmpl) return;
+  const selectedTasks = checked.map(cb => tmpl.tasks[Number(cb.dataset.idx)]).filter(Boolean);
+  const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
+  document.getElementById('pd-tmpl-' + cislo).style.display = 'none';
+  showToast('Vytváram úlohy…', 'ok');
+  for (const task of selectedTasks) {
+    await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: {
+        name: task.name,
+        task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
+        project_id: p.caflou_id,
+        tags: [task.ext ? 'ext' : null, task.faza || null].filter(Boolean),
+      }})
+    }).catch(() => {});
+  }
+  delete caflouTasksCache[cislo];
+  await loadCaflouTasks(cislo, p.caflou_id);
+  showToast(`${selectedTasks.length} úloh načítaných ✓`, 'ok');
 }
 
 function toggleExtProf(cislo) {
