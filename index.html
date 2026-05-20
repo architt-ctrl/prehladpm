@@ -1283,6 +1283,13 @@ const CAFLOU_USERS = {
   52890:'Erik', 57218:'Veronika', 63559:'Lucia',
 };
 const TASK_FAZA_TAGS  = ['AŠ', 'SZ', 'DSP', 'PS', 'RP', 'INŽ'];
+const CAFLOU_STATUS_TO_FAZA_TAG = {
+  '0_Podklady':'AŠ', '1_Štúdia':'AŠ',
+  '2_SZ':'SZ',
+  '3_DSP':'DSP', '3_PS':'PS',
+  '4_RP':'RP',
+  '5_Inžiniering':'INŽ', '6_Autorský dozor':'INŽ',
+};
 const TASK_FAZA_LABEL = { 'AŠ':'Arch. štúdia', 'SZ':'Stav. zámer', 'DSP':'DSP', 'PS':'Projekt stavby', 'RP':'Real. projekt', 'INŽ':'Inžiniering' };
 const TASK_FAZA_COLOR = { 'AŠ':'#7c5cbf', 'SZ':'#2196F3', 'DSP':'#FF9800', 'PS':'#4CAF50', 'RP':'#E53935', 'INŽ':'#00BCD4' };
 let caflouTaskFazaFilter = {}; // {cislo: tag|null}
@@ -2436,9 +2443,11 @@ function toggleProjDetail(cislo, e) {
   if (!el) return;
   const wasOpen = el.classList.contains('open');
   el.classList.toggle('open');
-  if (!wasOpen && !caflouTasksCache[cislo]) {
+  if (!wasOpen) {
     const p = projects.find(x => x.cislo === cislo);
-    if (p?.caflou_id) loadCaflouTasks(cislo, p.caflou_id);
+    caflouTaskFazaFilter[cislo] = CAFLOU_STATUS_TO_FAZA_TAG[p?.caflou_status] || null;
+    if (p?.caflou_id && !caflouTasksCache[cislo]) loadCaflouTasks(cislo, p.caflou_id);
+    else if (caflouTasksCache[cislo]) refreshUlohy(cislo);
   }
 }
 
