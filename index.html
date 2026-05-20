@@ -1559,10 +1559,41 @@ async function syncData() {
 
     renderAll();
     showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
+    migrateTaskSpecialists().catch(() => {});
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     if (!projects.length) loadDemo();
   } finally { ico.classList.remove('spin'); }
+}
+
+async function migrateTaskSpecialists() {
+  const overrides = Object.entries(extSpecOverride);
+  if (!overrides.length || !cfg.caflou_key) return;
+  const ids = overrides.map(([id]) => parseInt(id));
+  const { data: existing } = await sb.from('task_specialists').select('task_id').in('task_id', ids);
+  const existingIds = new Set((existing||[]).map(r => r.task_id));
+  const missing = overrides.filter(([id]) => !existingIds.has(parseInt(id)));
+  if (!missing.length) return;
+  const projByTaskId = {};
+  projects.forEach(p => (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; }));
+  const rows = [];
+  for (const [taskIdStr, specName] of missing) {
+    const taskId = parseInt(taskIdStr);
+    const proj = projByTaskId[taskId]; if (!proj) continue;
+    let taskName = (caflouTasksCache[proj.cislo]||[]).find(x => x.id === taskId)?.name;
+    if (!taskName) {
+      try {
+        const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${taskId}`,
+          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+        const d = await r.json();
+        taskName = (d.result || d).name;
+      } catch(e) { continue; }
+    }
+    if (taskName) rows.push({ task_id: taskId, task_name: taskName, project_cislo: proj.cislo, specialist_name: specName, updated_at: new Date().toISOString() });
+  }
+  if (!rows.length) return;
+  const { error } = await sb.from('task_specialists').upsert(rows);
+  if (!error) showToast(`Migrovalo ${rows.length} priradeí do Supabase ✓`, 'ok');
 }
 
 function parseCaflouProject(p) {
