@@ -2384,21 +2384,22 @@ function buildCaflouTasksHtml(cislo) {
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
         </div>
-        ${isExt ? (() => {
-          const uniqueProfs = [...new Set((specialistsList||[]).map(s=>s.profession||'').filter(Boolean))].sort();
-          const specProfFromSelected = specName ? ((specialistsList||[]).find(s=>s.name===specName)?.profession||'') : '';
+        ${(() => {
+          const splitProfs = s => (s.profession||'').split(',').map(p=>p.trim()).filter(Boolean);
+          const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
+          const specProfFromSelected = specName ? (splitProfs((specialistsList||[]).find(s=>s.name===specName)||{})[0]||'') : '';
           const tnameLower = t.name.toLowerCase();
           const curSpecProf = specProfFromSelected || uniqueProfs.find(p=>tnameLower.includes(p.toLowerCase())) || '';
           const profOpts = `<option value="">— všetky profesie —</option>` +
             uniqueProfs.map(p=>`<option value="${p}"${curSpecProf===p?' selected':''}>${p}</option>`).join('');
-          const filteredSpecs = curSpecProf ? (specialistsList||[]).filter(s=>s.profession===curSpecProf) : (specialistsList||[]);
+          const filteredSpecs = curSpecProf ? (specialistsList||[]).filter(s=>splitProfs(s).includes(curSpecProf)) : (specialistsList||[]);
           const specOpts = `<option value="">— bez špecialistu —</option>` +
             filteredSpecs.map(s=>`<option value="${s.name}"${specName===s.name?' selected':''}>${s.name}</option>`).join('');
-          return `<div style="display:flex;gap:6px">
+          return `<div id="tspec-section-${editKey}" style="display:${isExt?'flex':'none'};gap:6px">
             <select id="tsprof-${editKey}" class="pd-sel" style="flex:1;font-size:12px" onchange="filterSpecDropdown('${editKey}')">${profOpts}</select>
             <select id="tspec-${editKey}" class="pd-sel" style="flex:1;font-size:12px">${specOpts}</select>
           </div>`;
-        })() : ''}
+        })()}
       </div>
     </div>`;
   }
@@ -2534,9 +2535,13 @@ async function saveCaflouTaskEdit(cislo, task_id) {
 
 function toggleTaskExtBtn(editKey) {
   const btn = document.getElementById('ttype-' + editKey); if (!btn) return;
-  const isExt = btn.dataset.ext === '1';
-  btn.dataset.ext = isExt ? '0' : '1';
-  btn.textContent = isExt ? 'Interné ✓' : 'Externé ✓';
+  const nowExt = btn.dataset.ext !== '1';
+  btn.dataset.ext = nowExt ? '1' : '0';
+  btn.textContent = nowExt ? 'Externé ✓' : 'Interné ✓';
+  btn.style.color = nowExt ? 'var(--green)' : 'var(--text3)';
+  btn.style.borderColor = nowExt ? 'var(--green)' : 'var(--border)';
+  const specSection = document.getElementById('tspec-section-' + editKey);
+  if (specSection) specSection.style.display = nowExt ? 'flex' : 'none';
 }
 
 async function deleteCaflouTask(cislo, task_id) {
@@ -2565,7 +2570,8 @@ function filterSpecDropdown(editKey) {
   const specSel = document.getElementById('tspec-' + editKey);
   if (!profSel || !specSel || !specialistsList) return;
   const prof = profSel.value;
-  const filtered = prof ? specialistsList.filter(s => s.profession === prof) : specialistsList;
+  const splitProfs = s => (s.profession||'').split(',').map(p=>p.trim()).filter(Boolean);
+  const filtered = prof ? specialistsList.filter(s => splitProfs(s).includes(prof)) : specialistsList;
   const cur = specSel.value;
   specSel.innerHTML = '<option value="">— bez špecialistu —</option>' +
     filtered.map(s => `<option value="${s.name}"${cur===s.name?' selected':''}>${s.name}</option>`).join('');
