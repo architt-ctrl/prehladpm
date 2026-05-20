@@ -197,9 +197,11 @@ function doPost(e) {
 }
 
 function akcia_zhrniProjekt(req) {
+  // Ak maily neprídu z frontendu, načítame ich interne (jeden request namiesto dvoch)
+  var maily = (req.maily && req.maily.length) ? req.maily : (akcia_getMaily(req).maily || []);
   var mailyText = '';
-  if (req.maily && req.maily.length) {
-    mailyText = '\n\nPosledné emaily:\n' + req.maily.map(function(m) {
+  if (maily.length) {
+    mailyText = '\n\nPosledné emaily:\n' + maily.map(function(m) {
       var parts = [m.datum, m.od_koho, m.tema];
       if (m.dohodnute) parts.push('Dohodnuté: ' + m.dohodnute);
       if (m.akcia_potrebna && m.akcia_popis) parts.push('Akcia: ' + m.akcia_popis);

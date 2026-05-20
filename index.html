@@ -2650,29 +2650,20 @@ async function geminiZhrnProjekt(cislo) {
   const detailEl = document.getElementById('gem-detail-' + cislo);
   const rowEl    = document.getElementById('gem-row-' + cislo);
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  if (detailEl) detailEl.textContent = 'Načítavam emaily…';
-
-  let maily = [];
-  try {
-    const mr = await fetch(cfg.url, { method:'POST',
-      body: JSON.stringify({ action:'getMaily', cislo }) });
-    const md = await mr.json();
-    maily = (md.maily || []).slice(-10);
-  } catch(e) {}
+  if (detailEl) detailEl.textContent = 'Gemini generuje…';
 
   const entries = (dennikMap[cislo] || []).slice(0, 8)
     .map(d => d.datum + ': ' + d.text).join('\n');
   const text = entries || p.opisAkcie || p.nazov;
-  if (detailEl) detailEl.textContent = 'Gemini generuje…';
 
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60000);
+    const timer = setTimeout(() => ctrl.abort(), 90000);
     const res = await fetch(cfg.url, { method:'POST', signal: ctrl.signal,
       body: JSON.stringify({ action:'zhrniProjekt',
         cislo, nazov:p.nazov,
         faza:[p.faza,p.podfaza,p.podpodfaza].filter(Boolean).join(' › '),
-        text, maily }) });
+        text }) });
     clearTimeout(timer);
     const d = await res.json();
     if (d.ok && d.zhrnutie) {
@@ -2684,7 +2675,7 @@ async function geminiZhrnProjekt(cislo) {
       if (detailEl) detailEl.textContent = 'Chyba: ' + (d.error||'neznáma');
     }
   } catch(e) {
-    if (detailEl) detailEl.textContent = e.name==='AbortError' ? 'Timeout (60s)' : 'Chyba: '+e.message;
+    if (detailEl) detailEl.textContent = e.name==='AbortError' ? 'Timeout (90s) – skús znova' : 'Chyba: '+e.message;
   }
   if (btn) { btn.disabled = false; btn.textContent = '✦ Zhrnúť'; }
 }
