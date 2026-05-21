@@ -118,9 +118,10 @@ CAFLOU_USERS             // user_id → meno
 - `finishCaflouTask` (✓ tlačidlo) nastaví `finished=true` a skryje úlohu
 
 **Task layout (two rows):**
-- Riadok 1: názov úlohy (flex:1) + tlačidlá ✎ ✓ ✕
-- Riadok 2: status `<select>` dropdown (sfarbený) + meno osoby + deadline
+- Riadok 1: názov úlohy (flex:1, kliknuteľný — otvára edit) + tlačidlá ✓ ✕
+- Riadok 2: status `<select>` dropdown (sfarbený) + meno osoby + deadline + posledná poznámka (skrátená)
 - Externé úlohy zobrazujú špecialistu (zelené); interné zobrazujú Caflou assignee (šedé)
+- Edit sa otvára kliknutím na názov úlohy (nie cez ✎ ikonu — tá bola odstránená)
 
 **Interné / Externé kategórie:**
 - Rozdelenie podľa Caflou tagu `ext`: `(t.tags||[]).includes('ext')` = externá
@@ -142,12 +143,25 @@ CAFLOU_USERS             // user_id → meno
 **Editovanie a mazanie:**
 - Edit forma má pole pre zmenu názvu (`id="tn-{editKey}"`), user select, date, ext toggle, specialist select (len pre ext)
 - ✕ tlačidlo → `deleteCaflouTask(cislo, task_id)` — confirm → DELETE na Caflou API → remove from cache → refreshUlohy
+- **Supabase fire-and-forget:** `.catch()` na Supabase query builderoch nefunguje — vždy použiť `.then(null, () => {})`
 
-**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`
+**Poznámky k externým úlohám (task notes):**
+- `taskNotesCache = {taskId: [{id,datum,text}]}` — `undefined` = nenačítané, `null` = načítava sa, `[]` = prázdne
+- `taskNotesOpen = new Set()` — ktoré úlohy majú rozbalený zoznam poznámok
+- `preloadTaskNotes(cislo, taskId)` — načíta komentáre z Caflou API pre danú úlohu, volá `refreshUlohy` po dokončení
+- Posledná poznámka sa zobrazuje inline v riadku úlohy (skrátená); kliknutím sa rozbalia všetky
+- Po uložení poznámky (`addTaskNote`) sa zoznam automaticky zavrie (`taskNotesOpen.delete(taskId)`)
+- Komentáre sa filtrujú podľa `commented_id === taskId` — inak API vracia náhodné komentáre
+
+**Hromadné úpravy (bulk bar):**
+- Status, fáza, termín (`bulkSetDeadline`), Interné/Externé, Ukončiť, Vymazať, Dopyty
+- `bulkSetDeadline(cislo, date)` — nastaví `end_time` na všetkých označených úlohách (formát `YYYY-MM-DDT17:00:00+02:00`)
+
+**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`
 
 ### Gemini integration
 
-`geminiZhrnVsetky()` calls Apps Script (`cfg.url`) action `zhrniProjekt` for each visible project. Result stored in `geminiMap`.
+`geminiZhrnVsetky()` calls Apps Script (`cfg.url`) action `zhrniProjekt` for each visible project. Result stored in `geminiMap`. Ak sú pre projekt načítané úlohy v `caflouTasksCache`, zahrnie aj posledné 3 poznámky každej externej úlohy (rovnako ako `geminiZhrnProjekt`).
 
 `geminiZhrnPortfolio()` — tlačidlo **Stav** v headeri. Zbiera posledné 3 denník záznamy zo všetkých nearcivovaných projektov + posledných 30 emailov zo SHEET_MAILY. Posiela do Apps Script `action: 'zhrniPortfolio'`. Výsledok zobrazí v `#portfolioModal`.
 
@@ -170,9 +184,11 @@ CAFLOU_USERS             // user_id → meno
 - `volajGemini` retry sleep: 5s (nie 30s) — rýchlejšie zlyhanie pri rate limite; po 3 pokusoch hodí zrozumiteľnú správu
 - Apps Script kód záloha: `appscript/Code.gs` v repozitári (treba manuálne kopírovať do editora pri zmenách)
 
-### Externý profesista → automatický dopyt
+### Externý profesista → automatický dopyt → automatické priradenie
 
-Pri vytváraní úlohy v dashboarde: dropdown obsahuje aj **"— externý profesista —"** (value=`ext`). Po výbere sa zobrazí pole Profesia. Pri odoslaní sa vytvorí Caflou úloha + automaticky INSERT do Supabase `requests` (projekt, profesia, názov úlohy v notes). Draft dopyt sa objaví v ponuky.html.
+Pri vytváraní úlohy v dashboarde: dropdown obsahuje aj **"— externý profesista —"** (value=`ext`). Po výbere sa zobrazí pole Profesia. Pri odoslaní sa vytvorí Caflou úloha + automaticky INSERT do Supabase `requests` (projekt, profesia, názov úlohy v notes, **`caflou_task_id`**). Draft dopyt sa objaví v ponuky.html.
+
+`createDopytFromTask` aj `bulkCreateDopyty` ukladajú `caflou_task_id` do requestu. Keď sa v ponuky.html vyberie víťaz (`selectWinner`), automaticky sa zapíše do `task_specialists` — v dashboarde sa profesista objaví priamo na úlohe pri nasledujúcom načítaní.
 
 ### Vyhľadávanie projektov
 
@@ -185,8 +201,8 @@ Pri vytváraní úlohy v dashboarde: dropdown obsahuje aj **"— externý profes
 Profession quotes management module. Accessible at `ponuky.html` (linked from `index.html` via `module-nav`).
 
 **Supabase backend** (`cfjkomqxzqflotrqxfyl.supabase.co`):
-- `requests` — quote requests (project, profession, phases, notes, `folder_url`, `folder_url_work`)
-- `specialists` — professionals (name, profession, email, phone)
+- `requests` — quote requests (project, profession, phases, notes, `folder_url`, `folder_url_work`, `deadline` date, `caflou_task_id` bigint)
+- `specialists` — professionals (name, profession, email, phone, `portal_token` UUID)
 - `invitations` — links request↔specialist, has `token` (UUID) and `status`: `sent|viewed|submitted|selected|rejected`
 - `quotes` — submitted quotes (`prices` JSONB `{phase: amount}`, `notes`, `submitted_at`)
 
@@ -207,6 +223,18 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Manuálne zadanie cien:** tlačidlo "✎ Ceny" v každom riadku tabuľky profesistov → `openCenyModal(invId, reqId)` → modal s inputmi pre každú fázu + poznámka → `saveCeny()` INSERT/UPDATE do `quotes`, status → `submitted`. Stav modalu v `_cenyInvId`, `_cenyReqId`.
 
+**Správa ponúk:**
+- `withdrawQuote(e, invId, reqId)` — stiahne ponuku: zmaže `quotes`, status → `sent`
+- `selectWinner(e, invId, reqId)` — vyberie víťaza: selected/rejected + zapíše do `task_specialists` ak request má `caflou_task_id`
+- `cancelWinner(e, invId, reqId)` — zruší výber: všetci selected/rejected → `submitted`, zmaže `task_specialists` záznam
+- `selectWinner` **nevytvára** Caflou úlohu (bolo odstránené — úloha sa vytvára pred dopytom)
+
+**Portál pre profesistov:**
+- `specialists.portal_token` — permanentný UUID token pre každého profesista
+- `generatePortalToken(specId)` — vygeneruje `crypto.randomUUID()`, uloží do Supabase, skopíruje link do schránky
+- V záložke Profesisti: tlačidlo **🔗 Vytvoriť portál** (bez tokenu) alebo **🔗 Portál** (s tokenom, kliknutím skopíruje link)
+- `getKontakty` Apps Script vracia len **osobné Google Kontakty** (`people/me/connections`) — nie firemný Workspace Directory
+
 **Pozvanie profesistov (invite modal):**
 - Zoznam kontaktov z Google Contacts je rozdelený do sekcií podľa tagov (`<details>` expandable)
 - Sekcia zodpovedajúca profesii dopytu sa automaticky otvorí
@@ -218,14 +246,23 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 ### portal.html
 
-Specialist-facing quote submission form. Accessed via token link: `portal.html?token=UUID`.
+Specialist-facing form. Dva módy podľa URL parametra:
 
-**Flow:** `init()` → loads invitation by token → if `selected`/`rejected` → `renderStatus()`, otherwise `renderForm()`
-
+**Mód 1 — pozvánka:** `portal.html?token=UUID`
+- `init()` → načíta invitation by token → `selected`/`rejected` → `renderStatus()`, inak `renderForm()`
 - `_submitCtx` global holds `{invId, phases, curPhase}` to avoid JSON.stringify in onclick attribute
-- `renderForm`: price table per phase, notes field (no deadline field)
+- `renderForm`: price table per phase, notes field
 - `renderStatus`: shows reqBlock (folder links, notes) + quoteBlock (submitted prices, notes)
 - Both folder links shown side by side: `folder_url` (nacenenie) + `folder_url_work` (vypracovanie)
+
+**Mód 2 — trhisko profesista:** `portal.html?specialist=UUID`
+- `initSpecialistView()` — načíta špecialistu podľa `portal_token`, načíta aktívne dopyty, pozvánky, ceny
+- `_specCtx = {spec, reqs, invs, qts}` — stav trhiska
+- `_profFilter = 'own'|'all'` — filter: len vlastná profesia / všetky
+- `renderSpecialistView()` — zobrazí filter bar + karty dopytov
+- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien
+- `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; re-render
+- Profesista vidí termíny (`deadline`) a môže sa rozhodnúť čo stíha
 
 ### sync-fazy.ps1
 
