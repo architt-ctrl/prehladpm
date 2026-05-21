@@ -2669,7 +2669,6 @@ function toggleTaskEdit(cislo, task_id) {
 }
 
 async function saveCaflouTaskEdit(cislo, task_id) {
-  try {
   const tid = Number(task_id);
   const tasks = caflouTasksCache[cislo];
   if (!tasks) { showToast('Chyba: úlohy nie sú načítané', 'err'); return; }
@@ -2688,9 +2687,9 @@ async function saveCaflouTaskEdit(cislo, task_id) {
     else delete extSpecOverride[String(task_id)];
     localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
     if (specEl.value) {
-      sb.from('task_specialists').upsert({ task_id, task_name: t.name, project_cislo: cislo, specialist_name: specEl.value, updated_at: new Date().toISOString() }).catch(() => {});
+      sb.from('task_specialists').upsert({ task_id, task_name: t.name, project_cislo: cislo, specialist_name: specEl.value, updated_at: new Date().toISOString() }).then(null, () => {});
     } else {
-      sb.from('task_specialists').delete().eq('task_id', task_id).catch(() => {});
+      sb.from('task_specialists').delete().eq('task_id', task_id).then(null, () => {});
     }
     if (newExt && specEl.value) linkSpecialistToProject(cislo, specEl.value).catch(() => {});
   }
@@ -2699,9 +2698,7 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   t.end_time = date ? date + 'T17:00:00+02:00' : null;
   t.tags = [newExt ? 'ext' : null, fazaVal || null].filter(Boolean);
   caflouTaskEditSet.delete(key);
-  showToast('DEBUG: pred refreshUlohy', 'ok');
   refreshUlohy(cislo);
-  showToast('DEBUG: po refreshUlohy', 'ok');
   try {
     await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
       method: 'PATCH',
@@ -2715,7 +2712,6 @@ async function saveCaflouTaskEdit(cislo, task_id) {
     });
     showToast('Uložené ✓', 'ok');
   } catch(e) { showToast('Chyba ukladania', 'err'); }
-  } catch(e) { showToast('CHYBA: ' + e.message, 'err'); console.error(e); }
 }
 
 function toggleTaskExtBtn(editKey) {
