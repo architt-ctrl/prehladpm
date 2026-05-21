@@ -576,27 +576,6 @@ async function selectWinner(e, invId, reqId) {
   await Promise.all(invs.map(i =>
     sb.from('invitations').update({ status: i.id === invId ? 'selected' : 'rejected' }).eq('id', i.id)
   ));
-  const inv = invitations.find(i => i.id === invId);
-  const req = requests.find(r => r.id === reqId);
-  const spec = specialists.find(s => s.id === inv?.specialist_id);
-  if (req && spec && cfg.caflou_key && cfg.caflou_id) {
-    await loadCaflouProjects();
-    const proj = caflouProjects.find(p => p.order_number === req.project_cislo);
-    if (proj) {
-      try {
-        await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task: {
-            name: (req.profession || 'Externá úloha') + ' – ' + spec.name,
-            project_id: proj.id,
-            task_status_id: 1377380,
-            tags: ['ext'],
-          }})
-        });
-      } catch(e) {}
-    }
-  }
   await loadAll();
   document.getElementById('rd-' + reqId)?.classList.add('on');
 }
