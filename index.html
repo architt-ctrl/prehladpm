@@ -2293,6 +2293,9 @@ async function loadCaflouTasks(cislo, caflou_id) {
       if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
     } catch(e) {}
     el.innerHTML = buildCaflouTasksHtml(cislo);
+    // Preload notes for ext tasks in background (each will call refreshUlohy when done)
+    all.filter(t => !t.finished && (t.tags||[]).includes('ext'))
+       .forEach(t => preloadTaskNotes(cislo, t.id));
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
   }
@@ -2519,6 +2522,8 @@ function buildCaflouTasksHtml(cislo) {
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--red);
           display:flex;align-items:center;justify-content:center">✕</button>`;
     const notesOpen = isExt && taskNotesOpen.has(t.id);
+    const cachedNotes = isExt ? taskNotesCache[t.id] : null;
+    const lastNote = Array.isArray(cachedNotes) && cachedNotes.length > 0 && !notesOpen ? cachedNotes[0] : null;
     return `<div style="border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
         ${checkboxHtml}
@@ -2535,6 +2540,7 @@ function buildCaflouTasksHtml(cislo) {
         ${deadStr}
         ${isExt ? `<button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>` : ''}
       </div>
+      ${lastNote ? `<div onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="font-size:11px;color:var(--text2);padding:1px 0 5px 0;line-height:1.35;cursor:pointer">${lastNote.datum}: ${lastNote.text}</div>` : ''}
       ${isExt && notesOpen ? `<div onclick="event.stopPropagation()" style="padding:0 0 5px 0">${buildTaskNotesHtml(cislo, t.id)}</div>` : ''}
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
         <input id="tn-${editKey}" value="${safeName}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
@@ -3008,9 +3014,36 @@ async function applyTmplTasks(cislo) {
 }
 
 // ── DENNÍK EXTERNÝCH ÚLOH ────────────────────────────────────────────────
+async function preloadTaskNotes(cislo, taskId) {
+  if (taskNotesCache[taskId] !== undefined) return;
+  taskNotesCache[taskId] = null; // loading sentinel
+  try {
+    const r = await fetch(
+      `https://app.caflou.com/api/v1/${cfg.caflou_id}/comments?commented_type=Task&commented_id=${taskId}&per=100`,
+      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+    );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const all = d.result || d.results || d.data || [];
+    taskNotesCache[taskId] = all
+      .filter(c => String(c.commented_id) === String(taskId) && (c.text || '').trim())
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .map(c => {
+        const raw = c.text || '';
+        const m = raw.match(/^(\d+\.\d+\.\d+): ([\s\S]+)$/);
+        if (m) return { id: c.id, datum: m[1], text: m[2] };
+        const dt = new Date(c.created_at);
+        return { id: c.id, datum: dt.getDate()+'.'+(dt.getMonth()+1)+'.'+dt.getFullYear(), text: raw };
+      });
+  } catch(e) {
+    taskNotesCache[taskId] = [];
+  }
+  refreshUlohy(cislo);
+}
+
 function buildTaskNotesHtml(cislo, taskId) {
   const notes = taskNotesCache[taskId];
-  if (notes === undefined) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam…</div>';
+  if (notes === undefined || notes === null) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam…</div>';
   let html = '<div style="margin-top:2px">';
   if (notes.length) {
     html += notes.map(n => `
@@ -3039,32 +3072,10 @@ async function toggleTaskNotes(cislo, taskId) {
   }
   taskNotesOpen.add(taskId);
   if (taskNotesCache[taskId] === undefined) {
-    taskNotesCache[taskId] = undefined; // mark as loading
+    await preloadTaskNotes(cislo, taskId); // preloadTaskNotes calls refreshUlohy when done
+  } else {
     refreshUlohy(cislo);
-    try {
-      const r = await fetch(
-        `https://app.caflou.com/api/v1/${cfg.caflou_id}/comments?commented_type=Task&commented_id=${taskId}&per=100`,
-        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
-      );
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const d = await r.json();
-      const all = d.result || d.results || d.data || [];
-      taskNotesCache[taskId] = all
-        .filter(c => String(c.commented_id) === String(taskId) && (c.text || '').trim())
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        .map(c => {
-          const raw = c.text || '';
-          const m = raw.match(/^(\d+\.\d+\.\d+): ([\s\S]+)$/);
-          if (m) return { id: c.id, datum: m[1], text: m[2] };
-          const dt = new Date(c.created_at);
-          return { id: c.id, datum: dt.getDate()+'.'+(dt.getMonth()+1)+'.'+dt.getFullYear(), text: raw };
-        });
-    } catch(e) {
-      taskNotesCache[taskId] = [];
-      showToast('Chyba načítania zápiskov: ' + e.message, 'err');
-    }
   }
-  refreshUlohy(cislo);
 }
 
 async function addTaskNote(cislo, taskId) {
