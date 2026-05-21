@@ -2665,9 +2665,10 @@ function toggleTaskEdit(cislo, task_id) {
 async function saveCaflouTaskEdit(cislo, task_id) {
   const tid = Number(task_id);
   const tasks = caflouTasksCache[cislo];
-  if (!tasks) { showToast('Chyba: úlohy nie sú načítané pre ' + cislo, 'err'); return; }
+  if (!tasks) { alert('DEBUG: no cache for ' + cislo); return; }
   const t = tasks.find(x => Number(x.id) === tid);
-  if (!t) { showToast('Chyba: úloha ' + tid + ' nenájdená (cache: ' + tasks.slice(0,5).map(x=>x.id).join(',') + ')', 'err'); return; }
+  if (!t) { alert('DEBUG: task ' + tid + ' not found, cache IDs: ' + tasks.slice(0,5).map(x=>x.id).join(',')); return; }
+  alert('DEBUG: OK, task found: ' + t.name);
   const key = cislo + '-' + task_id;
   const name  = document.getElementById('tn-' + key)?.value.trim();
   const uid   = document.getElementById('tu-' + key)?.value;
