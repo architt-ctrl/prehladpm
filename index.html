@@ -2509,10 +2509,6 @@ function buildCaflouTasksHtml(cislo) {
           title="Vytvoriť dopyt" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
           display:flex;align-items:center;justify-content:center">📋</button>` : ''}
-        <button onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})"
-          title="Upraviť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
-          width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
-          display:flex;align-items:center;justify-content:center">✎</button>
         <button onclick="event.stopPropagation();finishCaflouTask('${cislo}',${t.id})"
           title="Ukončiť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--text3);
@@ -2527,7 +2523,7 @@ function buildCaflouTasksHtml(cislo) {
     return `<div style="border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
         ${checkboxHtml}
-        <span style="flex:1;font-weight:500">${t.name}</span>
+        <span onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})" style="flex:1;font-weight:500;cursor:pointer">${t.name}</span>
         ${actionBtns}
       </div>
       <div style="display:flex;align-items:center;gap:6px;padding:2px 0 5px 0;${selectMode?'padding-left:21px':''}">
