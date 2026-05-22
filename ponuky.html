@@ -340,20 +340,23 @@ async function sendMagicLink() {
 async function loadAll() {
   if (_loading) return;
   _loading = true;
+  const tout = ms => new Promise((_, r) => setTimeout(() => r(new Error('timeout')), ms));
   try {
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000));
-    const [r, s, i, q] = await Promise.race([
-      Promise.all([
-        sb.from('requests').select('*').order('created_at', { ascending: false }),
-        sb.from('specialists').select('*').order('name'),
-        sb.from('invitations').select('*'),
-        sb.from('quotes').select('*'),
-      ]),
-      timeout,
-    ]);
+    // Spustiť všetky 4 dotazy naraz (nezávisle od seba)
+    const rPr = new Promise((res, rej) => sb.from('requests').select('*').order('created_at', { ascending: false }).then(res, rej));
+    const sPr = new Promise((res, rej) => sb.from('specialists').select('id,name,company,email,profession,phone,portal_token,notes').order('name').then(res, rej));
+    const iPr = new Promise((res, rej) => sb.from('invitations').select('id,request_id,specialist_id,token,status').then(res, rej));
+    const qPr = new Promise((res, rej) => sb.from('quotes').select('id,invitation_id,prices,notes,submitted_at,deadline').then(res, rej));
+
+    // Prvý render — hneď ako máme requests + specialists (zvyčajne najrýchlejšie)
+    const [r, s] = await Promise.race([Promise.all([rPr, sPr]), tout(30000)]);
     requests = r.data || []; specialists = s.data || [];
-    invitations = i.data || []; quotes = q.data || [];
     renderRequests(); renderSpecialists();
+
+    // Doplniť invitations + quotes — bežia paralelne od začiatku, zvyčajne dorazia vzápätí
+    const [i, q] = await Promise.race([Promise.all([iPr, qPr]), tout(15000)]);
+    invitations = i.data || []; quotes = q.data || [];
+    renderRequests();
     loadKontakty();
   } catch(e) {
     document.getElementById('reqList').innerHTML = `<div class="empty">Chyba načítania: ${e.message}. <button onclick="_loading=false;loadAll()" style="margin-left:8px;padding:4px 10px;cursor:pointer">Skúsiť znova</button></div>`;
