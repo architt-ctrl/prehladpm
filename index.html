@@ -742,12 +742,19 @@ nav {
     </svg>
     <span class="hbtn-lbl">Stav</span>
   </button>
-  <button class="hbtn" onclick="openVytazenieModal()" title="Vytaženie profesistov">
+  <button class="hbtn" onclick="openVytazenieModal()" title="Vyťaženie ext. profesistov">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle>
       <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
     </svg>
-    <span class="hbtn-lbl">Tím</span>
+    <span class="hbtn-lbl">Ext tím</span>
+  </button>
+  <button class="hbtn" onclick="openIntTimModal()" title="Vyťaženie interného tímu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle>
+      <line x1="19" y1="8" x2="19" y2="14"></line><line x1="22" y1="11" x2="16" y2="11"></line>
+    </svg>
+    <span class="hbtn-lbl">Int tím</span>
   </button>
   <button class="hbtn" onclick="toggleCfg()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1203,10 +1210,20 @@ nav {
 <!-- MODAL – STAV PORTFÓLIA (Gemini) -->
 <div class="overlay hidden" id="vytazenieModal">
   <div class="modal" style="max-width:640px">
-    <h3>Vytaženie profesistov</h3>
+    <h3>Vyťaženie – externý tím</h3>
     <div id="vytazenieContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
     <div class="mactions">
       <button class="btn-ghost" onclick="document.getElementById('vytazenieModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="intTimModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Vyťaženie – interný tím</h3>
+    <div id="intTimContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('intTimModal').classList.add('hidden')">Zavrieť</button>
     </div>
   </div>
 </div>
@@ -1537,6 +1554,79 @@ async function openVytazenieModal() {
   }
 }
 
+let _intTimCache = null; // invalidated on syncData
+
+async function openIntTimModal() {
+  document.getElementById('intTimModal').classList.remove('hidden');
+  const el = document.getElementById('intTimContent');
+  if (_intTimCache) { el.innerHTML = _intTimCache; return; }
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  try {
+    const projByTaskId = {};
+    projects.filter(p => p.faza !== 'Archív').forEach(p =>
+      (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
+    );
+
+    const workload = {};
+    const addEntry = (userName, taskName, proj, status) => {
+      if (!workload[userName]) workload[userName] = [];
+      const dup = workload[userName].some(x => x.cislo === proj.cislo && x.taskName === taskName);
+      if (!dup) workload[userName].push({ taskName, projectName: proj.nazov, cislo: proj.cislo, status, faza: proj.faza });
+    };
+
+    let page = 1, hasMore = true;
+    while (hasMore) {
+      el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam strana ${page}…</div>`;
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+      const d = await r.json();
+      (d.results || []).forEach(t => {
+        if (t.finished || t.trash) return;
+        if ((t.tags||[]).includes('ext')) return; // len interné úlohy
+        const p = projByTaskId[t.id]; if (!p) return;
+        const uid = t.target_user_id;
+        const userName = uid ? (CAFLOU_USERS[uid] || `uid:${uid}`) : '—';
+        addEntry(userName, t.name, p, t.task_status_name||'—');
+      });
+      hasMore = !!d.next_page;
+      page++;
+    }
+
+    if (!Object.keys(workload).length) {
+      el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelené interné úlohy</div>';
+      _intTimCache = el.innerHTML;
+      return;
+    }
+
+    const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
+    const userCard = (userName, items) => {
+      const rows = items.map(item => {
+        const col = TASK_STATUS_COL[item.status] || 'var(--text3)';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border)44;font-size:12px">
+          <span style="flex:1;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.cislo} – ${item.projectName}</span>
+          <span style="color:var(--text3);font-size:11px;flex-shrink:0;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.taskName}</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${item.status}</span>
+        </div>`;
+      }).join('');
+      return `<div style="margin-bottom:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="font-weight:600;font-size:13px">${userName}</span>
+          <span style="margin-left:auto;font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--bg3);color:var(--text2)">${items.length}</span>
+        </div>${rows}
+      </div>`;
+    };
+
+    // Zoradiť podľa počtu úloh zostupne, nepriradené (—) na koniec
+    const sorted = Object.entries(workload)
+      .sort(([a, ai], [b, bi]) => a === '—' ? 1 : b === '—' ? -1 : bi.length - ai.length);
+
+    _intTimCache = sorted.map(([name, items]) => userCard(name, items)).join('');
+    el.innerHTML = _intTimCache;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
+  }
+}
+
 // ── SYNC ──────────────────────────────────────────────────────────────────
 async function syncData() {
   if (!cfg.caflou_key || !cfg.caflou_id) { loadDemo(); return; }
@@ -1560,6 +1650,7 @@ async function syncData() {
       .map(parseCaflouProject);
     caflouTasksCache = {};
     _vytazenieCache = null;
+    _intTimCache = null;
     projects.forEach(p => {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
     });
