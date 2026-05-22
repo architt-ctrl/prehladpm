@@ -1483,14 +1483,28 @@ async function openVytazenieModal() {
       page++;
     }
 
-    // 3. Render
-    const sorted = Object.entries(workload).sort((a,b) => b[1].length - a[1].length);
-    if (!sorted.length) {
+    // 3. Render – zoradené podľa profesie, v rámci profesie podľa vyťaženia
+    if (!Object.keys(workload).length) {
       el.innerHTML = '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne pridelené externé úlohy</div>';
       return;
     }
+    if (!specialistsList) await loadSpecialists();
+    const specProfMap = {};
+    (specialistsList || []).forEach(s => { specProfMap[s.name] = (s.profession || '').split(',')[0].trim() || '—'; });
+
+    // Skupiny podľa profesie
+    const byProf = {};
+    Object.entries(workload).forEach(([name, items]) => {
+      const prof = specProfMap[name] || '—';
+      if (!byProf[prof]) byProf[prof] = [];
+      byProf[prof].push([name, items]);
+    });
+    const profSorted = Object.entries(byProf)
+      .sort(([a], [b]) => a === '—' ? 1 : b === '—' ? -1 : a.localeCompare(b, 'sk'))
+      .map(([prof, specs]) => [prof, specs.sort((a, b) => b[1].length - a[1].length)]);
+
     const TASK_STATUS_COL = { 'Hotové':'var(--green)', 'V riešení':'var(--blue)', 'Nová':'var(--text3)' };
-    _vytazenieCache = sorted.map(([specName, items]) => {
+    const specCard = (specName, items) => {
       const rows = items.map(item => {
         const col = TASK_STATUS_COL[item.status] || 'var(--text3)';
         return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-top:1px solid var(--border)44;font-size:12px">
@@ -1499,11 +1513,22 @@ async function openVytazenieModal() {
           <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${col}22;color:${col};flex-shrink:0;font-weight:600">${item.status}</span>
         </div>`;
       }).join('');
-      return `<div style="margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+      return `<div style="margin-bottom:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
           <span style="font-weight:600;font-size:13px">${specName}</span>
           <span style="margin-left:auto;font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px;background:var(--bg3);color:var(--text2)">${items.length}</span>
         </div>${rows}
+      </div>`;
+    };
+    _vytazenieCache = profSorted.map(([prof, specs]) => {
+      const total = specs.reduce((s, [, items]) => s + items.length, 0);
+      return `<div style="margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);
+          padding:4px 0 6px;border-bottom:2px solid var(--border);margin-bottom:8px;display:flex;align-items:center;gap:8px">
+          ${prof}
+          <span style="font-weight:400;color:var(--text3)44">${total} úloh · ${specs.length} ${specs.length === 1 ? 'profesista' : 'profesisti'}</span>
+        </div>
+        ${specs.map(([name, items]) => specCard(name, items)).join('')}
       </div>`;
     }).join('');
     el.innerHTML = _vytazenieCache;
