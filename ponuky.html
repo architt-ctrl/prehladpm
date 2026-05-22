@@ -569,14 +569,19 @@ function buildReqDetail(r) {
   const info = `<div style="margin-bottom:6px;font-size:13px">${phBadges}${r.current_phase ? ` <span style="color:var(--text2);margin-left:4px">Aktuálna:</span> <strong>${r.current_phase}</strong>` : ''}${r.folder_url ? ` &nbsp;<a href="${r.folder_url}" target="_blank" style="color:var(--blue)">Podklady nacenenie ↗</a>` : ''}${r.folder_url_work ? ` &nbsp;<a href="${r.folder_url_work}" target="_blank" style="color:var(--blue)">Podklady vypracovanie ↗</a>` : ''}</div>`;
   const dateInfoHtml = dateInfo ? ('<div style="font-size:13px;color:var(--text2);margin-bottom:10px">' + dateInfo + '</div>') : '';
   const note = r.notes ? `<p style="font-size:13px;color:var(--text2);margin-bottom:12px">${r.notes}</p>` : '';
+  const taskLinkLabel = r.caflou_task_id
+    ? `🔗 Úloha #${r.caflou_task_id}`
+    : '🔗 Pripojiť k úlohe';
   const btns = `<div class="btn-row mt10">
     <button class="btn btn-p btn-sm" onclick="openInviteModal(event,'${r.id}')">+ Pozvať profesistov</button>
     <button class="btn btn-g btn-sm" onclick="openReqModal('${r.id}')">Upraviť</button>
+    <button class="btn btn-g btn-sm" onclick="openTaskLink('${r.id}','${r.project_cislo||''}')">${taskLinkLabel}</button>
     ${r.status === 'active'
       ? `<button class="btn btn-g btn-sm" onclick="closeReq(event,'${r.id}')">Uzavrieť</button>`
       : `<button class="btn btn-g btn-sm" onclick="reopenReq(event,'${r.id}')">Znovu otvoriť</button>`}
     <button class="btn btn-sm" onclick="deleteReq(event,'${r.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">Vymazať</button>
-  </div>`;
+  </div>
+  <div id="task-link-${r.id}" style="margin-top:8px"></div>`;
 
   const links = invs.length ? `<div class="mt16"><p style="font-size:12px;color:var(--text2);margin-bottom:8px">Linky pre profesistov (skopírovať a poslať emailom):</p>` +
     invs.map(inv => {
@@ -981,6 +986,68 @@ async function generatePortalToken(specId) {
   await navigator.clipboard.writeText(url).catch(() => {});
   showToast('Token vytvorený, link skopírovaný ✓', 'ok');
   renderSpecialists();
+}
+
+// ── NAPOJENIE DOPYTU NA ÚLOHU ─────────────────────────────────────────────────
+async function openTaskLink(reqId, cislo) {
+  const el = document.getElementById('task-link-' + reqId);
+  if (!el) return;
+  if (!cfg.caflou_key || !cfg.caflou_id) {
+    el.innerHTML = '<span style="font-size:12px;color:var(--red)">Caflou API kľúč nie je nastavený v nastaveniach.</span>';
+    return;
+  }
+  el.innerHTML = '<span style="font-size:12px;color:var(--text3)">Načítavam úlohy...</span>';
+  try {
+    await loadCaflouProjects();
+    const proj = caflouProjects.find(p => p.order_number === cislo);
+    if (!proj) { el.innerHTML = '<span style="font-size:12px;color:var(--red)">Projekt ' + cislo + ' nenájdený v Caflou.</span>'; return; }
+    const taskIdSet = new Set((proj.task_ids || []).map(Number));
+    let tasks = [], page = 1, tp = 1;
+    while (page <= tp) {
+      const r = await fetch(
+        `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${proj.id}&per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+      );
+      const d = await r.json();
+      const batch = (d.results || []).filter(t => taskIdSet.size === 0 || taskIdSet.has(Number(t.id)));
+      tasks = tasks.concat(batch);
+      if (taskIdSet.size > 0 && tasks.length >= taskIdSet.size) break;
+      tp = d.total_pages || 1; page++;
+    }
+    const active = tasks.filter(t => !t.finished);
+    if (!active.length) { el.innerHTML = '<span style="font-size:12px;color:var(--text3)">Projekt nemá žiadne aktívne úlohy.</span>'; return; }
+    const req = requests.find(r => r.id === reqId);
+    const curTaskId = req?.caflou_task_id;
+    // ext úlohy prvé, ostatné za nimi
+    active.sort((a,b) => {
+      const ae = (a.tags||[]).includes('ext'), be = (b.tags||[]).includes('ext');
+      return ae === be ? 0 : ae ? -1 : 1;
+    });
+    const opts = active.map(t => {
+      const ext = (t.tags||[]).includes('ext') ? ' [ext]' : '';
+      return `<option value="${t.id}"${t.id == curTaskId ? ' selected' : ''}>${t.name}${ext}</option>`;
+    }).join('');
+    el.innerHTML = `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <select id="tsel-${reqId}" class="finput" style="flex:1;font-size:12px;min-width:180px">
+        <option value="">— bez prepojenia —</option>${opts}
+      </select>
+      <button class="btn btn-p btn-sm" onclick="saveTaskLink('${reqId}')">Uložiť</button>
+      <button class="btn btn-g btn-sm" onclick="document.getElementById('task-link-${reqId}').innerHTML=''">Zrušiť</button>
+    </div>`;
+  } catch(e) {
+    el.innerHTML = `<span style="font-size:12px;color:var(--red)">Chyba: ${e.message}</span>`;
+  }
+}
+
+async function saveTaskLink(reqId) {
+  const sel = document.getElementById('tsel-' + reqId);
+  const taskId = sel?.value ? parseInt(sel.value) : null;
+  const { error } = await sb.from('requests').update({ caflou_task_id: taskId }).eq('id', reqId);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  showToast(taskId ? 'Úloha napojená ✓' : 'Prepojenie zrušené', 'ok');
+  _loading = false;
+  await loadAll();
+  document.getElementById('rd-' + reqId)?.classList.add('on');
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
