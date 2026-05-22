@@ -1345,6 +1345,7 @@ let stavMap   = JSON.parse(localStorage.getItem('pmStav')   || '{}');  // {cislo
 let dennikMap = JSON.parse(localStorage.getItem('pmDennik') || '{}');  // {cislo: [{datum, text, created_at}]}
 let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo: ISO_timestamp} — kedy user naposledy otvoril projekt
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
+let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
 let activeFaza = 'Štúdia';
 let activeStav = 'pripravovany';
@@ -1583,10 +1584,12 @@ async function syncData() {
       if (submittedInvs?.length) {
         const reqIds = [...new Set(submittedInvs.map(i => i.request_id))];
         const { data: reqs } = await sb.from('requests')
-          .select('id, project_cislo').in('id', reqIds);
+          .select('id, project_cislo, caflou_task_id').in('id', reqIds);
         ponukyBadgeSet = new Set((reqs || []).map(r => r.project_cislo).filter(Boolean));
+        taskPonukySet  = new Set((reqs || []).map(r => r.caflou_task_id).filter(Boolean));
       } else {
         ponukyBadgeSet = new Set();
+        taskPonukySet  = new Set();
       }
     } catch(e) {}
 
@@ -2330,6 +2333,24 @@ async function loadCaflouTasks(cislo, caflou_id) {
       (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
       if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
     } catch(e) {}
+    // Aktualizuj taskPonukySet pre tieto úlohy (čerstvé dáta)
+    try {
+      const taskIds = all.map(t => t.id).filter(Boolean);
+      if (taskIds.length) {
+        const { data: pendingReqs } = await sb.from('requests')
+          .select('id, caflou_task_id').in('caflou_task_id', taskIds);
+        if (pendingReqs?.length) {
+          const reqIds = pendingReqs.map(r => r.id);
+          const { data: submInvs } = await sb.from('invitations')
+            .select('request_id').eq('status', 'submitted').in('request_id', reqIds);
+          const submReqIds = new Set((submInvs||[]).map(i => i.request_id));
+          pendingReqs.forEach(r => {
+            if (submReqIds.has(r.id)) taskPonukySet.add(r.caflou_task_id);
+            else taskPonukySet.delete(r.caflou_task_id);
+          });
+        }
+      }
+    } catch(e) {}
     el.innerHTML = buildCaflouTasksHtml(cislo);
     // Preload notes for ext tasks in background (each will call refreshUlohy when done)
     all.filter(t => !t.finished && (t.tags||[]).includes('ext'))
@@ -2592,6 +2613,7 @@ function buildCaflouTasksHtml(cislo) {
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
+        ${taskPonukySet.has(t.id) ? `<a href="ponuky.html" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori ponuky.html" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
         ${lastNote ? `<span onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">${lastNote.datum}: ${lastNote.text}</span>` : (isExt ? `<span style="flex:1"></span>` : '')}
         ${isExt ? `<button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>` : ''}
       </div>
