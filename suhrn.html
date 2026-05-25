@@ -245,18 +245,21 @@ const DEFAULT_SPECS = [
 
 document.addEventListener('DOMContentLoaded', () => {
   try { cfg = JSON.parse(localStorage.getItem('pmCfg3')) || {}; } catch(e) {}
-  loadSavedProjektanti().catch(() => {});
   const now = new Date();
   document.getElementById('fld-datum').value =
     now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   prefillFromUrl();
+  loadSavedProjektanti().catch(() => {});
 });
 
 async function loadSavedProjektanti() {
+  const cislo = document.getElementById('fld-cislo').value.trim();
+  if (!cislo) { DEFAULT_SPECS.forEach(s => addSpecRow(s)); return; }
   try {
-    const res = await fetch(`${SB_URL}/rest/v1/suhrn_projektanti?order=poradie.asc`, {
-      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY },
-    });
+    const res = await fetch(
+      `${SB_URL}/rest/v1/suhrn_projektanti?project_cislo=eq.${encodeURIComponent(cislo)}&order=poradie.asc`,
+      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
+    );
     const rows = await res.json();
     if (Array.isArray(rows) && rows.length) {
       rows.forEach(r => addSpecRow({ profesia: r.profesia, meno: r.meno, reg: r.reg }));
@@ -268,16 +271,17 @@ async function loadSavedProjektanti() {
 }
 
 async function saveProjektanti() {
+  const cislo = document.getElementById('fld-cislo').value.trim();
+  if (!cislo) { alert('Najprv zadaj ID projektu (krok 1).'); return; }
   const btn = document.querySelector('[onclick="saveProjektanti()"]');
   if (btn) btn.disabled = true;
   const specs = getSpecialists();
   try {
-    // vymazať všetky existujúce riadky a vložiť nové
-    await fetch(`${SB_URL}/rest/v1/suhrn_projektanti?id=neq.00000000-0000-0000-0000-000000000000`, {
-      method: 'DELETE',
-      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, Prefer: 'return=minimal' },
-    });
-    const rows = specs.map((s, i) => ({ poradie: i, profesia: s.profesia, meno: s.meno, reg: s.reg }));
+    await fetch(
+      `${SB_URL}/rest/v1/suhrn_projektanti?project_cislo=eq.${encodeURIComponent(cislo)}`,
+      { method: 'DELETE', headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, Prefer: 'return=minimal' } }
+    );
+    const rows = specs.map((s, i) => ({ project_cislo: cislo, poradie: i, profesia: s.profesia, meno: s.meno, reg: s.reg }));
     await fetch(`${SB_URL}/rest/v1/suhrn_projektanti`, {
       method: 'POST',
       headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
