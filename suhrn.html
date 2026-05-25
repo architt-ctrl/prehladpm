@@ -234,6 +234,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 let cfg = {};
 let folderTree = null;
 let searchTimeout = null;
+let projectKey = ''; // Caflou order_number – kľúč pre Supabase (requests, suhrn_folder)
 
 const DEFAULT_SPECS = [
   { profesia: 'Generálny projektant', meno: '', reg: '' },
@@ -301,12 +302,13 @@ async function saveProjektanti() {
 
 function prefillFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const cislo  = params.get('cislo')  || '';
-  const nazov  = params.get('nazov')  || '';
-  const faza   = params.get('faza')   || '';
+  const cislo   = params.get('cislo')   || '';
+  const nazov   = params.get('nazov')   || '';
+  const faza    = params.get('faza')    || '';
   const podfaza = params.get('podfaza') || '';
 
-  if (cislo) document.getElementById('fld-cislo').value = cislo;
+  // Caflou order_number → projectKey pre Supabase; fld-cislo zostáva pre stavebný portál
+  if (cislo) projectKey = cislo;
   if (nazov) document.getElementById('fld-nazov').value = nazov.toUpperCase();
   if (cislo || nazov) {
     document.getElementById('proj-search').value =
@@ -352,10 +354,10 @@ async function loadFolderUrl(cislo) {
 }
 
 async function saveFolderUrl() {
-  const cislo = document.getElementById('fld-cislo').value.trim();
+  const cislo = projectKey;
   const url = document.getElementById('folder-url').value.trim();
   if (!url) return;
-  if (!cislo) { setFolderStatus('⚠ Link neuložený – najprv vyber projekt (zadaj číslo)', 'error'); return; }
+  if (!cislo) { setFolderStatus('⚠ Link neuložený – najprv vyber projekt', 'error'); return; }
   try {
     const res = await fetch(`${SB_URL}/rest/v1/suhrn_folder`, {
       method: 'POST',
@@ -405,7 +407,7 @@ async function extractFromAsr() {
 }
 
 async function loadProjektantiFromProject(silent = false) {
-  const cislo = document.getElementById('fld-cislo').value.trim();
+  const cislo = projectKey;
   if (!cislo) { if (!silent) alert('Najprv vyber projekt (krok 1).'); return; }
   const btn = document.getElementById('btn-load-specs');
   btn.disabled = true; btn.textContent = 'Načítavam…';
@@ -523,8 +525,10 @@ async function searchCaflou(q) {
 function selectProject(p) {
   document.getElementById('proj-search').value = (p.order_number || '') + ' – ' + p.name;
   document.getElementById('proj-dropdown').classList.add('hidden');
-  document.getElementById('fld-cislo').value = p.order_number || '';
   document.getElementById('fld-nazov').value = (p.name || '').toUpperCase();
+  projectKey = p.order_number || '';
+  document.getElementById('proj-title-badge').textContent = projectKey;
+  loadFolderUrl(projectKey).catch(() => {});
 }
 
 document.addEventListener('click', e => {
