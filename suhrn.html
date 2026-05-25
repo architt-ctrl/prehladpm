@@ -418,7 +418,7 @@ async function loadProjektantiFromProject(silent = false) {
     const reqRes = await fetch(reqUrl, { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } });
     const reqs = await reqRes.json();
     if (!reqs.length) {
-      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá žiadne dopyty';
+      if (!silent) document.getElementById('specs-hint').textContent = `Projekt nemá žiadne dopyty (hľadané cislo: "${cislo}")`;
       else DEFAULT_SPECS.forEach(s => addSpecRow(s));
       btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
     }
