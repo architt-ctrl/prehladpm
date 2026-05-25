@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generátor dokumentácie – TA</title>
+<style>
+:root {
+  --bg: #f4f4f6;
+  --card: #fff;
+  --border: #e2e2e8;
+  --text: #1a1a2e;
+  --muted: #6b7280;
+  --blue: #2563eb;
+  --green: #16a34a;
+  --red: #dc2626;
+  --orange: #d97706;
+  --radius: 10px;
+  --shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+
+.module-nav { background: var(--text); display: flex; padding: 0 12px; overflow-x: auto; scrollbar-width: none; }
+.module-nav::-webkit-scrollbar { display: none; }
+.mnav-a { color: rgba(255,255,255,.65); text-decoration: none; padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+.mnav-a:hover, .mnav-a.cur { color: #fff; }
+
+.container { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; }
+h1 { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.card h2 { font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.card h2 .step-num { background: var(--text); color: #fff; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+.field-group { display: flex; flex-direction: column; gap: 4px; }
+.field-group.full { grid-column: 1 / -1; }
+label { font-size: 12px; color: var(--muted); font-weight: 500; }
+input, select, textarea { border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit; color: var(--text); background: #fff; width: 100%; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); }
+textarea { resize: vertical; }
+
+.search-wrap { position: relative; margin-bottom: 12px; }
+.search-wrap input { padding-right: 32px; }
+.dropdown { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid var(--border); border-radius: 6px; z-index: 100; max-height: 220px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+.dropdown.hidden { display: none; }
+.dd-item { padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border); }
+.dd-item:last-child { border-bottom: none; }
+.dd-item:hover { background: var(--bg); }
+
+.row { display: flex; gap: 8px; align-items: flex-start; }
+.hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+
+button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; font-family: inherit; }
+.btn-primary { background: var(--blue); color: #fff; padding: 9px 18px; font-weight: 600; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-secondary { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; }
+.btn-secondary:hover { background: #e8e8f0; }
+.btn-icon { background: none; color: var(--muted); font-size: 14px; padding: 2px 6px; }
+.btn-icon:hover { color: var(--red); }
+.btn-text { background: none; color: var(--blue); font-size: 13px; padding: 6px 0; margin-top: 8px; }
+.btn-text:hover { text-decoration: underline; }
+
+/* Specialists table */
+.specs-table { width: 100%; border-collapse: collapse; }
+.specs-table th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.specs-table td { padding: 4px 8px; vertical-align: top; }
+.specs-table td:first-child { width: 30%; }
+.specs-table td:nth-child(2) { width: 45%; }
+.specs-table td:nth-child(3) { width: 20%; }
+.specs-table td:last-child { width: 5%; }
+.specs-table tr + tr td { padding-top: 8px; border-top: 1px solid var(--border); }
+
+/* Folder tree */
+.folder-tree { margin-top: 12px; background: #f8f8fb; border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.8; max-height: 280px; overflow-y: auto; font-family: monospace; }
+.folder-tree.hidden { display: none; }
+.tree-folder { color: var(--blue); font-weight: 600; }
+.tree-file { color: var(--muted); }
+
+/* Status messages */
+.status-loading { color: var(--orange); font-size: 12px; margin-top: 8px; }
+.status-ok { color: var(--green); font-size: 12px; margin-top: 8px; }
+.status-error { color: var(--red); font-size: 12px; margin-top: 8px; }
+
+/* Generate section */
+.gen-btns { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.btn-gen { background: var(--text); color: #fff; padding: 12px 24px; font-size: 14px; font-weight: 600; border-radius: 8px; }
+.btn-gen:hover { opacity: .85; }
+.btn-gen:disabled { opacity: .4; cursor: not-allowed; }
+
+.progress-wrap { margin-bottom: 12px; }
+.progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-bottom: 6px; }
+.progress-fill { height: 100%; background: var(--blue); border-radius: 3px; transition: width .4s; }
+.progress-msg { font-size: 12px; color: var(--muted); }
+
+.result-item { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; font-size: 13px; }
+.result-item a { color: var(--green); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<nav class="module-nav">
+  <a href="index.html" class="mnav-a">Projekty</a>
+  <a href="ponuky.html" class="mnav-a">Ponuky profesií</a>
+  <a href="suhrn.html" class="mnav-a cur">Dokumentácia</a>
+</nav>
+
+<div class="container">
+  <h1>Generátor projektovej dokumentácie</h1>
+
+  <!-- KROK 1: PROJEKT -->
+  <div class="card">
+    <h2><span class="step-num">1</span> Projekt</h2>
+    <div class="search-wrap">
+      <input id="proj-search" type="text" placeholder="Hľadaj projekt v Caflou (číslo alebo názov)…" oninput="onSearchInput(this.value)" autocomplete="off">
+      <div id="proj-dropdown" class="dropdown hidden"></div>
+    </div>
+    <div class="form-grid">
+      <div class="field-group">
+        <label>Stupeň dokumentácie</label>
+        <select id="fld-stupen">
+          <option>Projekt stavby</option>
+          <option>DSP – Dokumentácia pre stavebné povolenie</option>
+          <option>SZ – Stavebný zámer</option>
+          <option>AŠ – Architektonická štúdia</option>
+        </select>
+      </div>
+      <div class="field-group">
+        <label>ID projektu / stavby (Caflou)</label>
+        <input id="fld-cislo" placeholder="25-040">
+      </div>
+      <div class="field-group full">
+        <label>Názov stavby (VEĽKÝMI PÍSMENAMI)</label>
+        <input id="fld-nazov" placeholder="NOVOSTAVBA RODINNÉHO DOMU">
+      </div>
+      <div class="field-group full">
+        <label>Stavebník (meno, adresa – každý na nový riadok)</label>
+        <textarea id="fld-stavebnik" rows="2" placeholder="Meno Priezvisko, Ulica 1, Obec 12345&#10;Meno Priezvisko, Ulica 1, Obec 12345"></textarea>
+      </div>
+      <div class="field-group">
+        <label>Miesto stavby</label>
+        <input id="fld-miesto" placeholder="KU: Sučany, OKR.: Martin">
+      </div>
+      <div class="field-group">
+        <label>Parcelné čísla</label>
+        <input id="fld-parcely" placeholder="KN-C 4393/1">
+      </div>
+      <div class="field-group">
+        <label>List vlastníctva</label>
+        <input id="fld-lv" placeholder="LV č. 4821">
+      </div>
+      <div class="field-group">
+        <label>Dátum (mesiac / rok)</label>
+        <input id="fld-datum" type="month">
+      </div>
+      <div class="field-group">
+        <label>Predpokladané náklady stavby</label>
+        <input id="fld-naklady" placeholder="220 000 EUR">
+      </div>
+      <div class="field-group">
+        <label>Charakter stavby</label>
+        <input id="fld-typ" placeholder="novostavba RD / rekonštrukcia / …">
+      </div>
+      <div class="field-group full">
+        <label>Generálny projektant (firma, meno, adresa, reg. číslo – každé na nový riadok)</label>
+        <textarea id="fld-genprojektant" rows="4" placeholder="CP studio s.r.o.&#10;Ing. arch. Jozef Perichta&#10;Ulica 1, 974 01 Banská Bystrica&#10;Registračné číslo oprávnenia: XXXX AA"></textarea>
+      </div>
+      <div class="field-group full">
+        <label>Doplňujúce poznámky pre Gemini (voliteľné – špeciality projektu, konštrukčný systém, …)</label>
+        <textarea id="fld-poznamky" rows="2" placeholder="Napr.: drevostavba CLT, pasívny štandard, 2NP + podkrovie, …"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- KROK 2: PROJEKTANTI PROFESIÍ -->
+  <div class="card">
+    <h2><span class="step-num">2</span> Zodpovední projektanti profesií</h2>
+    <table class="specs-table">
+      <thead>
+        <tr>
+          <th>Profesia</th>
+          <th>Meno / Firma / Adresa (každé na nový riadok)</th>
+          <th>Reg. číslo</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="specs-body"></tbody>
+    </table>
+    <button class="btn-text" onclick="addSpecRow()">+ Pridať profesiu</button>
+  </div>
+
+  <!-- KROK 3: DRIVE PRIEČINOK -->
+  <div class="card">
+    <h2><span class="step-num">3</span> Projektový priečinok na Drive</h2>
+    <p class="hint">Zadaj link na priečinok stupňa (napr. DSP/) ktorý obsahuje podpriečinky podľa profesie (Architektura/, Statika/, ZT/, …)</p>
+    <div class="row">
+      <input id="folder-url" type="url" placeholder="https://drive.google.com/drive/folders/…" style="flex:1">
+      <button class="btn-secondary" onclick="loadFolder()">Načítať</button>
+    </div>
+    <div id="folder-status"></div>
+    <div id="folder-tree" class="folder-tree hidden"></div>
+  </div>
+
+  <!-- KROK 4: GENEROVANIE -->
+  <div class="card">
+    <h2><span class="step-num">4</span> Generovať</h2>
+    <div class="gen-btns">
+      <button class="btn-gen" onclick="generate('zoznam')" id="btn-zoznam">📋 A – Zoznam dokumentácie</button>
+      <button class="btn-gen" onclick="generate('suhrn')" id="btn-suhrn">📄 B – Súhrnná správa</button>
+    </div>
+    <div id="gen-progress" style="display:none">
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="prog-fill" style="width:0%"></div></div>
+        <div class="progress-msg" id="prog-msg"></div>
+      </div>
+    </div>
+    <div id="gen-results"></div>
+  </div>
+</div>
+
+<script>
+const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
+
+let cfg = {};
+let folderTree = null;
+let searchTimeout = null;
+
+const DEFAULT_SPECS = [
+  'Architektonicko-stavebné riešenie',
+  'Statika',
+  'Zdravotechnika',
+  'Vykurovanie',
+  'Elektroinštalácie',
+  'Požiarna bezpečnosť stavby',
+  'Energetické hodnotenie budovy',
+];
+
+document.addEventListener('DOMContentLoaded', () => {
+  try { cfg = JSON.parse(localStorage.getItem('pmCfg3')) || {}; } catch(e) {}
+  DEFAULT_SPECS.forEach(p => addSpecRow({ profesia: p }));
+  const now = new Date();
+  document.getElementById('fld-datum').value =
+    now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  prefillFromUrl();
+});
+
+function prefillFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('cislo')) document.getElementById('fld-cislo').value = params.get('cislo');
+  if (params.get('nazov')) document.getElementById('fld-nazov').value = params.get('nazov').toUpperCase();
+  if (params.get('cislo') || params.get('nazov')) {
+    document.getElementById('proj-search').value =
+      (params.get('cislo') || '') + (params.get('cislo') && params.get('nazov') ? ' – ' : '') + (params.get('nazov') || '');
+  }
+}
+
+// ── SPECS TABLE ──────────────────────────────────────────────────────────────
+
+function addSpecRow(data = {}) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input class="s-profesia" value="${esc(data.profesia || '')}" placeholder="Profesia"></td>
+    <td><textarea class="s-meno" rows="3" placeholder="Ing. arch. Meno Priezvisko&#10;Firma s.r.o.&#10;Ulica 1, 974 01 BB">${esc(data.meno || '')}</textarea></td>
+    <td><input class="s-reg" value="${esc(data.reg || '')}" placeholder="XXXX AA"></td>
+    <td><button class="btn-icon" onclick="this.closest('tr').remove()">✕</button></td>
+  `;
+  document.getElementById('specs-body').appendChild(tr);
+}
+
+function getSpecialists() {
+  return Array.from(document.querySelectorAll('#specs-body tr')).map(tr => ({
+    profesia: tr.querySelector('.s-profesia')?.value?.trim() || '',
+    meno:     tr.querySelector('.s-meno')?.value?.trim()     || '',
+    reg:      tr.querySelector('.s-reg')?.value?.trim()      || '',
+  })).filter(s => s.profesia);
+}
+
+// ── CAFLOU SEARCH ────────────────────────────────────────────────────────────
+
+function onSearchInput(val) {
+  clearTimeout(searchTimeout);
+  const dd = document.getElementById('proj-dropdown');
+  if (val.length < 2) { dd.classList.add('hidden'); return; }
+  searchTimeout = setTimeout(() => searchCaflou(val), 300);
+}
+
+async function searchCaflou(q) {
+  if (!cfg.caflou_key || !cfg.caflou_id) return;
+  const dd = document.getElementById('proj-dropdown');
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/projects?per=100`);
+    const d = await r.json();
+    const all = (d.results || d.data || []).filter(p => !p.trash && !p.template);
+    const ql = q.toLowerCase();
+    const matches = all.filter(p =>
+      (p.order_number || '').toLowerCase().includes(ql) ||
+      (p.name || '').toLowerCase().includes(ql)
+    ).slice(0, 8);
+    if (!matches.length) { dd.classList.add('hidden'); return; }
+    dd.innerHTML = matches.map(p =>
+      `<div class="dd-item" onclick='selectProject(${JSON.stringify({
+        order_number: p.order_number, name: p.name, id: p.id
+      })})'>${p.order_number || ''} – ${p.name}</div>`
+    ).join('');
+    dd.classList.remove('hidden');
+  } catch(e) {}
+}
+
+function selectProject(p) {
+  document.getElementById('proj-search').value = (p.order_number || '') + ' – ' + p.name;
+  document.getElementById('proj-dropdown').classList.add('hidden');
+  document.getElementById('fld-cislo').value = p.order_number || '';
+  document.getElementById('fld-nazov').value = (p.name || '').toUpperCase();
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) document.getElementById('proj-dropdown').classList.add('hidden');
+});
+
+// ── DRIVE FOLDER ─────────────────────────────────────────────────────────────
+
+async function loadFolder() {
+  const url = document.getElementById('folder-url').value.trim();
+  const folderId = extractFolderId(url);
+  if (!folderId) { setFolderStatus('Neplatný link – musí obsahovať /folders/ID', 'error'); return; }
+  if (!cfg.url) { setFolderStatus('Chýba URL Apps Script – nastav ho v dashboarde', 'error'); return; }
+
+  setFolderStatus('Načítavam štruktúru priečinka…', 'loading');
+  try {
+    const resp = await callScript({ action: 'listProjectFolder', folderId });
+    if (!resp.ok) throw new Error(resp.error || 'Neznáma chyba');
+    folderTree = resp.tree;
+    document.getElementById('folder-tree').innerHTML = renderTree(resp.tree, 0);
+    document.getElementById('folder-tree').classList.remove('hidden');
+    const n = countFiles(resp.tree);
+    setFolderStatus(`✓ Nájdených ${n} súborov`, 'ok');
+  } catch(e) {
+    setFolderStatus('Chyba: ' + e.message, 'error');
+  }
+}
+
+function renderTree(node, depth) {
+  let html = '';
+  if (depth > 0) html += `<div class="tree-folder" style="padding-left:${depth*14}px">📁 ${esc(node.name)}</div>`;
+  node.files.forEach(f => {
+    const icon = f.type.includes('pdf') ? '📄' : '📝';
+    html += `<div class="tree-file" style="padding-left:${(depth+1)*14}px">${icon} ${esc(f.name)}</div>`;
+  });
+  node.subfolders.forEach(sub => { html += renderTree(sub, depth + 1); });
+  return html;
+}
+
+function countFiles(node) {
+  return node.files.length + node.subfolders.reduce((s, sub) => s + countFiles(sub), 0);
+}
+
+function setFolderStatus(msg, type) {
+  const el = document.getElementById('folder-status');
+  el.textContent = msg;
+  el.className = 'status-' + type;
+}
+
+// ── GENEROVANIE ──────────────────────────────────────────────────────────────
+
+async function generate(type) {
+  const projekt = getProjektData();
+  if (!projekt.nazov) { alert('Zadaj aspoň Názov stavby'); return; }
+
+  const folderId = extractFolderId(document.getElementById('folder-url').value.trim());
+  if (!folderId) { alert('Zadaj platný link na Drive priečinok'); return; }
+  if (!cfg.url) { alert('Chýba URL Apps Script – nastav ho v dashboarde v nastaveniach'); return; }
+
+  const specialists = getSpecialists();
+  const action = type === 'zoznam' ? 'generateZoznam' : 'generateSuhrn';
+  const label = type === 'zoznam' ? 'A – Zoznam dokumentácie' : 'B – Súhrnná správa';
+
+  const btn = document.getElementById('btn-' + type);
+  btn.disabled = true;
+  document.getElementById('gen-progress').style.display = 'block';
+  setProgress(10, type === 'suhrn' ? 'Čítam technické správy z Drive…' : 'Načítavam zoznam súborov…');
+
+  try {
+    const ab = new AbortController();
+    const tid = setTimeout(() => ab.abort(), 300000); // 5 min timeout
+
+    setProgress(30, 'Volám Gemini…');
+    const resp = await callScript({ action, folderId, projekt, specialists }, ab.signal);
+    clearTimeout(tid);
+
+    if (!resp.ok) throw new Error(resp.error || 'Neznáma chyba');
+
+    setProgress(100, 'Hotovo!');
+    document.getElementById('gen-results').insertAdjacentHTML('beforeend', `
+      <div class="result-item">
+        ✅ <strong>${esc(label)}</strong> vygenerovaná —
+        <a href="${esc(resp.docUrl)}" target="_blank" rel="noopener">Otvoriť Google Doc ↗</a>
+      </div>
+    `);
+  } catch(e) {
+    setProgress(0, '');
+    document.getElementById('gen-progress').style.display = 'none';
+    if (e.name === 'AbortError') {
+      alert('Timeout: generovanie trvalo príliš dlho (> 5 min).\nSkús menej PDF súborov alebo kontaktuj správcu.');
+    } else {
+      alert('Chyba: ' + e.message);
+    }
+  }
+
+  btn.disabled = false;
+}
+
+function setProgress(pct, msg) {
+  document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-msg').textContent = msg;
+}
+
+function getProjektData() {
+  const datumRaw = document.getElementById('fld-datum').value;
+  return {
+    stupen:        document.getElementById('fld-stupen').value.trim(),
+    cislo:         document.getElementById('fld-cislo').value.trim(),
+    nazov:         document.getElementById('fld-nazov').value.trim(),
+    stavebnik:     document.getElementById('fld-stavebnik').value.trim(),
+    miesto:        document.getElementById('fld-miesto').value.trim(),
+    parcely:       document.getElementById('fld-parcely').value.trim(),
+    lv:            document.getElementById('fld-lv').value.trim(),
+    datum:         formatDatum(datumRaw),
+    naklady:       document.getElementById('fld-naklady').value.trim(),
+    typ:           document.getElementById('fld-typ').value.trim(),
+    genProjektant: document.getElementById('fld-genprojektant').value.trim(),
+    poznamky:      document.getElementById('fld-poznamky').value.trim(),
+  };
+}
+
+function formatDatum(monthStr) {
+  if (!monthStr) return '';
+  const [y, m] = monthStr.split('-');
+  const names = ['január','február','marec','apríl','máj','jún','júl','august','september','október','november','december'];
+  return names[parseInt(m) - 1] + ' ' + y + '   ' + m + '/' + y;
+}
+
+// ── HELPERS ──────────────────────────────────────────────────────────────────
+
+function extractFolderId(url) {
+  const m = url.match(/folders\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+async function callScript(data, signal) {
+  const resp = await fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+    signal,
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const text = await resp.text();
+  try { return JSON.parse(text); } catch(e) { throw new Error('Neplatná odpoveď: ' + text.slice(0, 200)); }
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
