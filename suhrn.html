@@ -109,7 +109,7 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
 </nav>
 
 <div class="container">
-  <h1>Generátor správ</h1>
+  <h1>Generátor správ <span id="proj-title-badge" style="font-size:14px;font-weight:400;color:var(--muted);margin-left:8px"></span></h1>
 
   <!-- KROK 1: IDENTIFIKAČNÉ ÚDAJE -->
   <div class="card">
@@ -301,13 +301,43 @@ async function saveProjektanti() {
 
 function prefillFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('cislo')) document.getElementById('fld-cislo').value = params.get('cislo');
-  if (params.get('nazov')) document.getElementById('fld-nazov').value = params.get('nazov').toUpperCase();
-  if (params.get('cislo') || params.get('nazov')) {
+  const cislo  = params.get('cislo')  || '';
+  const nazov  = params.get('nazov')  || '';
+  const faza   = params.get('faza')   || '';
+  const podfaza = params.get('podfaza') || '';
+
+  if (cislo) document.getElementById('fld-cislo').value = cislo;
+  if (nazov) document.getElementById('fld-nazov').value = nazov.toUpperCase();
+  if (cislo || nazov) {
     document.getElementById('proj-search').value =
-      (params.get('cislo') || '') + (params.get('cislo') && params.get('nazov') ? ' – ' : '') + (params.get('nazov') || '');
+      (cislo || '') + (cislo && nazov ? ' – ' : '') + (nazov || '');
   }
-  if (params.get('cislo')) loadFolderUrl(params.get('cislo')).catch(() => {});
+
+  // Badge v nadpise
+  if (cislo || faza) {
+    const label = [cislo, podfaza || faza].filter(Boolean).join(' · ');
+    document.getElementById('proj-title-badge').textContent = label;
+  }
+
+  // Stupeň podľa fázy
+  const stupenMap = {
+    'Štúdia':      'AŠ – Architektonická štúdia',
+    'Projekcia':   'Projekt stavby',
+    'Inžiniering': 'Projekt stavby',
+  };
+  const podfazaMap = {
+    'Stavebný zámer':  'DSP – Dokumentácia pre stavebné povolenie',
+    'Projekt stavby':  'Projekt stavby',
+  };
+  const stupen = podfazaMap[podfaza] || stupenMap[faza] || '';
+  if (stupen) {
+    const sel = document.getElementById('fld-stupen');
+    for (let i = 0; i < sel.options.length; i++) {
+      if (sel.options[i].text === stupen) { sel.selectedIndex = i; break; }
+    }
+  }
+
+  if (cislo) loadFolderUrl(cislo).catch(() => {});
 }
 
 async function loadFolderUrl(cislo) {
@@ -381,35 +411,35 @@ async function loadProjektantiFromProject(silent = false) {
   btn.disabled = true; btn.textContent = 'Načítavam…';
 
   try {
-    // 1. requests pre projekt s caflou_task_id → zoznam task IDs + profesia
-    const reqRes = await fetch(
-      `${SB_URL}/rest/v1/requests?project_cislo=eq.${encodeURIComponent(cislo)}&caflou_task_id=not.is.null&select=caflou_task_id,profession`,
-      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
-    );
+    const faza = new URLSearchParams(window.location.search).get('faza') || '';
+
+    // 1. requests pre projekt (všetky, nie len s task_id)
+    let reqUrl = `${SB_URL}/rest/v1/requests?project_cislo=eq.${encodeURIComponent(cislo)}&select=id,profession`;
+    const reqRes = await fetch(reqUrl, { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } });
     const reqs = await reqRes.json();
     if (!reqs.length) {
-      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá prepojené úlohy';
+      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá žiadne dopyty';
       else DEFAULT_SPECS.forEach(s => addSpecRow(s));
       btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
     }
 
-    const taskIds = reqs.map(r => r.caflou_task_id);
-    const profMap = Object.fromEntries(reqs.map(r => [String(r.caflou_task_id), r.profession]));
+    const reqIds = reqs.map(r => r.id);
+    const profMap = Object.fromEntries(reqs.map(r => [r.id, r.profession]));
 
-    // 2. task_specialists pre tieto task IDs → specialist_id
-    const tsRes = await fetch(
-      `${SB_URL}/rest/v1/task_specialists?task_id=in.(${taskIds.join(',')})&select=task_id,specialist_id`,
+    // 2. selected invitations
+    const invRes = await fetch(
+      `${SB_URL}/rest/v1/invitations?request_id=in.(${reqIds.join(',')})&status=eq.selected&select=request_id,specialist_id`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
     );
-    const taskSpecs = await tsRes.json();
-    if (!taskSpecs.length) {
-      if (!silent) document.getElementById('specs-hint').textContent = 'Úlohy nemajú priradených profesistov';
+    const invs = await invRes.json();
+    if (!invs.length) {
+      if (!silent) document.getElementById('specs-hint').textContent = 'Žiadni vybraní profesisti';
       else DEFAULT_SPECS.forEach(s => addSpecRow(s));
       btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
     }
 
     // 3. specialists → meno, profesia, reg
-    const specIds = [...new Set(taskSpecs.map(ts => ts.specialist_id))];
+    const specIds = [...new Set(invs.map(i => i.specialist_id))];
     const specRes = await fetch(
       `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
@@ -418,18 +448,22 @@ async function loadProjektantiFromProject(silent = false) {
     const specMap = Object.fromEntries(specs.map(s => [s.id, s]));
 
     // Zostav riadky: profesia z request, meno+reg z specialist
-    const rows = taskSpecs.map(ts => {
-      const sp = specMap[ts.specialist_id] || {};
-      const profesia = profMap[String(ts.task_id)] || sp.profession || '';
-      return { profesia, meno: sp.name || '', reg: sp.reg || '' };
+    let rows = invs.map(inv => {
+      const sp = specMap[inv.specialist_id] || {};
+      return { profesia: profMap[inv.request_id] || sp.profession || '', meno: sp.name || '', reg: sp.reg || '' };
     }).filter(r => r.meno);
+
+    // Deduplikuj podľa mena
+    const seen = new Set();
+    rows = rows.filter(r => { const k = r.meno + r.profesia; if (seen.has(k)) return false; seen.add(k); return true; });
 
     document.getElementById('specs-body').innerHTML = '';
     rows.forEach(r => addSpecRow(r));
     document.getElementById('specs-hint').textContent = `✓ ${rows.length} profesistov`;
     setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 3000);
   } catch(e) {
-    alert('Chyba: ' + e.message);
+    if (!silent) alert('Chyba: ' + e.message);
+    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
   }
   btn.textContent = 'Načítať z projektu'; btn.disabled = false;
 }
