@@ -252,7 +252,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fld-datum').value =
     now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   prefillFromUrl();
-  loadSavedProjektanti().catch(() => {});
+  // Ak prišlo cislo z URL, načítaj profesistov projektu; inak globálny zoznam
+  const urlCislo = new URLSearchParams(window.location.search).get('cislo');
+  if (urlCislo) {
+    loadProjektantiFromProject(true).catch(() => { DEFAULT_SPECS.forEach(s => addSpecRow(s)); });
+  } else {
+    loadSavedProjektanti().catch(() => {});
+  }
 });
 
 async function loadSavedProjektanti() {
@@ -368,9 +374,9 @@ async function extractFromAsr() {
   }
 }
 
-async function loadProjektantiFromProject() {
+async function loadProjektantiFromProject(silent = false) {
   const cislo = document.getElementById('fld-cislo').value.trim();
-  if (!cislo) { alert('Najprv vyber projekt (krok 1).'); return; }
+  if (!cislo) { if (!silent) alert('Najprv vyber projekt (krok 1).'); return; }
   const btn = document.getElementById('btn-load-specs');
   btn.disabled = true; btn.textContent = 'Načítavam…';
 
@@ -382,7 +388,8 @@ async function loadProjektantiFromProject() {
     );
     const reqs = await reqRes.json();
     if (!reqs.length) {
-      document.getElementById('specs-hint').textContent = 'Projekt nemá prepojené úlohy';
+      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá prepojené úlohy';
+      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
       btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
     }
 
@@ -396,7 +403,8 @@ async function loadProjektantiFromProject() {
     );
     const taskSpecs = await tsRes.json();
     if (!taskSpecs.length) {
-      document.getElementById('specs-hint').textContent = 'Úlohy nemajú priradených profesistov';
+      if (!silent) document.getElementById('specs-hint').textContent = 'Úlohy nemajú priradených profesistov';
+      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
       btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
     }
 
