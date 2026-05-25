@@ -200,7 +200,7 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
     <h2><span class="step-num">3</span> Projektový priečinok na Drive</h2>
     <p class="hint">Zadaj link na priečinok stupňa (napr. DSP/) ktorý obsahuje podpriečinky podľa profesie (Architektura/, Statika/, ZT/, …)</p>
     <div class="row">
-      <input id="folder-url" type="url" placeholder="https://drive.google.com/drive/folders/…" style="flex:1">
+      <input id="folder-url" type="url" placeholder="https://drive.google.com/drive/folders/…" style="flex:1" onblur="saveFolderUrl()">
       <button class="btn-secondary" onclick="loadFolder()">Načítať</button>
     </div>
     <div id="folder-status"></div>
@@ -298,6 +298,29 @@ function prefillFromUrl() {
     document.getElementById('proj-search').value =
       (params.get('cislo') || '') + (params.get('cislo') && params.get('nazov') ? ' – ' : '') + (params.get('nazov') || '');
   }
+  if (params.get('cislo')) loadFolderUrl(params.get('cislo')).catch(() => {});
+}
+
+async function loadFolderUrl(cislo) {
+  if (!cislo) return;
+  const res = await fetch(`${SB_URL}/rest/v1/suhrn_folder?project_cislo=eq.${encodeURIComponent(cislo)}&select=folder_url`, {
+    headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY },
+  });
+  const rows = await res.json();
+  if (Array.isArray(rows) && rows.length && rows[0].folder_url) {
+    document.getElementById('folder-url').value = rows[0].folder_url;
+  }
+}
+
+async function saveFolderUrl() {
+  const cislo = document.getElementById('fld-cislo').value.trim();
+  const url = document.getElementById('folder-url').value.trim();
+  if (!cislo || !url) return;
+  await fetch(`${SB_URL}/rest/v1/suhrn_folder`, {
+    method: 'POST',
+    headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ project_cislo: cislo, folder_url: url }),
+  }).catch(() => {});
 }
 
 // ── SPECS TABLE ──────────────────────────────────────────────────────────────
