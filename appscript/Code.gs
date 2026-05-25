@@ -469,7 +469,8 @@ function akcia_generateZoznam(req) {
     'Parcelné čísla: ' + (p.parcely || '—') + '\n' +
     'Dátum: ' + (p.datum || '—') + '\n\n' +
     'GENERÁLNY PROJEKTANT:\n' + (genProjektant || '—') + '\n\n' +
-    'ZODPOVEDNÍ PROJEKTANTI PROFESIÍ:\n' + specsText + '\n\n' +
+    'ZOZNAM VŠETKÝCH PROJEKTANTOV FIRMY (vyber relevantných podľa profesií v PD):\n' + specsText + '\n\n' +
+    'POKYN pre projektantov: Pre každú profesiu v sekcii D prirad zodpovedného projektanta z vyššie uvedeného zoznamu podľa zhody profesie. Ak pre danú profesiu niet zodpovedajúci projektant, napíš "—".\n\n' +
     'SÚBORY V PRIEČINKOCH (podľa profesie):\n' + filesByFolder + '\n\n' +
     'Odpovedaj len text dokumentu, bez markdown, bez ``` obalov.';
 
@@ -537,10 +538,11 @@ function akcia_generateSuhrn(req) {
     'Charakter stavby: ' + (p.typ || '—') + '\n' +
     (p.poznamky ? 'Doplňujúce informácie: ' + p.poznamky + '\n' : '') + '\n' +
     'GENERÁLNY PROJEKTANT:\n' + (genProjektant || '—') + '\n\n' +
-    'PROJEKTANTI PROFESIÍ:\n' + specsText + '\n\n' +
+    'ZOZNAM VŠETKÝCH PROJEKTANTOV FIRMY (vyber relevantných podľa profesií v technických správach):\n' + specsText + '\n\n' +
     'TECHNICKÉ SPRÁVY PROFESIÍ (obsah z Drive – toto je primárny zdroj):\n' + (reportsSection || '(žiadne)') + '\n\n' +
     'POKYNY:\n' +
     '- Ak "Názov stavby" nie je zadaný, nájdi ho v technických správach (hľadaj "Stavba:", "NOVOSTAVBA", "REKONŠTRUKCIA"...)\n' +
+    '- Pre identifikačné údaje projektu (kap. 1): pre každú profesiu priraď zodpovedného projektanta zo zoznamu projektantov firmy podľa zhody s profesiou v technickej správe\n' +
     '- POUŽI LEN informácie z technických správ – konkrétne čísla, materiály, rozmery, popisy\n' +
     '- Kde technická správa neobsahuje informáciu pre daný bod, napíš iba "—" alebo jednu vetu konštatáciu\n' +
     '- NEPLŇ generickým textom – lepší je kratší presný obsah ako dlhý vymyslený\n' +
