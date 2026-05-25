@@ -365,23 +365,33 @@ async function loadProjektantiFromProject() {
   btn.disabled = true; btn.textContent = 'Načítavam…';
 
   try {
-    // requests pre projekt → selected invitations → specialists
+    // 1. requests pre projekt s caflou_task_id → zoznam task IDs + profesia
     const reqRes = await fetch(
-      `${SB_URL}/rest/v1/requests?project_cislo=eq.${encodeURIComponent(cislo)}&select=id,profession`,
+      `${SB_URL}/rest/v1/requests?project_cislo=eq.${encodeURIComponent(cislo)}&caflou_task_id=not.is.null&select=caflou_task_id,profession`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
     );
     const reqs = await reqRes.json();
-    if (!reqs.length) { btn.textContent = 'Načítať z projektu'; btn.disabled = false; document.getElementById('specs-hint').textContent = 'Projekt nemá žiadne dopyty'; return; }
+    if (!reqs.length) {
+      document.getElementById('specs-hint').textContent = 'Projekt nemá prepojené úlohy';
+      btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
+    }
 
-    const reqIds = reqs.map(r => r.id);
-    const invRes = await fetch(
-      `${SB_URL}/rest/v1/invitations?request_id=in.(${reqIds.join(',')})&status=eq.selected&select=request_id,specialist_id`,
+    const taskIds = reqs.map(r => r.caflou_task_id);
+    const profMap = Object.fromEntries(reqs.map(r => [String(r.caflou_task_id), r.profession]));
+
+    // 2. task_specialists pre tieto task IDs → specialist_id
+    const tsRes = await fetch(
+      `${SB_URL}/rest/v1/task_specialists?task_id=in.(${taskIds.join(',')})&select=task_id,specialist_id`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
     );
-    const invs = await invRes.json();
-    if (!invs.length) { btn.textContent = 'Načítať z projektu'; btn.disabled = false; document.getElementById('specs-hint').textContent = 'Žiadni vybraní profesisti'; return; }
+    const taskSpecs = await tsRes.json();
+    if (!taskSpecs.length) {
+      document.getElementById('specs-hint').textContent = 'Úlohy nemajú priradených profesistov';
+      btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
+    }
 
-    const specIds = [...new Set(invs.map(i => i.specialist_id))];
+    // 3. specialists → meno, profesia, reg
+    const specIds = [...new Set(taskSpecs.map(ts => ts.specialist_id))];
     const specRes = await fetch(
       `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
@@ -389,14 +399,13 @@ async function loadProjektantiFromProject() {
     const specs = await specRes.json();
     const specMap = Object.fromEntries(specs.map(s => [s.id, s]));
 
-    // Zostav zoznam: profesia z request, meno+reg z specialist
-    const rows = invs.map(inv => {
-      const req = reqs.find(r => r.id === inv.request_id);
-      const sp  = specMap[inv.specialist_id] || {};
-      return { profesia: req?.profession || sp.profession || '', meno: sp.name || '', reg: sp.reg || '' };
+    // Zostav riadky: profesia z request, meno+reg z specialist
+    const rows = taskSpecs.map(ts => {
+      const sp = specMap[ts.specialist_id] || {};
+      const profesia = profMap[String(ts.task_id)] || sp.profession || '';
+      return { profesia, meno: sp.name || '', reg: sp.reg || '' };
     }).filter(r => r.meno);
 
-    // Vyčisti tabuľku a doplň
     document.getElementById('specs-body').innerHTML = '';
     rows.forEach(r => addSpecRow(r));
     document.getElementById('specs-hint').textContent = `✓ ${rows.length} profesistov`;
