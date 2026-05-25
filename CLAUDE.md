@@ -176,18 +176,26 @@ CAFLOU_USERS             // user_id → meno
 - `getMaily` — maily pre jeden projekt (cislo) zo SHEET_MAILY → `{maily:[...]}`
 - `getKontakty` — Google Contacts cez People API → `{contacts:[...]}`
 - `zhrniPortfolio` — celkový stav portfólia (text = denníky aktívnych projektov so zápismi, 1 záznam/projekt)
+- `extractMetadata` — nájde `TS_ASR.pdf` v Drive priečinku, skonvertuje cez Drive API v3 (multipart upload) na GDoc (OCR), prečíta text, Gemini extrahuje `{nazov, stavebnik, miesto, parcely, lv}` ako JSON
+- `buildFolderTree` — rekurzívne prechádza Drive priečinok; vracia JSON strom `{name, files[], subfolders[]}`; v každom priečinku `TS_*.pdf` vždy prvý, výkresy zoradené numericky podľa prefixu
+- `generateZoznam` — vygeneruje „A – Zoznam dokumentácie" ako GDoc (kópia `VZOR_ZOZNAM_ID` šablóny), zapíše do Drive priečinka projektu
+- `generateSuhrn` — vygeneruje „B – Súhrnná správa" (kópia `VZOR_SUHRN_ID`), obsah generuje Gemini z textu tech správ
+- `createDocInFolder(title, text, parentFolderId, templateId)` — `makeCopy()` šablóny → zapíše obsah s Arial štýlom
 
 **Apps Script gotchas:**
 - Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
 - Po každej zmene kódu treba aktualizovať nasadenie (Deploy → Manage → nová verzia)
 - Trigger `sledujMaily` — time-driven, každú hodinu; hľadá `newer_than:1d label:inbox`
-- `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`
+- `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`, `drive` (`https://www.googleapis.com/auth/drive`) aj `documents` (`https://www.googleapis.com/auth/documents`) — inak `DriveApp`/`DocumentApp` hádzajú permissions error
 - `doPost` **musí mať try-catch** okolo celého tela — inak nekachnutý exception vráti HTML bez CORS hlavičiek → prehliadač dostane "Failed to fetch"
 - Gemini model: `gemini-2.5-flash` — `volajGemini` aj `analyzovatGemini` používajú tento model. `gemini-2.0-flash` a `gemini-2.0-flash-lite` majú `limit: 0` na free tier (nefungujú)
 - `akcia_zhrniPortfolio` **nepoužíva SYSTEM_PROMPT** ani SHEET_MAILY — prompt by bol príliš dlhý (429). Používa vlastný krátky prompt, max 4000 znakov
 - Frontend `geminiZhrnPortfolio` posiela len aktívne projekty **so zápismi**, 1 najnovší záznam/projekt, max 3000 znakov; fetch má AbortController timeout 60s
 - `volajGemini` retry sleep: 5s (nie 30s) — rýchlejšie zlyhanie pri rate limite; po 3 pokusoch hodí zrozumiteľnú správu
 - Apps Script kód záloha: `appscript/Code.gs` v repozitári (treba manuálne kopírovať do editora pri zmenách)
+- **`fetch` do Apps Script nesmie mať `Content-Type: application/json` header** — spúšťa CORS preflight ktorý Apps Script nezvláda. `callScript()` v `suhrn.html` posiela fetch bez headers (telo je string JSON → Apps Script ho parsuje cez `JSON.parse(e.postData.contents)`)
+- **PDF OCR cez Drive API v3**: multipart upload `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&convert=true` s `Authorization: Bearer ScriptApp.getOAuthToken()` → skonvertuje PDF na Google Doc → číta text cez `DocumentApp.openById()` → zmaže temp súbor
+- **`makeCopy()` namiesto `DocumentApp.create()`** — zachováva fonty, okraje, rozloženie stránky zo šablóny. ID šablón: `VZOR_ZOZNAM_ID`, `VZOR_SUHRN_ID` (konštanty v Code.gs)
 
 ### Externý profesista → automatický dopyt → automatické priradenie
 
@@ -315,6 +323,8 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Aktivita sa nezobrazuje v riadku projektu** — je redundantná so stavovým filtrom. `projRowHtml` zobrazuje len Gemini zhrnutie (`gem`), nie `stavMap[p.cislo]`.
 
+**`specialists` tabuľka má stĺpec `reg`** (reg. číslo oprávnenia, napr. `1234 AA`). Zobrazuje sa v modali profesistov v `ponuky.html`. `saveSpec()` ho ukladá spolu s ostatnými poliami.
+
 ### portal.html
 
 Specialist-facing form. Dva módy podľa URL parametra:
@@ -342,6 +352,57 @@ PowerShell script that reads projects from Caflou and creates `.lnk` shortcuts i
 Shortcut on desktop: `Sync Fazy.lnk` (runs with `-NoExit -ExecutionPolicy Bypass`).
 
 Project folders are named `2024-021-NazovProjektu` (4-digit year), Caflou uses `24-021` (2-digit) — the script handles this conversion.
+
+### suhrn.html
+
+Generátor správ — vytvára dva stavebné dokumenty cez Google Apps Script + Gemini:
+- **A – Zoznam dokumentácie**: zoznam PDF súborov z Drive priečinka, zoskupené podľa profesie, tech správa (`TS_*.pdf`) vždy prvá, výkresy numericky zoradené
+- **B – Súhrnná správa**: 9-kapitolový dokument generovaný Gemini z obsahu tech správ
+
+Dostupný z `index.html` tlačidlom `📄 A,B` na každom projekte (otvára sa v novom tabe).
+
+**URL parametre (z index.html A,B tlačidla):**
+```
+suhrn.html?cislo=26-014&nazov=NazovProjektu&faza=Projekcia&podfaza=Projekt+stavby
+           &caflouid=12345&taskids=111,222,333
+```
+- `cislo` → `projectKey` (Caflou `order_number`) — kľúč pre Supabase
+- `caflouid` — Caflou numerické ID projektu (`p.caflou_id` = `p.id` z Caflou API, nastavené v `parseCaflouProject`)
+- `taskids` — záložné task IDs; primárne sa taskIds fetchujú priamo z Caflou (`/projects/{caflouid}`)
+
+**Kľúčové globálne premenné:**
+```javascript
+let projectKey = '';     // Caflou order_number – kľúč pre Supabase (suhrn_folder)
+let projectTaskIds = []; // záložné task IDs z URL
+```
+
+**Postup (4 kroky v UI):**
+1. **Identifikačné údaje** — vyhľadanie projektu v Caflou (alebo prefill z URL), stupeň, číslo stavby, názov, stavebník, miesto, parcely, LV, dátum, náklady, charakter. Tlačidlo **Načítať z TS_ASR** → Apps Script `extractMetadata` → Gemini prečíta tech správu ASR a vyplní polia automaticky
+2. **Zodpovední projektanti** — tabuľka (rola, meno/adresa, reg. číslo). Tlačidlo **Načítať z projektu** → `loadProjektantiFromCaflou()` → z Caflou ext úloh + task_specialists + specialists.reg
+3. **Projektový priečinok na Drive** — URL priečinka stupňa (napr. `DSP/`). Ukladá sa do Supabase `suhrn_folder` podľa `projectKey`. Načíta sa automaticky pri otvorení projektu
+4. **Generovať** — tlačidlá A a B → Apps Script `generateZoznam` / `generateSuhrn`
+
+**`loadProjektantiFromCaflou(silent)`:**
+1. Fetchne projekt z Caflou (`/projects/{caflouid}`) → task_ids
+2. Fetchne `task_specialists` zo Supabase pre tieto task_ids
+3. Fetchne všetky Caflou úlohy (paginated), filtruje ext + patriace projektu
+4. Fetchne `specialists` zo Supabase podľa specialist_id → dostane meno, profesiu, reg
+5. Priorita mena špecialistu: `task_specialists` → `extSpecOverride` (localStorage)
+6. Deduplikuje podľa `meno+profesia`, vynechá riadky bez mena
+
+**Supabase tabuľky (suhrn.html):**
+- `suhrn_folder (id uuid, cislo text unique, folder_url text, updated_at timestamptz)` — URL priečinka per projekt (`projectKey`)
+- `suhrn_projektanti (id uuid, cislo text unique, data jsonb)` — uložený zoznam projektantov (tlačidlo 💾)
+
+**`callScript(action, payload)`** — volá Apps Script bez `Content-Type` header (inak CORS preflight zlyhá). Payload je `{action, ...payload}`, serializovaný ako string v body.
+
+**Tech správy — konvencia názvov:** `TS_<SKRATKA>.pdf` (napr. `TS_ASR.pdf`, `TS_STR.pdf`). Detekuje `isTechReport(name)`: `name.toUpperCase().startsWith('TS_')`.
+
+**Nav:** `<a href="suhrn.html" class="mnav-a">Správy</a>` — v `index.html` aj `ponuky.html`.
+
+**Nedokončené / TODO:**
+- Otestovať kompletný flow generovania A+B po nasadení novej verzie Apps Script s `extractMetadata` + `generateZoznam` + `generateSuhrn`
+- Overiť funkčnosť `loadProjektantiFromCaflou` po oprave `caflouid` parametra (p.id → p.caflou_id v index.html)
 
 ### caflou.env (gitignored)
 
