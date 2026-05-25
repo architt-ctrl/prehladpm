@@ -2156,7 +2156,7 @@ function buildDetailHtml(p) {
         style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">+ Úloha</button>
       <button onclick="openTmplPicker('${p.cislo}')"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📋 Šablóna</button>
-      <a href="suhrn.html?cislo=${encodeURIComponent(p.cislo)}&nazov=${encodeURIComponent(p.nazov)}&faza=${encodeURIComponent(p.faza||'')}&podfaza=${encodeURIComponent(p.podfaza||'')}" onclick="event.stopPropagation()" target="_blank"
+      <a href="suhrn.html?cislo=${encodeURIComponent(p.cislo)}&nazov=${encodeURIComponent(p.nazov)}&faza=${encodeURIComponent(p.faza||'')}&podfaza=${encodeURIComponent(p.podfaza||'')}&caflouid=${encodeURIComponent(p.id||'')}&taskids=${encodeURIComponent((p.caflou_task_ids||[]).join(','))}" onclick="event.stopPropagation()" target="_blank"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);text-decoration:none;display:inline-flex;align-items:center">📄 A,B</a>
     </div>
   </div>`;
