@@ -518,7 +518,7 @@ function akcia_generateZoznam(req) {
 
   var content = volajGemini(prompt);
   var title = 'A – Zoznam dokumentácie – ' + (p.cislo || nazovStavby || 'projekt');
-  var doc = createDocInFolder(title, content, folderId);
+  var doc = createDocInFolder(title, content, folderId, VZOR_ZOZNAM_ID);
   return { ok: true, docUrl: doc.url, docId: doc.id };
 }
 
@@ -608,7 +608,7 @@ function akcia_generateSuhrn(req) {
     '─────────────────────────────────────────────────────\n\n';
 
   var title = 'B – Súhrnná správa – ' + (p.cislo || finalNazov || 'projekt');
-  var doc = createDocInFolder(title, header + content, folderId);
+  var doc = createDocInFolder(title, header + content, folderId, VZOR_SUHRN_ID);
   return { ok: true, docUrl: doc.url, docId: doc.id };
 }
 
@@ -732,10 +732,37 @@ function fileToText(fileId, mimeType) {
 }
 
 // Vytvorí Google Doc s formátovaním a presunie ho do cieľového priečinka
-function createDocInFolder(title, textContent, parentFolderId) {
-  var doc  = DocumentApp.create(title);
-  var body = doc.getBody();
-  body.clear();
+function createDocInFolder(title, textContent, parentFolderId, templateId) {
+  var folder = DriveApp.getFolderById(parentFolderId);
+  var file, doc, body;
+
+  // Kopíruj vzorový dokument aby sa zdedili štýly, okraje, font
+  if (templateId) {
+    try {
+      file = DriveApp.getFileById(templateId).makeCopy(title, folder);
+      doc  = DocumentApp.openById(file.getId());
+      body = doc.getBody();
+      body.clear();
+    } catch(e) {
+      templateId = null; // fallback nižšie
+    }
+  }
+
+  // Fallback: nový prázdny dokument
+  if (!templateId) {
+    doc  = DocumentApp.create(title);
+    body = doc.getBody();
+    body.clear();
+    file = DriveApp.getFileById(doc.getId());
+    try {
+      folder.addFile(file);
+      DriveApp.getRootFolder().removeFile(file);
+    } catch(e) {}
+  }
+
+  // Štýly
+  var H1_SIZE = 13, H2_SIZE = 11, BODY_SIZE = 10;
+  var FONT = 'Arial';
 
   var lines = textContent.split('\n');
   var skippedLeading = false;
@@ -745,43 +772,49 @@ function createDocInFolder(title, textContent, parentFolderId) {
     if (!skippedLeading && !t) return;
     skippedLeading = true;
 
-    if (!t) {
-      body.appendParagraph('');
-      return;
-    }
+    if (!t) { body.appendParagraph('').setSpacingAfter(0); return; }
 
-    // Kapitoly: "1) Identifikačné...", "2) Základné..."
-    if (/^\d+\)\s+/.test(t)) {
-      var p = body.appendParagraph(t.replace(/\*\*/g, ''));
+    var p, style;
+
+    // Kapitoly: "1) ...", "A –", "B –"
+    if (/^\d+\)\s+/.test(t) || /^[A-Z]\s+[–—-]\s+/.test(t)) {
+      p = body.appendParagraph(t.replace(/\*\*/g, ''));
       p.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+      style = p.editAsText();
+      style.setFontSize(0, t.length - 1, H1_SIZE).setBold(0, t.length - 1, true).setFontFamily(0, t.length - 1, FONT);
+      p.setSpacingBefore(12).setSpacingAfter(4);
 
-    // Podkapitoly: "1.1 ...", "a) ..."
-    } else if (/^\d+\.\d+\s/.test(t) || /^[a-z]\)\s/.test(t)) {
-      var p = body.appendParagraph(t.replace(/\*\*/g, ''));
+    // Podkapitoly: "a) ...", "1.1 ..."
+    } else if (/^[a-z]\)\s/.test(t) || /^\d+\.\d+\s/.test(t)) {
+      p = body.appendParagraph(t.replace(/\*\*/g, ''));
       p.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+      style = p.editAsText();
+      style.setFontSize(0, t.length - 1, H2_SIZE).setBold(0, t.length - 1, true).setFontFamily(0, t.length - 1, FONT);
+      p.setSpacingBefore(8).setSpacingAfter(2);
 
-    // Všetky veľké písmená, kratšie ako 80 znakov = nadpis sekcie
-    } else if (t.length < 80 && t === t.toUpperCase() && /[A-ZÁČĎÉĚÍŇÓŠŤÚŮÝŽ]{3,}/.test(t)) {
-      var p = body.appendParagraph(t);
+    // Veľké písmená (sekcie ako "ARCHITEKTONICKO-STAVEBNÉ RIEŠENIE")
+    } else if (t.length < 100 && t === t.toUpperCase() && /[A-ZÁČĎÉÍŇÓŠŤÚÝŽ]{3,}/.test(t)) {
+      p = body.appendParagraph(t);
       p.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+      style = p.editAsText();
+      style.setFontSize(0, t.length - 1, H2_SIZE).setBold(0, t.length - 1, true).setFontFamily(0, t.length - 1, FONT);
+      p.setSpacingBefore(8).setSpacingAfter(2);
 
+    // Bežný text
     } else {
-      body.appendParagraph(line.replace(/\*\*/g, ''));
+      var clean = line.replace(/\*\*/g, '');
+      p = body.appendParagraph(clean);
+      p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+      if (clean.length > 0) {
+        style = p.editAsText();
+        style.setFontSize(0, clean.length - 1, BODY_SIZE).setBold(0, clean.length - 1, false).setFontFamily(0, clean.length - 1, FONT);
+      }
+      p.setSpacingAfter(2);
     }
   });
 
   doc.saveAndClose();
-
-  // Presun do cieľového priečinka
-  try {
-    var file = DriveApp.getFileById(doc.getId());
-    DriveApp.getFolderById(parentFolderId).addFile(file);
-    DriveApp.getRootFolder().removeFile(file);
-  } catch(e) {
-    Logger.log('Presun zlyhol: ' + e.message + ' – dokument je v koreňovom priečinku');
-  }
-
-  return { url: 'https://docs.google.com/document/d/' + doc.getId() + '/edit', id: doc.getId() };
+  return { url: 'https://docs.google.com/document/d/' + file.getId() + '/edit', id: file.getId() };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
