@@ -232,8 +232,6 @@ let cfg = {};
 let folderTree = null;
 let searchTimeout = null;
 
-const LS_PROJEKTANTI = 'pmSuhrnProjektanti';
-
 const DEFAULT_SPECS = [
   { profesia: 'Generálny projektant', meno: '', reg: '' },
   { profesia: 'Architektonicko-stavebné riešenie', meno: '', reg: '' },
@@ -247,34 +245,50 @@ const DEFAULT_SPECS = [
 
 document.addEventListener('DOMContentLoaded', () => {
   try { cfg = JSON.parse(localStorage.getItem('pmCfg3')) || {}; } catch(e) {}
-  loadSavedProjektanti();
+  loadSavedProjektanti().catch(() => {});
   const now = new Date();
   document.getElementById('fld-datum').value =
     now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   prefillFromUrl();
 });
 
-function loadSavedProjektanti() {
+async function loadSavedProjektanti() {
   try {
-    const saved = JSON.parse(localStorage.getItem(LS_PROJEKTANTI));
-    if (saved?.specs?.length) {
-      saved.specs.forEach(s => addSpecRow(s));
-      const d = saved.savedAt ? `uložené ${saved.savedAt}` : '';
-      document.getElementById('specs-hint').textContent = d;
+    const res = await fetch(`${SB_URL}/rest/v1/suhrn_projektanti?order=poradie.asc`, {
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY },
+    });
+    const rows = await res.json();
+    if (Array.isArray(rows) && rows.length) {
+      rows.forEach(r => addSpecRow({ profesia: r.profesia, meno: r.meno, reg: r.reg }));
+      document.getElementById('specs-hint').textContent = '';
       return;
     }
   } catch(e) {}
   DEFAULT_SPECS.forEach(s => addSpecRow(s));
 }
 
-function saveProjektanti() {
+async function saveProjektanti() {
+  const btn = document.querySelector('[onclick="saveProjektanti()"]');
+  if (btn) btn.disabled = true;
   const specs = getSpecialists();
-  localStorage.setItem(LS_PROJEKTANTI, JSON.stringify({
-    specs,
-    savedAt: new Date().toLocaleDateString('sk'),
-  }));
-  document.getElementById('specs-hint').textContent = '✓ uložené';
-  setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 2000);
+  try {
+    // vymazať všetky existujúce riadky a vložiť nové
+    await fetch(`${SB_URL}/rest/v1/suhrn_projektanti?id=neq.00000000-0000-0000-0000-000000000000`, {
+      method: 'DELETE',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, Prefer: 'return=minimal' },
+    });
+    const rows = specs.map((s, i) => ({ poradie: i, profesia: s.profesia, meno: s.meno, reg: s.reg }));
+    await fetch(`${SB_URL}/rest/v1/suhrn_projektanti`, {
+      method: 'POST',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify(rows),
+    });
+    document.getElementById('specs-hint').textContent = '✓ uložené';
+  } catch(e) {
+    document.getElementById('specs-hint').textContent = '✗ chyba ukladania';
+  }
+  if (btn) btn.disabled = false;
+  setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 2500);
 }
 
 function prefillFromUrl() {
