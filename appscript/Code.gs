@@ -409,39 +409,69 @@ function akcia_generateZoznam(req) {
   var folderId = req.folderId;
 
   var tree = buildFolderTree(DriveApp.getFolderById(folderId), 0);
-  var fileListText = treeToPlainText(tree, '');
+
+  // Ak nie je zadaný názov stavby, prečítaj ho z prvej dostupnej technickej správy
+  var nazovStavby = p.nazov || '';
+  if (!nazovStavby) {
+    var firstReport = findFirstTechReport(tree);
+    if (firstReport) {
+      try {
+        var snippet = fileToText(firstReport.id, firstReport.type).substring(0, 1000);
+        // Hľadaj "Stavba:" alebo "NOVOSTAVBA" alebo podobné v texte
+        var m = snippet.match(/stavba[:\s]+([^\n]{5,80})/i);
+        if (m) nazovStavby = m[1].trim().toUpperCase();
+      } catch(e) {}
+    }
+  }
 
   var specsText = buildSpecsText(req.specialists || []);
+  // Generálny projektant = prvý so slovom "generál" alebo prvý v zozname
+  var genProjektant = p.genProjektant || '';
+  if (!genProjektant && req.specialists && req.specialists.length) {
+    var genRow = req.specialists[0];
+    for (var i = 0; i < req.specialists.length; i++) {
+      if ((req.specialists[i].profesia || '').toLowerCase().indexOf('generál') !== -1) { genRow = req.specialists[i]; break; }
+    }
+    genProjektant = (genRow.meno || '') + (genRow.reg ? '\nRegistračné číslo oprávnenia: ' + genRow.reg : '');
+  }
 
-  var datumFormatted = p.datum || '';
+  // Vytvor štruktúrovaný zoznam súborov per priečinok pre prompt
+  var filesByFolder = buildFilesByFolderText(tree);
+
   var prompt =
-    'Vygeneruj Zoznam dokumentácie (dokument A – Zoznam dokumentácie) pre projekt stavby.\n\n' +
-    'VZOR – dodržuj presne túto štruktúru:\n' +
-    '• Titulná časť: Stupeň, "A – Zoznam dokumentácie", Stavba, ID projektu, parcely, miesto, stavebník, miesto+dátum+revízia, počet strán\n' +
-    '• Sekcia A: ZOZNAM DOKUMENTÁCIE (len nadpis)\n' +
-    '• Sekcia B: SÚHRNNÁ SPRÁVA (len nadpis)\n' +
-    '• Sekcia C: SITUAČNÉ VÝKRESY – koordinačný situačný výkres (SIT.001/SIT.002), situačný výkres na katastrálnej mape (SIT.002/SIT.003)\n' +
-    '• Sekcia D: DOKUMENTÁCIA STAVEBNÝCH OBJEKTOV – pre každú profesiu: NÁZOV PROFESIE veľkými písmenami, "Zodpovedný projektant: Meno", zoznam výkresov (01, 02, 03...) a technická správa\n' +
-    '• Sekcia E: PRÍLOHY – PBS (Požiarna bezpečnosť), Energetické hodnotenie\n\n' +
+    'Vygeneruj dokument "A – Zoznam dokumentácie" pre projekt stavby.\n\n' +
+    'ŠTRUKTÚRA DOKUMENTU:\n' +
+    '1. TITULNÁ STRANA: Stupeň, "A – Zoznam dokumentácie", Stavba, ID projektu/stavby, parcely, miesto, stavebník, miesto+dátum+revízia, počet strán A4\n' +
+    '2. A ZOZNAM DOKUMENTÁCIE\n' +
+    '3. B SÚHRNNÁ SPRÁVA\n' +
+    '4. C SITUAČNÉ VÝKRESY (SIT.001 Koordinačný situačný výkres, SIT.002 Situačný výkres na katastrálnej mape)\n' +
+    '5. D DOKUMENTÁCIA STAVEBNÝCH OBJEKTOV – pre každú profesiu:\n' +
+    '   NÁZOV PROFESIE (veľkými písmenami)\n' +
+    '   Zodpovedný projektant: [meno z tabuľky projektantov]\n' +
+    '   [zoznam výkresov a dokumentov z Drive priečinka]\n' +
+    '6. E PRÍLOHY (PBS – Požiarna bezpečnosť, Energetické hodnotenie)\n\n' +
+    'PRAVIDLÁ PRE ZOZNAM SÚBOROV:\n' +
+    '- Každý súbor = jeden riadok v zozname (okrem SIT súborov ktoré patria do sekcie C)\n' +
+    '- Číslo výkresu: použi číselnú predponu z názvu súboru (01, 02, 03...) alebo číslo za pomlčkou\n' +
+    '- Názov výkresu: odstráň príponu (.pdf, .dwg, .docx), nahraď _ medzerou, oprav diakritiku\n' +
+    '- Ak súbor obsahuje "TS", "technická správa", "tech_sprava": uvádzaj ako "Technická správa" BEZ čísla, na prvom mieste\n' +
+    '- Prílohy (príloha č.1, PROTOKOL, NÁVRH...): zachovaj ako prílohy k technickej správe\n' +
+    '- Profesie podľa názvov priečinkov: Architektura/ASR → ARCHITEKTONICKO-STAVEBNÉ RIEŠENIE, Statika → STATIKA, ZT/Zdravotechnika → ZDRAVOTECHNIKA, Vykurovanie/UK → VYKUROVANIE, EI/Elektro → ELEKTROINŠTALÁCIE, PBS/PO → sekcia E\n\n' +
     'ÚDAJE O PROJEKTE:\n' +
     'Stupeň: ' + (p.stupen || 'Projekt stavby') + '\n' +
     'ID projektu / stavby: ' + (p.cislo || '—') + '\n' +
-    'Názov stavby: ' + (p.nazov || '—') + '\n' +
+    'Názov stavby: ' + (nazovStavby || '(extrahovať z obsahu)') + '\n' +
     'Stavebník: ' + (p.stavebnik || '—') + '\n' +
     'Miesto stavby: ' + (p.miesto || '—') + '\n' +
     'Parcelné čísla: ' + (p.parcely || '—') + '\n' +
-    'Dátum vydania: ' + datumFormatted + '\n\n' +
+    'Dátum: ' + (p.datum || '—') + '\n\n' +
+    'GENERÁLNY PROJEKTANT:\n' + (genProjektant || '—') + '\n\n' +
     'ZODPOVEDNÍ PROJEKTANTI PROFESIÍ:\n' + specsText + '\n\n' +
-    'SÚBORY V PROJEKTOVOM PRIEČINKU:\n' + fileListText + '\n\n' +
-    'POKYNY:\n' +
-    '- Na základe názvov súborov urči výkresy a dokumenty každej profesie\n' +
-    '- Profesie zodpovedajú názvom podpriečinkov (Architektura → ARCHITEKTONICKO-STAVEBNÉ RIEŠENIE, Statika → STATIKA, atď.)\n' +
-    '- Technickú správu uvádzaj bez čísla, výkresy čísluj 01, 02, 03...\n' +
-    '- Ak nie sú konkrétne názvy výkresov, odvoď typické výkresy pre daný typ stavby a stupeň\n' +
-    '- Odpovedaj len samotným textom dokumentu, bez markdown, bez ``` obalov, bez komentárov';
+    'SÚBORY V PRIEČINKOCH (podľa profesie):\n' + filesByFolder + '\n\n' +
+    'Odpovedaj len text dokumentu, bez markdown, bez ``` obalov.';
 
   var content = volajGemini(prompt);
-  var title = 'A – Zoznam dokumentácie – ' + (p.cislo || p.nazov || 'projekt');
+  var title = 'A – Zoznam dokumentácie – ' + (p.cislo || nazovStavby || 'projekt');
   var doc = createDocInFolder(title, content, folderId);
   return { ok: true, docUrl: doc.url, docId: doc.id };
 }
@@ -470,6 +500,23 @@ function akcia_generateSuhrn(req) {
     vzorText = DocumentApp.openById(VZOR_SUHRN_ID).getBody().getText().substring(0, 4000);
   } catch(e) { vzorText = '(vzor nedostupný)'; }
 
+  // Ak nie je zadaný názov stavby, extrahuj ho z technických správ
+  var nazovStavby = p.nazov || '';
+  if (!nazovStavby && reportsSection) {
+    var mN = reportsSection.match(/stavba[:\s]+([^\n]{5,80})/i);
+    if (mN) nazovStavby = mN[1].trim().toUpperCase();
+  }
+
+  // Generálny projektant zo zoznamu projektantov
+  var genProjektant = p.genProjektant || '';
+  if (!genProjektant && req.specialists && req.specialists.length) {
+    var gR = req.specialists[0];
+    for (var gi = 0; gi < req.specialists.length; gi++) {
+      if ((req.specialists[gi].profesia || '').toLowerCase().indexOf('generál') !== -1) { gR = req.specialists[gi]; break; }
+    }
+    genProjektant = (gR.meno || '') + (gR.reg ? '\nRegistračné číslo oprávnenia: ' + gR.reg : '');
+  }
+
   var prompt =
     'Vygeneruj kompletnú Súhrnnú správu projektu stavby (B – Súhrnná správa) v slovenčine.\n\n' +
     'VZOR ŠTRUKTÚRY (dodržuj presne tieto kapitoly a písmena a-o):\n' + vzorText + '\n\n' +
@@ -477,7 +524,7 @@ function akcia_generateSuhrn(req) {
     'ÚDAJE O PROJEKTE:\n' +
     'Stupeň: ' + (p.stupen || 'Projekt stavby') + '\n' +
     'ID projektu / stavby: ' + (p.cislo || '—') + '\n' +
-    'Názov stavby: ' + (p.nazov || '—') + '\n' +
+    'Názov stavby: ' + (nazovStavby || '(extrahovať z technických správ)') + '\n' +
     'Stavebník: ' + (p.stavebnik || '—') + '\n' +
     'Miesto stavby: ' + (p.miesto || '—') + '\n' +
     'Parcelné čísla: ' + (p.parcely || '—') + '\n' +
@@ -486,33 +533,34 @@ function akcia_generateSuhrn(req) {
     'Predpokladané náklady: ' + (p.naklady || '—') + '\n' +
     'Charakter stavby: ' + (p.typ || '—') + '\n' +
     (p.poznamky ? 'Doplňujúce informácie: ' + p.poznamky + '\n' : '') + '\n' +
-    'GENERÁLNY PROJEKTANT:\n' + (p.genProjektant || '—') + '\n\n' +
+    'GENERÁLNY PROJEKTANT:\n' + (genProjektant || '—') + '\n\n' +
     'PROJEKTANTI PROFESIÍ:\n' + specsText + '\n\n' +
-    'TECHNICKÉ SPRÁVY PROFESIÍ (obsah z Drive):\n' + (reportsSection || '(žiadne technické správy neboli nájdené)') + '\n\n' +
+    'TECHNICKÉ SPRÁVY PROFESIÍ (obsah z Drive – toto je primárny zdroj):\n' + (reportsSection || '(žiadne)') + '\n\n' +
     'POKYNY:\n' +
-    '- Vygeneruj KOMPLETNÚ súhrnnú správu – všetky kapitoly 1 až 9 so všetkými podbodmi\n' +
-    '- Kde máš obsah z technických správ, použi ho priamo\n' +
-    '- Kde nemáš informácie, použi odbornú formuláciu primeranú tomuto typu stavby a stupňu\n' +
-    '- Zahrň aj tabuľky odpadov (počas výstavby a prevádzky) z kapitoly 8c\n' +
-    '- Štýl: odborný, slovenčina, stavebná dokumentácia\n' +
-    '- Začni priamo od "1) Identifikačné údaje" – titulnú hlavičku pridáme samostatne\n' +
-    '- Výstup: len text dokumentu bez markdown, bez ``` obalov';
+    '- Ak "Názov stavby" nie je zadaný, extrahuj ho z hlavičiek technických správ (hľadaj "Stavba:", "NOVOSTAVBA", "REKONŠTRUKCIA" a podobne)\n' +
+    '- Obsah z technických správ použi PRIAMO – nekopíruj celé vety, ale zachovaj konkrétne čísla, materiály, rozmery\n' +
+    '- Vygeneruj KOMPLETNÝ dokument – všetky kapitoly 1 až 9 so všetkými podbodmi a–o\n' +
+    '- Zahrň tabuľky odpadov (kapitola 8c) – počas výstavby aj prevádzky\n' +
+    '- Štýl: odborný slovenský, stavebná dokumentácia\n' +
+    '- Začni priamo od "1) Identifikačné údaje" (titulnú hlavičku generujeme zvlášť)\n' +
+    '- Výstup: len text bez markdown, bez ``` obalov';
 
   var content = volajGemini(prompt);
 
-  // Pridaj hlavičku
+  // Titulná hlavička (názov stavby môže byť extrahovateľný z content)
+  var finalNazov = nazovStavby || '(viď obsah správy)';
   var header =
     p.stupen + '\n\n' +
     'B – Súhrnná správa\n\n' +
-    'Stavba: ' + p.nazov + '\n' +
-    'ID projektu / stavby: ' + p.cislo + '\n' +
-    'Na parcelách č.: ' + p.parcely + '\n' +
-    'Miesto stavby: ' + p.miesto + '\n' +
-    'Stavebník: ' + p.stavebnik + '\n\n' +
+    'Stavba: ' + finalNazov + '\n' +
+    'ID projektu / stavby: ' + (p.cislo || '—') + '\n' +
+    'Na parcelách č.: ' + (p.parcely || '—') + '\n' +
+    'Miesto stavby: ' + (p.miesto || '—') + '\n' +
+    'Stavebník: ' + (p.stavebnik || '—') + '\n\n' +
     (p.datum || '') + '   REVÍZIA 000\n\n' +
     '─────────────────────────────────────────────────────\n\n';
 
-  var title = 'B – Súhrnná správa – ' + (p.cislo || p.nazov || 'projekt');
+  var title = 'B – Súhrnná správa – ' + (p.cislo || finalNazov || 'projekt');
   var doc = createDocInFolder(title, header + content, folderId);
   return { ok: true, docUrl: doc.url, docId: doc.id };
 }
@@ -534,6 +582,34 @@ function treeToPlainText(node, indent) {
   if (indent) lines.push(indent.slice(2) + '[' + node.name + '/]');
   node.files.forEach(function(f) { lines.push(indent + '• ' + f.name); });
   node.subfolders.forEach(function(sub) { lines.push(treeToPlainText(sub, indent + '  ')); });
+  return lines.join('\n');
+}
+
+// Vráti prvý tech report súbor nájdený v strome (pre extrakciu názvu stavby)
+function findFirstTechReport(tree) {
+  var found = null;
+  function walk(node) {
+    if (found) return;
+    node.files.forEach(function(f) { if (!found && isTechReport(f.name)) found = f; });
+    node.subfolders.forEach(walk);
+  }
+  walk(tree);
+  if (!found && tree.files.length) found = tree.files[0];
+  return found;
+}
+
+// Vytvorí text "priečinok → súbory" pre prompt generateZoznam
+function buildFilesByFolderText(tree) {
+  var lines = [];
+  function walk(node, depth) {
+    var label = depth === 0 ? '(koreň)' : node.name;
+    if (node.files.length > 0 || depth === 0) {
+      if (depth > 0) lines.push('\n[' + label + '/]');
+      node.files.forEach(function(f) { lines.push('  • ' + f.name); });
+    }
+    node.subfolders.forEach(function(sub) { walk(sub, depth + 1); });
+  }
+  walk(tree, 0);
   return lines.join('\n');
 }
 

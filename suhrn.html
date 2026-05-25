@@ -129,11 +129,11 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
         </select>
       </div>
       <div class="field-group">
-        <label>ID projektu / stavby (Caflou)</label>
-        <input id="fld-cislo" placeholder="25-040">
+        <label>Číslo stavby (stavebný portál)</label>
+        <input id="fld-cislo" placeholder="261540">
       </div>
       <div class="field-group full">
-        <label>Názov stavby (VEĽKÝMI PÍSMENAMI)</label>
+        <label>Názov stavby – ak prázdne, Gemini prečíta z PD <span style="color:var(--muted);font-weight:400">(voliteľné)</span></label>
         <input id="fld-nazov" placeholder="NOVOSTAVBA RODINNÉHO DOMU">
       </div>
       <div class="field-group full">
@@ -165,11 +165,7 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
         <input id="fld-typ" placeholder="novostavba RD / rekonštrukcia / …">
       </div>
       <div class="field-group full">
-        <label>Generálny projektant (firma, meno, adresa, reg. číslo – každé na nový riadok)</label>
-        <textarea id="fld-genprojektant" rows="4" placeholder="CP studio s.r.o.&#10;Ing. arch. Jozef Perichta&#10;Ulica 1, 974 01 Banská Bystrica&#10;Registračné číslo oprávnenia: XXXX AA"></textarea>
-      </div>
-      <div class="field-group full">
-        <label>Doplňujúce poznámky pre Gemini (voliteľné – špeciality projektu, konštrukčný systém, …)</label>
+        <label>Doplňujúce poznámky pre Gemini <span style="color:var(--muted);font-weight:400">(voliteľné – konštrukčný systém, špeciality…)</span></label>
         <textarea id="fld-poznamky" rows="2" placeholder="Napr.: drevostavba CLT, pasívny štandard, 2NP + podkrovie, …"></textarea>
       </div>
     </div>
@@ -177,11 +173,18 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
 
   <!-- KROK 2: PROJEKTANTI PROFESIÍ -->
   <div class="card">
-    <h2><span class="step-num">2</span> Zodpovední projektanti profesií</h2>
+    <h2>
+      <span class="step-num">2</span> Zodpovední projektanti
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        <span id="specs-hint" style="font-size:11px;color:var(--muted)"></span>
+        <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="saveProjektanti()" title="Uloží zoznam pre budúce projekty">💾 Uložiť</button>
+      </span>
+    </h2>
+    <p class="hint">Prvý riadok = generálny projektant. Zoznam sa ukladá pre ďalšie projekty — stačí uložiť raz.</p>
     <table class="specs-table">
       <thead>
         <tr>
-          <th>Profesia</th>
+          <th>Rola / Profesia</th>
           <th>Meno / Firma / Adresa (každé na nový riadok)</th>
           <th>Reg. číslo</th>
           <th></th>
@@ -189,7 +192,7 @@ button { cursor: pointer; border: none; border-radius: 6px; font-size: 13px; fon
       </thead>
       <tbody id="specs-body"></tbody>
     </table>
-    <button class="btn-text" onclick="addSpecRow()">+ Pridať profesiu</button>
+    <button class="btn-text" onclick="addSpecRow()">+ Pridať</button>
   </div>
 
   <!-- KROK 3: DRIVE PRIEČINOK -->
@@ -229,24 +232,50 @@ let cfg = {};
 let folderTree = null;
 let searchTimeout = null;
 
+const LS_PROJEKTANTI = 'pmSuhrnProjektanti';
+
 const DEFAULT_SPECS = [
-  'Architektonicko-stavebné riešenie',
-  'Statika',
-  'Zdravotechnika',
-  'Vykurovanie',
-  'Elektroinštalácie',
-  'Požiarna bezpečnosť stavby',
-  'Energetické hodnotenie budovy',
+  { profesia: 'Generálny projektant', meno: '', reg: '' },
+  { profesia: 'Architektonicko-stavebné riešenie', meno: '', reg: '' },
+  { profesia: 'Statika', meno: '', reg: '' },
+  { profesia: 'Zdravotechnika', meno: '', reg: '' },
+  { profesia: 'Vykurovanie', meno: '', reg: '' },
+  { profesia: 'Elektroinštalácie', meno: '', reg: '' },
+  { profesia: 'Požiarna bezpečnosť stavby', meno: '', reg: '' },
+  { profesia: 'Energetické hodnotenie budovy', meno: '', reg: '' },
 ];
 
 document.addEventListener('DOMContentLoaded', () => {
   try { cfg = JSON.parse(localStorage.getItem('pmCfg3')) || {}; } catch(e) {}
-  DEFAULT_SPECS.forEach(p => addSpecRow({ profesia: p }));
+  loadSavedProjektanti();
   const now = new Date();
   document.getElementById('fld-datum').value =
     now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   prefillFromUrl();
 });
+
+function loadSavedProjektanti() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_PROJEKTANTI));
+    if (saved?.specs?.length) {
+      saved.specs.forEach(s => addSpecRow(s));
+      const d = saved.savedAt ? `uložené ${saved.savedAt}` : '';
+      document.getElementById('specs-hint').textContent = d;
+      return;
+    }
+  } catch(e) {}
+  DEFAULT_SPECS.forEach(s => addSpecRow(s));
+}
+
+function saveProjektanti() {
+  const specs = getSpecialists();
+  localStorage.setItem(LS_PROJEKTANTI, JSON.stringify({
+    specs,
+    savedAt: new Date().toLocaleDateString('sk'),
+  }));
+  document.getElementById('specs-hint').textContent = '✓ uložené';
+  setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 2000);
+}
 
 function prefillFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -368,7 +397,7 @@ function setFolderStatus(msg, type) {
 
 async function generate(type) {
   const projekt = getProjektData();
-  if (!projekt.nazov) { alert('Zadaj aspoň Názov stavby'); return; }
+  if (!projekt.stavebnik && !projekt.miesto && !projekt.nazov) { alert('Zadaj aspoň Stavebníka alebo Miesto stavby'); return; }
 
   const folderId = extractFolderId(document.getElementById('folder-url').value.trim());
   if (!folderId) { alert('Zadaj platný link na Drive priečinok'); return; }
@@ -420,10 +449,13 @@ function setProgress(pct, msg) {
 
 function getProjektData() {
   const datumRaw = document.getElementById('fld-datum').value;
+  const specs = getSpecialists();
+  // Prvý riadok = generálny projektant
+  const genRow = specs.find(s => s.profesia.toLowerCase().includes('generál')) || specs[0] || {};
   return {
     stupen:        document.getElementById('fld-stupen').value.trim(),
     cislo:         document.getElementById('fld-cislo').value.trim(),
-    nazov:         document.getElementById('fld-nazov').value.trim(),
+    nazov:         document.getElementById('fld-nazov').value.trim(), // prázdne = Gemini prečíta z PD
     stavebnik:     document.getElementById('fld-stavebnik').value.trim(),
     miesto:        document.getElementById('fld-miesto').value.trim(),
     parcely:       document.getElementById('fld-parcely').value.trim(),
@@ -431,7 +463,7 @@ function getProjektData() {
     datum:         formatDatum(datumRaw),
     naklady:       document.getElementById('fld-naklady').value.trim(),
     typ:           document.getElementById('fld-typ').value.trim(),
-    genProjektant: document.getElementById('fld-genprojektant').value.trim(),
+    genProjektant: genRow.meno ? genRow.meno + (genRow.reg ? '\nRegistračné číslo oprávnenia: ' + genRow.reg : '') : '',
     poznamky:      document.getElementById('fld-poznamky').value.trim(),
   };
 }
