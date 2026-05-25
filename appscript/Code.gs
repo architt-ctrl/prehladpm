@@ -460,13 +460,13 @@ function akcia_generateZoznam(req) {
     '- Prílohy (PROTOKOL, NÁVRH, príloha č.): uvádzaj ako "PRÍLOHA Č.x – Názov" pod technickou správou\n' +
     '- SIT súbory (koordinačný, katastrálna mapa): patria do sekcie C, nie D\n' +
     '- Maping priečinkov → profesie: Architektura/ASR → ARCHITEKTONICKO-STAVEBNÉ RIEŠENIE, Statika → STATIKA, ZT/Zdravotechnika/ZTI → ZDRAVOTECHNIKA, Vykurovanie/UK/UT → VYKUROVANIE, EI/Elektro/Elektroinštalácie → ELEKTROINŠTALÁCIE, PBS/PO/Požiarna → sekcia E PRÍLOHY, Energia/EHB → sekcia E PRÍLOHY\n\n' +
-    'ÚDAJE O PROJEKTE:\n' +
+    'ÚDAJE O PROJEKTE (ak pole obsahuje "extrahovať", nájdi hodnotu v súboroch nižšie):\n' +
     'Stupeň: ' + (p.stupen || 'Projekt stavby') + '\n' +
-    'ID projektu / stavby: ' + (p.cislo || '—') + '\n' +
-    'Názov stavby: ' + (nazovStavby || '(extrahovať z obsahu)') + '\n' +
-    'Stavebník: ' + (p.stavebnik || '—') + '\n' +
-    'Miesto stavby: ' + (p.miesto || '—') + '\n' +
-    'Parcelné čísla: ' + (p.parcely || '—') + '\n' +
+    'ID projektu / stavby: ' + (p.cislo || '(extrahovať z PD)') + '\n' +
+    'Názov stavby: ' + (nazovStavby || '(extrahovať z PD – hľadaj "Stavba:", "NOVOSTAVBA", "REKONŠTRUKCIA")') + '\n' +
+    'Stavebník: ' + (p.stavebnik || '(extrahovať z PD – hľadaj "Stavebník:", "Investor:", "Objednávateľ:")') + '\n' +
+    'Miesto stavby: ' + (p.miesto || '(extrahovať z PD – hľadaj "Miesto:", "Obec:", adresu stavby)') + '\n' +
+    'Parcelné čísla: ' + (p.parcely || '(extrahovať z PD – hľadaj "parcela", "parc. č.", "KN")') + '\n' +
     'Dátum: ' + (p.datum || '—') + '\n\n' +
     'GENERÁLNY PROJEKTANT:\n' + (genProjektant || '—') + '\n\n' +
     'ZOZNAM VŠETKÝCH PROJEKTANTOV FIRMY (vyber relevantných podľa profesií v PD):\n' + specsText + '\n\n' +
@@ -525,14 +525,14 @@ function akcia_generateSuhrn(req) {
     'Vygeneruj kompletnú Súhrnnú správu projektu stavby (B – Súhrnná správa) v slovenčine.\n\n' +
     'VZOR ŠTRUKTÚRY (dodržuj presne tieto kapitoly a písmena a-o):\n' + vzorText + '\n\n' +
     '---\n' +
-    'ÚDAJE O PROJEKTE:\n' +
+    'ÚDAJE O PROJEKTE (ak pole obsahuje "extrahovať", nájdi hodnotu v technických správach):\n' +
     'Stupeň: ' + (p.stupen || 'Projekt stavby') + '\n' +
-    'ID projektu / stavby: ' + (p.cislo || '—') + '\n' +
-    'Názov stavby: ' + (nazovStavby || '(extrahovať z technických správ)') + '\n' +
-    'Stavebník: ' + (p.stavebnik || '—') + '\n' +
-    'Miesto stavby: ' + (p.miesto || '—') + '\n' +
-    'Parcelné čísla: ' + (p.parcely || '—') + '\n' +
-    'LV: ' + (p.lv || '—') + '\n' +
+    'ID projektu / stavby: ' + (p.cislo || '(extrahovať z PD)') + '\n' +
+    'Názov stavby: ' + (nazovStavby || '(extrahovať z PD – hľadaj "Stavba:", "NOVOSTAVBA", "REKONŠTRUKCIA")') + '\n' +
+    'Stavebník: ' + (p.stavebnik || '(extrahovať z PD – hľadaj "Stavebník:", "Investor:", "Objednávateľ:")') + '\n' +
+    'Miesto stavby: ' + (p.miesto || '(extrahovať z PD – hľadaj "Miesto:", "Obec:", adresu stavby)') + '\n' +
+    'Parcelné čísla: ' + (p.parcely || '(extrahovať z PD – hľadaj "parcela", "parc. č.", "KN")') + '\n' +
+    'LV: ' + (p.lv || '(extrahovať z PD ak je uvedené)') + '\n' +
     'Dátum: ' + (p.datum || '—') + '\n' +
     'Predpokladané náklady: ' + (p.naklady || '—') + '\n' +
     'Charakter stavby: ' + (p.typ || '—') + '\n' +
@@ -541,7 +541,7 @@ function akcia_generateSuhrn(req) {
     'ZOZNAM VŠETKÝCH PROJEKTANTOV FIRMY (vyber relevantných podľa profesií v technických správach):\n' + specsText + '\n\n' +
     'TECHNICKÉ SPRÁVY PROFESIÍ (obsah z Drive – toto je primárny zdroj):\n' + (reportsSection || '(žiadne)') + '\n\n' +
     'POKYNY:\n' +
-    '- Ak "Názov stavby" nie je zadaný, nájdi ho v technických správach (hľadaj "Stavba:", "NOVOSTAVBA", "REKONŠTRUKCIA"...)\n' +
+    '- Všetky polia s "(extrahovať z PD)" nájdi v technických správach a doplň konkrétne hodnoty\n' +
     '- Pre identifikačné údaje projektu (kap. 1): pre každú profesiu priraď zodpovedného projektanta zo zoznamu projektantov firmy podľa zhody s profesiou v technickej správe\n' +
     '- POUŽI LEN informácie z technických správ – konkrétne čísla, materiály, rozmery, popisy\n' +
     '- Kde technická správa neobsahuje informáciu pre daný bod, napíš iba "—" alebo jednu vetu konštatáciu\n' +
