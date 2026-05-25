@@ -385,7 +385,12 @@ function buildFolderTree(folder, depth) {
       node.files.push({ id: f.getId(), name: f.getName(), type: 'application/pdf' });
     }
   }
-  node.files.sort(function(a,b) { return a.name.localeCompare(b.name, 'sk'); });
+  node.files.sort(function(a,b) {
+    var aTs = isTechReport(a.name) ? 0 : 1;
+    var bTs = isTechReport(b.name) ? 0 : 1;
+    if (aTs !== bTs) return aTs - bTs;
+    return a.name.localeCompare(b.name, 'sk');
+  });
   if (depth < 3) {
     var si = folder.getFolders();
     while (si.hasNext()) {
@@ -608,10 +613,8 @@ function buildFilesByFolderText(tree) {
 }
 
 function isTechReport(name) {
-  var l = name.toLowerCase();
-  return l.indexOf('technick') !== -1 || l.indexOf('správa') !== -1 ||
-         l.indexOf('sprava') !== -1 || l.indexOf('_ts.') !== -1 ||
-         l.startsWith('ts_') || l.startsWith('ts ');
+  // Konvencia: TS_<skratka_profesie>.pdf
+  return name.toUpperCase().startsWith('TS_');
 }
 
 function extractTechReports(tree) {
