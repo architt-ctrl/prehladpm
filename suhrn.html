@@ -453,7 +453,6 @@ function extractFolderId(url) {
 async function callScript(data, signal) {
   const resp = await fetch(cfg.url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
     signal,
   });
