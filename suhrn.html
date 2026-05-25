@@ -411,13 +411,13 @@ async function extractFromAsr() {
 
 async function loadProjektantiFromCaflou(silent) {
   if (!cfg.caflou_key || !cfg.caflou_id) {
-    if (!silent) document.getElementById('specs-hint').textContent = 'Chýba Caflou API kľúč (nastav v dashboarde)';
+    if (!silent) document.getElementById('specs-hint').textContent = `Chýba Caflou kľúč. cfg=${JSON.stringify({key:!!cfg.caflou_key,id:!!cfg.caflou_id})}`;
     else DEFAULT_SPECS.forEach(s => addSpecRow(s));
     return;
   }
   const caflouid = new URLSearchParams(window.location.search).get('caflouid') || '';
   if (!caflouid) {
-    if (!silent) document.getElementById('specs-hint').textContent = 'Chýba Caflou ID projektu';
+    if (!silent) document.getElementById('specs-hint').textContent = `Chýba caflouid v URL. URL: ${window.location.search.slice(0,100)}`;
     else DEFAULT_SPECS.forEach(s => addSpecRow(s));
     return;
   }
