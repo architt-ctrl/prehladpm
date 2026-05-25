@@ -409,18 +409,121 @@ async function extractFromAsr() {
   }
 }
 
+async function loadProjektantiFromCaflou(silent) {
+  if (!cfg.caflou_key || !cfg.caflou_id) {
+    if (!silent) document.getElementById('specs-hint').textContent = 'Chýba Caflou API kľúč (nastav v dashboarde)';
+    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+    return;
+  }
+  const caflouid = new URLSearchParams(window.location.search).get('caflouid') || '';
+  if (!caflouid) {
+    if (!silent) document.getElementById('specs-hint').textContent = 'Chýba Caflou ID projektu';
+    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+    return;
+  }
+
+  try {
+    // Načítaj task_ids projektu z Caflou
+    const projRes = await fetch(
+      `https://app.caflou.com/api/v1/${cfg.caflou_id}/projects/${caflouid}`,
+      { headers: { 'api-key': cfg.caflou_key } }
+    );
+    const projData = await projRes.json();
+    const taskIds = (projData.data?.task_ids || projData.task_ids || []);
+    if (!taskIds.length) {
+      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá úlohy v Caflou';
+      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+      return;
+    }
+
+    // task_specialists zo Supabase
+    const tsRes = await fetch(
+      `${SB_URL}/rest/v1/task_specialists?task_id=in.(${taskIds.join(',')})&select=task_id,specialist_id`,
+      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
+    );
+    const taskSpecs = await tsRes.json();
+
+    // extSpecOverride z localStorage
+    let extOverride = {};
+    try { extOverride = JSON.parse(localStorage.getItem('pmExtSpecOverride')) || {}; } catch(e) {}
+
+    // Načítaj Caflou úlohy (ext tag)
+    let page = 1, allTasks = [];
+    while (true) {
+      const tr = await fetch(
+        `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+        { headers: { 'api-key': cfg.caflou_key } }
+      );
+      const td = await tr.json();
+      const batch = (td.data || td.results || []).filter(t => taskIds.includes(t.id) && (t.tags||[]).includes('ext'));
+      allTasks = allTasks.concat(batch);
+      if ((td.data || td.results || []).length < 100) break;
+      page++;
+    }
+
+    if (!allTasks.length) {
+      if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá ext úlohy';
+      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+      return;
+    }
+
+    // Zostavíme specialist IDs: task_specialists → specialists
+    const tsMap = Object.fromEntries(taskSpecs.map(ts => [String(ts.task_id), ts.specialist_id]));
+    const specIds = [...new Set(Object.values(tsMap))].filter(Boolean);
+
+    let specsData = [];
+    if (specIds.length) {
+      const specRes = await fetch(
+        `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
+        { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
+      );
+      specsData = await specRes.json();
+    }
+    const specById = Object.fromEntries(specsData.map(s => [s.id, s]));
+
+    // Zostav riadky z ext úloh
+    const seen = new Set();
+    const rows = [];
+    allTasks.forEach(t => {
+      let meno = '', reg = '', profesia = t.name || '';
+      const specId = tsMap[String(t.id)];
+      if (specId && specById[specId]) {
+        const sp = specById[specId];
+        meno = sp.name; reg = sp.reg || ''; profesia = sp.profession || profesia;
+      } else if (extOverride[t.id]) {
+        meno = extOverride[t.id];
+      }
+      if (!meno) return;
+      const key = meno + profesia;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ profesia, meno, reg });
+    });
+
+    document.getElementById('specs-body').innerHTML = '';
+    if (rows.length) {
+      rows.forEach(r => addSpecRow(r));
+      document.getElementById('specs-hint').textContent = `✓ ${rows.length} profesistov`;
+      setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 3000);
+    } else {
+      DEFAULT_SPECS.forEach(s => addSpecRow(s));
+      if (!silent) document.getElementById('specs-hint').textContent = 'Nenašli sa priradení profesisti';
+    }
+  } catch(e) {
+    if (!silent) document.getElementById('specs-hint').textContent = 'Chyba: ' + e.message;
+    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+  }
+}
+
 async function loadProjektantiFromTaskIds(taskIds, silent) {
+  // Fallback — len task_specialists bez Caflou
   try {
     const tsRes = await fetch(
       `${SB_URL}/rest/v1/task_specialists?task_id=in.(${taskIds.join(',')})&select=specialist_id`,
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
     );
     const taskSpecs = await tsRes.json();
-    if (!taskSpecs.length) {
-      if (!silent) document.getElementById('specs-hint').textContent = 'Úlohy nemajú priradených profesistov';
-      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
-      return;
-    }
+    if (!taskSpecs.length) { await loadProjektantiFromCaflou(silent); return; }
     const specIds = [...new Set(taskSpecs.map(ts => ts.specialist_id))];
     const specRes = await fetch(
       `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
@@ -432,77 +535,14 @@ async function loadProjektantiFromTaskIds(taskIds, silent) {
     document.getElementById('specs-hint').textContent = `✓ ${specs.length} profesistov`;
     setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 3000);
   } catch(e) {
-    if (!silent) document.getElementById('specs-hint').textContent = 'Chyba: ' + e.message;
-    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
+    await loadProjektantiFromCaflou(silent);
   }
 }
 
 async function loadProjektantiFromProject(silent = false) {
-  const cislo = projectKey;
-  if (!cislo) { if (!silent) alert('Najprv vyber projekt (krok 1).'); return; }
   const btn = document.getElementById('btn-load-specs');
   btn.disabled = true; btn.textContent = 'Načítavam…';
-
-  try {
-    const faza = new URLSearchParams(window.location.search).get('faza') || '';
-
-    // 1. requests pre projekt (všetky, nie len s task_id)
-    let reqUrl = `${SB_URL}/rest/v1/requests?project_cislo=eq.${encodeURIComponent(cislo)}&select=id,profession`;
-    const reqRes = await fetch(reqUrl, { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } });
-    const reqs = await reqRes.json();
-    if (!reqs.length) {
-      // Fallback: task_specialists cez Caflou task IDs projektu
-      if (projectTaskIds.length) {
-        await loadProjektantiFromTaskIds(projectTaskIds, silent);
-      } else {
-        if (!silent) document.getElementById('specs-hint').textContent = 'Projekt nemá žiadne dopyty v Supabase';
-        else DEFAULT_SPECS.forEach(s => addSpecRow(s));
-      }
-      btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
-    }
-
-    const reqIds = reqs.map(r => r.id);
-    const profMap = Object.fromEntries(reqs.map(r => [r.id, r.profession]));
-
-    // 2. selected invitations
-    const invRes = await fetch(
-      `${SB_URL}/rest/v1/invitations?request_id=in.(${reqIds.join(',')})&status=eq.selected&select=request_id,specialist_id`,
-      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
-    );
-    const invs = await invRes.json();
-    if (!invs.length) {
-      if (!silent) document.getElementById('specs-hint').textContent = 'Žiadni vybraní profesisti';
-      else DEFAULT_SPECS.forEach(s => addSpecRow(s));
-      btn.textContent = 'Načítať z projektu'; btn.disabled = false; return;
-    }
-
-    // 3. specialists → meno, profesia, reg
-    const specIds = [...new Set(invs.map(i => i.specialist_id))];
-    const specRes = await fetch(
-      `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
-      { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
-    );
-    const specs = await specRes.json();
-    const specMap = Object.fromEntries(specs.map(s => [s.id, s]));
-
-    // Zostav riadky: profesia z request, meno+reg z specialist
-    let rows = invs.map(inv => {
-      const sp = specMap[inv.specialist_id] || {};
-      return { profesia: profMap[inv.request_id] || sp.profession || '', meno: sp.name || '', reg: sp.reg || '' };
-    }).filter(r => r.meno);
-
-    // Deduplikuj podľa mena
-    const seen = new Set();
-    rows = rows.filter(r => { const k = r.meno + r.profesia; if (seen.has(k)) return false; seen.add(k); return true; });
-
-    document.getElementById('specs-body').innerHTML = '';
-    rows.forEach(r => addSpecRow(r));
-    document.getElementById('specs-hint').textContent = `✓ ${rows.length} profesistov`;
-    setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 3000);
-  } catch(e) {
-    if (!silent) alert('Chyba: ' + e.message);
-    else DEFAULT_SPECS.forEach(s => addSpecRow(s));
-  }
+  await loadProjektantiFromCaflou(silent);
   btn.textContent = 'Načítať z projektu'; btn.disabled = false;
 }
 
