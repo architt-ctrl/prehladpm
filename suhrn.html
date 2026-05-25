@@ -317,7 +317,8 @@ async function loadFolderUrl(cislo) {
 async function saveFolderUrl() {
   const cislo = document.getElementById('fld-cislo').value.trim();
   const url = document.getElementById('folder-url').value.trim();
-  if (!cislo || !url) return;
+  if (!url) return;
+  if (!cislo) { setFolderStatus('⚠ Link neuložený – najprv vyber projekt (zadaj číslo)', 'error'); return; }
   await fetch(`${SB_URL}/rest/v1/suhrn_folder`, {
     method: 'POST',
     headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -436,6 +437,7 @@ async function loadFolder() {
     document.getElementById('folder-tree').classList.remove('hidden');
     const n = countFiles(resp.tree);
     setFolderStatus(`✓ Nájdených ${n} súborov`, 'ok');
+    saveFolderUrl();
   } catch(e) {
     setFolderStatus('Chyba: ' + e.message, 'error');
   }
