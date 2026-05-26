@@ -189,6 +189,7 @@ CAFLOU_USERS             // user_id → meno
 - `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`, `drive` (`https://www.googleapis.com/auth/drive`) aj `documents` (`https://www.googleapis.com/auth/documents`) — inak `DriveApp`/`DocumentApp` hádzajú permissions error
 - `doPost` **musí mať try-catch** okolo celého tela — inak nekachnutý exception vráti HTML bez CORS hlavičiek → prehliadač dostane "Failed to fetch"
 - Gemini model: `gemini-2.5-flash` — `volajGemini` aj `analyzovatGemini` používajú tento model. `gemini-2.0-flash` a `gemini-2.0-flash-lite` majú `limit: 0` na free tier (nefungujú)
+- **Gemini API key (nie OAuth)** — `volajGemini` aj `analyzovatGemini` volajú `generativelanguage.googleapis.com` s `?key=GEMINI_API_KEY`. OAuth/Vertex AI prístupy nefungujú bez GCP admin prístupu. Pri rate limitoch → AI Studio PAYG (aistudio.google.com → Billing → pay-as-you-go)
 - `akcia_zhrniPortfolio` **nepoužíva SYSTEM_PROMPT** ani SHEET_MAILY — prompt by bol príliš dlhý (429). Používa vlastný krátky prompt, max 4000 znakov
 - Frontend `geminiZhrnPortfolio` posiela len aktívne projekty **so zápismi**, 1 najnovší záznam/projekt, max 3000 znakov; fetch má AbortController timeout 60s
 - `volajGemini` retry sleep: 5s (nie 30s) — rýchlejšie zlyhanie pri rate limite; po 3 pokusoch hodí zrozumiteľnú správu
@@ -378,9 +379,17 @@ let projectTaskIds = []; // záložné task IDs z URL
 
 **Postup (4 kroky v UI):**
 1. **Identifikačné údaje** — vyhľadanie projektu v Caflou (alebo prefill z URL), stupeň, číslo stavby, názov, stavebník, miesto, parcely, LV, dátum, náklady, charakter. Tlačidlo **Načítať z TS_ASR** → Apps Script `extractMetadata` → Gemini prečíta tech správu ASR a vyplní polia automaticky
-2. **Zodpovední projektanti** — tabuľka (rola, meno/adresa, reg. číslo). Tlačidlo **Načítať z projektu** → `loadProjektantiFromCaflou()` → z Caflou ext úloh + task_specialists + specialists.reg
+2. **Zodpovední projektanti** — tabuľka (rola, meno/adresa, reg. číslo). Tlačidlo **Načítať z projektu** → `loadProjektantiFromProject()` → ak sú `taskids` v URL, ide cez `loadProjektantiFromTaskIds` (Supabase only); inak `loadProjektantiFromCaflou` (vyžaduje Caflou API)
 3. **Projektový priečinok na Drive** — URL priečinka stupňa (napr. `DSP/`). Ukladá sa do Supabase `suhrn_folder` podľa `projectKey`. Načíta sa automaticky pri otvorení projektu
 4. **Generovať** — tlačidlá A a B → Apps Script `generateZoznam` / `generateSuhrn`
+
+**Caflou API v `suhrn.html`** — musí používať `Authorization: Bearer` header (nie `api-key` — Caflou blokuje `api-key` cez CORS preflight).
+
+**`loadProjektantiFromProject(silent)`:**
+- Ak URL obsahuje `taskids` → `loadProjektantiFromTaskIds(taskIds)` — pýta sa len Supabase, bez Caflou
+- Inak → `loadProjektantiFromCaflou(silent)` — potrebuje Caflou API
+
+**`loadProjektantiFromTaskIds(taskIds)`** — Supabase only, žiadny fallback na Caflou
 
 **`loadProjektantiFromCaflou(silent)`:**
 1. Fetchne projekt z Caflou (`/projects/{caflouid}`) → task_ids
@@ -402,7 +411,8 @@ let projectTaskIds = []; // záložné task IDs z URL
 
 **Nedokončené / TODO:**
 - Otestovať kompletný flow generovania A+B po nasadení novej verzie Apps Script s `extractMetadata` + `generateZoznam` + `generateSuhrn`
-- Overiť funkčnosť `loadProjektantiFromCaflou` po oprave `caflouid` parametra (p.id → p.caflou_id v index.html)
+- Overiť `loadProjektantiFromTaskIds` — závisí od `task_specialists` v Supabase; ak projekt nemá priradených profesistov cez ponuky.html, tabuľka bude prázdna a funkcia zobrazí "Nenašli sa priradení profesisti"
+- GitHub Pages CDN: po push počkať 2-5 min + Ctrl+Shift+R; ak stále stará verzia → F12 → Application → Clear site data
 
 ### caflou.env (gitignored)
 
