@@ -526,7 +526,10 @@ async function loadProjektantiFromTaskIds(taskIds, silent) {
       { headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY } }
     );
     const taskSpecs = await tsRes.json();
-    if (!taskSpecs.length) { await loadProjektantiFromCaflou(silent); return; }
+    if (!taskSpecs.length) {
+      document.getElementById('specs-hint').textContent = 'Nenašli sa priradení profesisti v Supabase';
+      return;
+    }
     const specIds = [...new Set(taskSpecs.map(ts => ts.specialist_id))];
     const specRes = await fetch(
       `${SB_URL}/rest/v1/specialists?id=in.(${specIds.join(',')})&select=id,name,profession,reg`,
@@ -538,7 +541,8 @@ async function loadProjektantiFromTaskIds(taskIds, silent) {
     document.getElementById('specs-hint').textContent = `✓ ${specs.length} profesistov`;
     setTimeout(() => { document.getElementById('specs-hint').textContent = ''; }, 3000);
   } catch(e) {
-    await loadProjektantiFromCaflou(silent);
+    console.error('[taskIds] catch:', e);
+    document.getElementById('specs-hint').textContent = 'Chyba: ' + e.message;
   }
 }
 
