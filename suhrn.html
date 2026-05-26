@@ -545,7 +545,13 @@ async function loadProjektantiFromTaskIds(taskIds, silent) {
 async function loadProjektantiFromProject(silent = false) {
   const btn = document.getElementById('btn-load-specs');
   btn.disabled = true; btn.textContent = 'Načítavam…';
-  await loadProjektantiFromCaflou(silent);
+  const urlTaskIds = (new URLSearchParams(window.location.search).get('taskids') || '')
+    .split(',').map(s => s.trim()).filter(Boolean).map(Number).filter(Boolean);
+  if (urlTaskIds.length) {
+    await loadProjektantiFromTaskIds(urlTaskIds, silent);
+  } else {
+    await loadProjektantiFromCaflou(silent);
+  }
   btn.textContent = 'Načítať z projektu'; btn.disabled = false;
 }
 
