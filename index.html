@@ -1395,6 +1395,19 @@ const CAFLOU_TYPE_FAZA = {
   'Územné plány': 'Projekcia',
 };
 
+const CAFLOU_PRODUKT_TO_STAV = {
+  'Nové':              'pripravovany',
+  'Robíme na tom':     'aktivny',
+  'Hotové':            'aktivny',
+  'Pozastavené':       'pozastaveny',
+  // 'Povoľovací proces' — Inžiniering, aktivita sa neriadi
+};
+const CAFLOU_STAV_TO_PRODUKT = {
+  'pripravovany': 'Nové',
+  'aktivny':      'Robíme na tom',
+  'pozastaveny':  'Pozastavené',
+};
+
 // ── INIT ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   if (cfg.caflou_key && cfg.caflou_id) {
@@ -1657,7 +1670,7 @@ async function syncData() {
     });
     localStorage.setItem('pmStav', JSON.stringify(stavMap));
     const toPush = projects.filter(p => !p.aktivita && stavMap[p.cislo] && p.caflou_id);
-    toPush.forEach(p => caflouPatch(p.caflou_id, { custom_column_aktivita: stavMap[p.cislo] }));
+    toPush.forEach(p => caflouPatch(p.caflou_id, { custom_column_produkt: CAFLOU_STAV_TO_PRODUKT[stavMap[p.cislo]] }));
 
     // Načítaj denník zo Supabase
     try {
@@ -1770,7 +1783,7 @@ function parseCaflouProject(p) {
     deadline,
     dniDead:        deadline ? Math.floor((deadline - t) / 86400000) : null,
     opisAkcie:      p.description || '',
-    aktivita:       p.custom_column_aktivita || '',
+    aktivita:       CAFLOU_PRODUKT_TO_STAV[p.custom_column_produkt] || '',
   };
 }
 
@@ -2240,7 +2253,7 @@ async function saveProjStav(cislo, val) {
   if (p) p.aktivita = val;
   if (p?.caflou_id) {
     try {
-      const r = await caflouPatch(p.caflou_id, { custom_column_aktivita: val });
+      const r = await caflouPatch(p.caflou_id, { custom_column_produkt: CAFLOU_STAV_TO_PRODUKT[val] });
       const txt = await r.text();
       if (!r.ok) { showToast('Caflou chyba: ' + txt.substring(0,80), 'err'); }
       else { showToast('Aktivita uložená ✓', 'ok'); }
