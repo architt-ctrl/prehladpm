@@ -1240,17 +1240,6 @@ nav {
 </div>
 
 <!-- MODAL – NÁVRHY ÚLOH (Gemini) -->
-<div class="overlay hidden" id="navrhyModal">
-  <div class="modal">
-    <h3 id="navrhyTitle">Návrhy úloh</h3>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">Gemini navrhuje tieto úlohy z poznámky. Odškrtni ktoré nechceš pridať.</div>
-    <div id="navrhyBody" style="max-height:50vh;overflow-y:auto;"></div>
-    <div class="mactions">
-      <button class="btn-ghost" onclick="closeNavrhyModal()">Zrušiť</button>
-      <button class="btn-primary" onclick="potvrditNavrhy()">Pridať vybrané</button>
-    </div>
-  </div>
-</div>
 
 <!-- MODAL – ŠABLÓNY ÚLOH -->
 <div class="overlay hidden" id="tmplMgrModal">
@@ -2220,8 +2209,6 @@ async function pridajDennik(cislo) {
     try { await caflouAddComment(p.caflou_id, text); } catch(e) {}
   }
   showToast('Zapísané ✓', 'ok');
-  // Navrhni úlohy cez Gemini (ticho ak URL nie je nastavené)
-  navrhniUlohyZPoznamky(cislo, text);
 }
 
 // ── FAZA / LOPTA / STAV INLINE SAVE ──────────────────────────────────────
@@ -3457,79 +3444,6 @@ function saveProject() {
   showToast('Projekt '+cislo+' uložený','ok');
 }
 
-// ── GEMINI – NÁVRH ÚLOH ZO ZÁPISU ─────────────────────────────────────────
-async function navrhniUlohyZPoznamky(cislo, text) {
-  if (!cfg.url) return;
-  showToast('Gemini analyzuje poznámku…','ok');
-  try {
-    const res = await fetch(cfg.url, {method:'POST',
-      body: JSON.stringify({action:'navrhniUlohy', cislo, text})});
-    const d = await res.json();
-    if (d.ok && d.ulohy && d.ulohy.length) {
-      zobrazNavrhyUloh(cislo, d.ulohy);
-    } else if (d.ok) {
-      // Gemini nevytiahol žiadne úlohy – ticho
-    } else {
-      showToast('Chyba Gemini: '+(d.error||''),'err');
-    }
-  } catch(e) {
-    console.error('Gemini error', e);
-  }
-}
-
-function zobrazNavrhyUloh(cislo, navrhy) {
-  const proj = projects.find(p=>p.cislo===cislo);
-  const modal = document.getElementById('navrhyModal');
-  const body  = document.getElementById('navrhyBody');
-  document.getElementById('navrhyTitle').textContent = `Návrhy úloh – ${cislo}${proj?' '+proj.nazov:''}`;
-  body.innerHTML = navrhy.map((n,i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
-      <input type="checkbox" id="nav-${i}" checked style="width:18px;height:18px;flex-shrink:0;">
-      <div style="flex:1;">
-        <div style="font-weight:600;font-size:13px;color:var(--text);">
-          ${n.profesia||'Úloha'}${n.dodavatel?' – '+n.dodavatel:''}
-        </div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px;">${n.popis||''}</div>
-        ${n.termin?`<div style="font-size:11px;color:var(--orange);margin-top:2px;">Termín: ${n.termin}</div>`:''}
-        ${n.lopta?`<div style="font-size:11px;color:var(--text3);margin-top:2px;">Lopta u: ${n.lopta}</div>`:''}
-      </div>
-    </div>
-  `).join('');
-  modal._cislo = cislo;
-  modal._navrhy = navrhy;
-  modal.classList.remove('hidden');
-}
-
-function closeNavrhyModal() {
-  document.getElementById('navrhyModal').classList.add('hidden');
-}
-
-function potvrditNavrhy() {
-  const modal = document.getElementById('navrhyModal');
-  const cislo = modal._cislo;
-  const navrhy = modal._navrhy || [];
-  if (!ulohy[cislo]) ulohy[cislo] = [];
-  let pridane = 0;
-  navrhy.forEach((n, i) => {
-    const chk = document.getElementById('nav-'+i);
-    if (!chk?.checked) return;
-    ulohy[cislo].push({
-      id: Date.now()+i,
-      profesia: n.profesia || 'Úloha',
-      dodavatel: n.dodavatel || '',
-      lopta: n.lopta || '',
-      stav: 'v-rieseni',
-      termin: n.termin || '',
-      popis: n.popis || '',
-      historia: n.popis ? [{datum: new Date().getDate()+'.'+(new Date().getMonth()+1)+'.', text: n.popis}] : []
-    });
-    pridane++;
-  });
-  localStorage.setItem('pmUlohy', JSON.stringify(ulohy));
-  closeNavrhyModal();
-  renderAll();
-  showToast(`Pridaných ${pridane} úloh ✓`,'ok');
-}
 
 async function savePonukaToSheets(p) {
   if (!cfg.url) return;
