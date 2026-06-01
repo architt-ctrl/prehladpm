@@ -387,9 +387,29 @@ function renderSpecialistView() {
       }).join('')}
     </div>` : '';
 
-  const cards = filtered.length
-    ? filtered.map(r => renderReqCard(r)).join('')
-    : `<div style="text-align:center;padding:40px 20px;color:var(--text2);font-size:14px">Žiadne otvorené dopyty pre Vašu profesiu.</div>`;
+  // Group filtered by project, sort by profession within each
+  let cards;
+  if (!filtered.length) {
+    cards = `<div style="text-align:center;padding:40px 20px;color:var(--text2);font-size:14px">Žiadne otvorené dopyty pre Vašu profesiu.</div>`;
+  } else {
+    const projMap = {};
+    filtered.forEach(r => {
+      const key = r.project_cislo || r.project_name || r.id;
+      if (!projMap[key]) projMap[key] = { cislo: r.project_cislo, name: r.project_name, reqs: [] };
+      projMap[key].reqs.push(r);
+    });
+    const projects = Object.entries(projMap).sort(([a], [b]) => b.localeCompare(a, 'sk'));
+    cards = projects.map(([, proj]) => {
+      const sorted = [...proj.reqs].sort((a, b) => (a.profession || '').localeCompare(b.profession || '', 'sk'));
+      return `<details open style="margin-bottom:16px">
+        <summary style="padding:5px 2px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;border-bottom:2px solid var(--border);margin-bottom:10px">
+          <span style="flex:1">${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
+          <span style="font-weight:400;text-transform:none;letter-spacing:0">${proj.reqs.length}</span>
+        </summary>
+        ${sorted.map(r => renderReqCard(r)).join('')}
+      </details>`;
+    }).join('');
+  }
 
   document.getElementById('app').innerHTML = `
     <div class="card" style="margin-bottom:14px">
