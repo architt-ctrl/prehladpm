@@ -297,7 +297,7 @@ async function initSpecialistView() {
   const srReqIds = (invs || []).filter(i => ['selected','rejected'].includes(i.status)).map(i => i.request_id);
   const missingIds = srReqIds.filter(id => !(reqs || []).find(r => r.id === id));
   const { data: srReqs } = missingIds.length
-    ? await sb.from('requests').select('id,project_cislo,project_name,profession,phases,notes,folder_url,folder_url_work').in('id', missingIds)
+    ? await sb.from('requests').select('id,project_cislo,project_name,profession,phases,notes,folder_url,folder_url_work,podklady_datum,hotovo_datum').in('id', missingIds)
     : { data: [] };
 
   _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [] };
@@ -347,6 +347,15 @@ function renderSpecialistView() {
           </div>
           <div style="display:${isOpen ? 'block' : 'none'}">
             <div class="req-card-body">
+              ${sel ? (() => {
+                const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
+                const infoItems = [
+                  r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
+                  r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
+                  r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
+                ].filter(Boolean);
+                return infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : '';
+              })() : ''}
               ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
                 <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
               ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
