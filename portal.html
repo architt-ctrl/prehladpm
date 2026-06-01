@@ -103,7 +103,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 const token = new URLSearchParams(location.search).get('token');
 const specialistToken = new URLSearchParams(location.search).get('specialist');
-let _specCtx = null, _profFilter = 'own', _quoteOpen = null;
+let _specCtx = null, _profFilter = 'own', _quoteOpen = null, _resultOpen = null;
 
 async function init() {
   if (specialistToken) { await initSpecialistView(); return; }
@@ -297,7 +297,7 @@ async function initSpecialistView() {
   const srReqIds = (invs || []).filter(i => ['selected','rejected'].includes(i.status)).map(i => i.request_id);
   const missingIds = srReqIds.filter(id => !(reqs || []).find(r => r.id === id));
   const { data: srReqs } = missingIds.length
-    ? await sb.from('requests').select('id,project_cislo,project_name,profession').in('id', missingIds)
+    ? await sb.from('requests').select('id,project_cislo,project_name,profession,phases,notes,folder_url,folder_url_work').in('id', missingIds)
     : { data: [] };
 
   _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [] };
@@ -324,16 +324,32 @@ function renderSpecialistView() {
       ${allDecidedReqs.map(r => {
         const inv = invs.find(i => i.request_id === r.id);
         const sel = inv?.status === 'selected';
-        const hasQuote = qts.some(q => q.invitation_id === inv?.id);
-        if (!sel && !hasQuote) return ''; // nezobrazuj tých čo vôbec neponúkli
+        const qt = qts.find(q => q.invitation_id === inv?.id);
+        if (!sel && !qt) return '';
+        const isOpen = _resultOpen === r.id;
+        const phases = Array.isArray(r.phases) ? r.phases : [];
+        const priceRows = qt && phases.length ? phases.map(ph => {
+          const v = qt.prices?.[ph];
+          return `<tr><td class="phase-name">${ph}</td><td style="text-align:right;font-weight:500">${v != null ? Number(v).toLocaleString('sk-SK') + ' € bez DPH' : '—'}</td></tr>`;
+        }).join('') : '';
         return `<div class="req-card" style="border-left:3px solid ${sel ? '#1e7a4a' : '#c8bfb5'}">
-          <div class="req-card-hdr" style="cursor:default">
+          <div class="req-card-hdr" onclick="toggleResultCard('${r.id}')">
             <div style="flex:1;min-width:0">
               <div style="font-size:14px;font-weight:600;margin-bottom:2px">${r.project_cislo ? r.project_cislo + ' – ' : ''}${r.project_name}</div>
               <div style="font-size:12px;color:var(--text2)">${r.profession}</div>
             </div>
-            <div style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'};flex-shrink:0;text-align:right">
-              ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+              <span style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'}">
+                ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
+              </span>
+              <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
+            </div>
+          </div>
+          <div style="display:${isOpen ? 'block' : 'none'}">
+            <div class="req-card-body">
+              ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
+                <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
+              ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
             </div>
           </div>
         </div>`;
@@ -414,6 +430,7 @@ function renderReqCard(r) {
   </div>`;
 }
 
+function toggleResultCard(reqId) { _resultOpen = _resultOpen === reqId ? null : reqId; renderSpecialistView(); }
 function setSpecFilter(f) { _profFilter = f; _quoteOpen = null; renderSpecialistView(); }
 
 function toggleReqCard(reqId) {
