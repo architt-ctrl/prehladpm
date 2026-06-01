@@ -318,12 +318,14 @@ function renderSpecialistView() {
 
   // Build results section (selected/rejected)
   const allDecidedReqs = [...reqs.filter(r => decidedReqIds.has(r.id)), ...(srReqs || [])];
-  const resultsHtml = allDecidedReqs.length ? `
+  const resultsHtml = allDecidedReqs.some(r => { const inv = invs.find(i => i.request_id === r.id); return inv?.status === 'selected' || qts.some(q => q.invitation_id === inv?.id); }) ? `
     <div style="margin-bottom:18px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px">Výsledky dopytov</div>
       ${allDecidedReqs.map(r => {
         const inv = invs.find(i => i.request_id === r.id);
         const sel = inv?.status === 'selected';
+        const hasQuote = qts.some(q => q.invitation_id === inv?.id);
+        if (!sel && !hasQuote) return ''; // nezobrazuj tých čo vôbec neponúkli
         return `<div class="req-card" style="border-left:3px solid ${sel ? '#1e7a4a' : '#c8bfb5'}">
           <div class="req-card-hdr" style="cursor:default">
             <div style="flex:1;min-width:0">
@@ -331,7 +333,7 @@ function renderSpecialistView() {
               <div style="font-size:12px;color:var(--text2)">${r.profession}</div>
             </div>
             <div style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'};flex-shrink:0;text-align:right">
-              ${sel ? '✅ Vybraní ste boli Vy' : 'ℹ️ Vybraný bol iný profesista'}
+              ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
             </div>
           </div>
         </div>`;
