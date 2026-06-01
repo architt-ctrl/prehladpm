@@ -188,6 +188,15 @@ let _submitCtx = null;
 function renderForm(inv, req, spec, existingQuote) {
   const phases = Array.isArray(req.phases) ? req.phases : [];
   const hasQuote = !!existingQuote;
+
+  // Termíny: PD klientovi = req.deadline, externý = existingQuote.deadline ?? req.deadline - 7 dní
+  const projDeadline = req.deadline ? new Date(req.deadline + 'T12:00:00') : null;
+  const autoSpecDl = projDeadline
+    ? new Date(projDeadline.getTime() - 7 * 24 * 3600000).toISOString().split('T')[0]
+    : '';
+  const specDlValue = existingQuote?.deadline || autoSpecDl;
+  const fmtD = d => d.toLocaleDateString('sk-SK');
+
   _submitCtx = { invId: inv.id, phases, curPhase: req.current_phase || '' };
 
   const priceRows = phases.map(ph => {
@@ -232,6 +241,16 @@ function renderForm(inv, req, spec, existingQuote) {
       </table>
       <p class="hint" style="margin-bottom:16px">Ak fázu neponúkate, nechajte pole prázdne.</p>
 
+      ${projDeadline ? `
+      <div class="frow">
+        <label>Termín odovzdania PD klientovi</label>
+        <div class="finput" style="background:var(--bg2);color:var(--text2);cursor:default">${fmtD(projDeadline)}</div>
+      </div>` : ''}
+      <div class="frow">
+        <label>Váš termín odovzdania${projDeadline ? ' <span style="font-size:11px;color:var(--text3);font-weight:400">(týždeň pred odovzdaním)</span>' : ''}</label>
+        <input class="finput" type="date" id="specDeadline" value="${specDlValue}">
+      </div>
+
       <div class="frow">
         <label>Poznámka (voliteľné)</label>
         <textarea class="finput" id="notes" placeholder="Podmienky, výhrady, otázky, referencie...">${existingQuote?.notes || ''}</textarea>
@@ -256,11 +275,12 @@ async function submitQuote() {
     prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
   });
 
-  const notes = document.getElementById('notes')?.value.trim() || '';
+  const notes    = document.getElementById('notes')?.value.trim() || '';
+  const deadline = document.getElementById('specDeadline')?.value || null;
 
   const { data: existing } = await sb.from('quotes').select('id').eq('invitation_id', invId).single();
 
-  const payload = { prices, notes, submitted_at: new Date().toISOString() };
+  const payload = { prices, notes, deadline, submitted_at: new Date().toISOString() };
   const { error } = existing
     ? await sb.from('quotes').update(payload).eq('invitation_id', invId)
     : await sb.from('quotes').insert({ ...payload, invitation_id: invId });
@@ -402,6 +422,10 @@ function renderReqCard(r) {
     </div></td>
   </tr>`).join('');
 
+  const projDl = r.deadline ? new Date(r.deadline + 'T12:00:00') : null;
+  const autoSpecDl = projDl ? new Date(projDl.getTime() - 7*24*3600000).toISOString().split('T')[0] : '';
+  const specDlVal = qt?.deadline || autoSpecDl;
+
   return `<div class="req-card">
     <div class="req-card-hdr" onclick="toggleReqCard('${r.id}')">
       <div style="flex:1;min-width:0">
@@ -429,6 +453,12 @@ function renderReqCard(r) {
           <tbody>${priceRows}</tbody>
         </table>
         <p class="hint" style="margin-bottom:14px">Ak fázu neponúkate, nechajte pole prázdne.</p>
+        ${projDl ? `<div class="frow"><label>Termín odovzdania PD klientovi</label>
+          <div class="finput" style="background:var(--bg2);color:var(--text2);cursor:default">${projDl.toLocaleDateString('sk-SK')}</div></div>` : ''}
+        <div class="frow">
+          <label>Váš termín odovzdania${projDl ? ' <span style="font-size:11px;color:var(--text3);font-weight:400">(týždeň pred odovzdaním)</span>' : ''}</label>
+          <input class="finput" type="date" id="sdl_${r.id}" value="${specDlVal}">
+        </div>
         <div class="frow">
           <label>Poznámka (voliteľné)</label>
           <textarea class="finput" id="snotes_${r.id}" rows="2" placeholder="Podmienky, výhrady, otázky...">${qt?.notes || ''}</textarea>
@@ -459,7 +489,8 @@ async function submitSpecQuote(reqId) {
     const v = document.getElementById(safeId(ph))?.value;
     prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
   });
-  const notes = document.getElementById('snotes_' + reqId)?.value.trim() || '';
+  const notes    = document.getElementById('snotes_' + reqId)?.value.trim() || '';
+  const deadline = document.getElementById('sdl_' + reqId)?.value || null;
 
   let inv = invs.find(i => i.request_id === reqId);
   if (!inv) {
@@ -472,7 +503,7 @@ async function submitSpecQuote(reqId) {
   }
 
   const existing = qts.find(q => q.invitation_id === inv.id);
-  const payload = { prices, notes, submitted_at: new Date().toISOString() };
+  const payload = { prices, notes, deadline, submitted_at: new Date().toISOString() };
   const { error } = existing
     ? await sb.from('quotes').update(payload).eq('id', existing.id)
     : await sb.from('quotes').insert({ ...payload, invitation_id: inv.id });
