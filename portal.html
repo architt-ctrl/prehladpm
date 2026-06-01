@@ -638,7 +638,8 @@ function renderEmployeeView() {
 
 function profCat(p) {
   if (!p) return '—';
-  return (p.split(/\s*[-–]\s*/)[0] || p).trim();
+  const m = p.match(/^([A-Z]{2,6})\b/);
+  return m ? m[1] : (p.split(/\s*[-–]\s*/)[0] || p).trim();
 }
 
 init();
