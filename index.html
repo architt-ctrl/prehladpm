@@ -2284,17 +2284,60 @@ function openChronoModal() {
 }
 
 async function loadChronoTaskNotes() {
-  const extTasks = [];
-  for (const [cislo, tasks] of Object.entries(caflouTasksCache)) {
-    if (!Array.isArray(tasks)) continue;
-    tasks.filter(t => !t.finished && (t.tags||[]).includes('ext')).forEach(t => {
-      if (taskNotesCache[t.id] === undefined) extTasks.push({ cislo, taskId: t.id });
-    });
-  }
-  if (!extTasks.length) return;
-  for (let i = 0; i < extTasks.length; i += 5) {
-    await Promise.all(extTasks.slice(i, i + 5).map(({ cislo, taskId }) => preloadTaskNotes(cislo, taskId)));
-    if (!document.getElementById('chronoModal').classList.contains('hidden')) buildChronoContent();
+  const el = document.getElementById('chronoContent');
+  const statusDiv = Object.assign(document.createElement('div'), {
+    id: 'chrono-loading', style: 'font-size:11px;color:var(--text3);text-align:center;padding:6px',
+    textContent: 'Načítavam zápisky z úloh…'
+  });
+  if (el) el.prepend(statusDiv);
+
+  try {
+    // Build map task_id → project for active projects
+    const projByTaskId = {};
+    projects.filter(p => p.faza !== 'Archív').forEach(p =>
+      (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
+    );
+
+    // Collect ext tasks from cache; for uncached projects fetch from Caflou
+    const extTaskMap = {}; // taskId (number) → cislo
+    for (const [cislo, tasks] of Object.entries(caflouTasksCache)) {
+      if (!Array.isArray(tasks)) continue;
+      tasks.filter(t => !t.finished && (t.tags||[]).includes('ext'))
+           .forEach(t => { extTaskMap[t.id] = cislo; });
+    }
+
+    const cachedCislos = new Set(Object.keys(caflouTasksCache).filter(c => Array.isArray(caflouTasksCache[c])));
+    const needsFetch = projects.some(p => p.faza !== 'Archív' && !cachedCislos.has(p.cislo));
+    if (needsFetch) {
+      let page = 1, hasMore = true;
+      while (hasMore) {
+        const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+        const d = await r.json();
+        (d.results || []).forEach(t => {
+          if (t.finished || t.trash || !(t.tags||[]).includes('ext')) return;
+          const p = projByTaskId[t.id]; if (!p) return;
+          extTaskMap[t.id] = p.cislo;
+          if (!caflouTasksCache[p.cislo]) caflouTasksCache[p.cislo] = [];
+          if (!caflouTasksCache[p.cislo].some(x => x.id === t.id)) caflouTasksCache[p.cislo].push(t);
+        });
+        hasMore = !!d.next_page;
+        page++;
+      }
+    }
+
+    const toLoad = Object.entries(extTaskMap)
+      .filter(([id]) => taskNotesCache[id] === undefined)
+      .map(([id, cislo]) => ({ taskId: Number(id), cislo }));
+
+    for (let i = 0; i < toLoad.length; i += 5) {
+      await Promise.all(toLoad.slice(i, i + 5).map(({ cislo, taskId }) => preloadTaskNotes(cislo, taskId)));
+      if (!document.getElementById('chronoModal').classList.contains('hidden')) buildChronoContent();
+    }
+  } catch(e) {
+    console.error('loadChronoTaskNotes:', e);
+  } finally {
+    document.getElementById('chrono-loading')?.remove();
   }
 }
 
