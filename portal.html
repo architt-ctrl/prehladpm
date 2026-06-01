@@ -103,9 +103,11 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 const token = new URLSearchParams(location.search).get('token');
 const specialistToken = new URLSearchParams(location.search).get('specialist');
+const taskToken = new URLSearchParams(location.search).get('task');
 let _specCtx = null, _profFilter = 'own', _quoteOpen = null, _resultOpen = null;
 
 async function init() {
+  if (taskToken) { await initEmployeeView(); return; }
   if (specialistToken) { await initSpecialistView(); return; }
   if (!token) { renderError('Neplatný link – chýba token.'); return; }
 
@@ -320,7 +322,12 @@ async function initSpecialistView() {
     ? await sb.from('requests').select('id,project_cislo,project_name,profession,phases,notes,folder_url,folder_url_work,podklady_datum,hotovo_datum').in('id', missingIds)
     : { data: [] };
 
-  _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [] };
+  const selInvIds = (invs || []).filter(i => i.status === 'selected').map(i => i.id);
+  const { data: empTasks } = selInvIds.length
+    ? await sb.from('employee_tasks').select('*').in('invitation_id', selInvIds)
+    : { data: [] };
+
+  _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [], empTasks: empTasks || [] };
   renderSpecialistView();
 }
 
@@ -379,6 +386,24 @@ function renderSpecialistView() {
               ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
                 <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
               ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
+              ${sel ? (() => {
+                const emps = (_specCtx.empTasks || []).filter(e => e.invitation_id === inv?.id);
+                const empRows = emps.map(e => {
+                  const link = location.origin + location.pathname + '?task=' + e.token;
+                  return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                    <span style="flex:1;font-size:14px">${e.employee_name || '—'}</span>
+                    <button onclick="copyEmpLink(this,'${link}')" style="padding:4px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--bg3);font-family:var(--sans);white-space:nowrap">Kopírovať link</button>
+                  </div>`;
+                }).join('');
+                return `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+                  <div style="font-size:13px;font-weight:600;margin-bottom:8px">Zadania pre zamestnancov</div>
+                  ${emps.length ? empRows : '<p style="font-size:13px;color:var(--text3);margin-bottom:8px">Žiadne zadania.</p>'}
+                  <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+                    <input class="finput" type="text" id="etname_${inv?.id}" placeholder="Meno zamestnanca" style="flex:1;width:auto;margin:0">
+                    <button onclick="addEmployeeTask('${inv?.id}')" style="padding:9px 14px;border-radius:7px;border:none;background:var(--text);color:#f5f3ef;font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap">Pridať zadanie</button>
+                  </div>
+                </div>`;
+              })() : ''}
             </div>
           </div>
         </div>`;
@@ -515,6 +540,59 @@ async function submitSpecQuote(reqId) {
   else { _specCtx.qts.push({ ...payload, invitation_id: inv.id, id: 'tmp' }); }
 
   _quoteOpen = null;
+  renderSpecialistView();
+}
+
+// ── EMPLOYEE TASK MODE ────────────────────────────────────────────────────────
+async function initEmployeeView() {
+  document.querySelector('.top-sub').textContent = '· Zadanie';
+  const { data: et } = await sb.from('employee_tasks').select('*').eq('token', taskToken).single();
+  if (!et) { renderError('Neplatný link – zadanie nenájdené.'); return; }
+  const { data: inv } = await sb.from('invitations').select('*').eq('id', et.invitation_id).single();
+  const { data: req } = inv
+    ? await sb.from('requests').select('*').eq('id', inv.request_id).single()
+    : { data: null };
+  if (!req) { renderError('Projekt nenájdený.'); return; }
+  renderEmployeeView(et, req);
+}
+
+function renderEmployeeView(et, req) {
+  const phases = Array.isArray(req.phases) ? req.phases : [];
+  const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
+  document.getElementById('app').innerHTML = `
+    <div class="card">
+      <h2>${req.project_cislo ? req.project_cislo + ' – ' : ''}${req.project_name}</h2>
+      <div class="sub">${req.profession}</div>
+      ${et.employee_name ? `<div style="margin-top:6px;font-size:13px;color:var(--text2)">Zadanie pre: <strong>${et.employee_name}</strong></div>` : ''}
+      ${phases.length ? `<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">${phases.map(p => `<span class="badge">${p}</span>`).join('')}</div>` : ''}
+    </div>
+    ${req.notes || req.folder_url_work || req.podklady_datum || req.hotovo_datum ? `
+    <div class="card">
+      ${req.folder_url_work ? `<div style="margin-bottom:12px"><a href="${req.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a></div>` : ''}
+      ${req.podklady_datum || req.hotovo_datum ? `<div class="meta" style="margin-bottom:${req.notes ? '12px' : '0'}">
+        ${req.podklady_datum ? `<div class="meta-item"><label>Podklady dostanete</label><span>${fmtD(req.podklady_datum)}</span></div>` : ''}
+        ${req.hotovo_datum ? `<div class="meta-item"><label>Hotovo do</label><span>${fmtD(req.hotovo_datum)}</span></div>` : ''}
+      </div>` : ''}
+      ${req.notes ? `<p class="note">${req.notes}</p>` : ''}
+    </div>` : ''}`;
+}
+
+function copyEmpLink(btn, url) {
+  navigator.clipboard.writeText(url).then(() => {
+    btn.textContent = 'Skopírované!';
+    setTimeout(() => btn.textContent = 'Kopírovať link', 2000);
+  });
+}
+
+async function addEmployeeTask(invId) {
+  const nameEl = document.getElementById('etname_' + invId);
+  const name = nameEl?.value.trim();
+  if (!name) { if (nameEl) nameEl.focus(); return; }
+  const { data: et, error } = await sb.from('employee_tasks')
+    .insert({ invitation_id: invId, employee_name: name })
+    .select().single();
+  if (error || !et) return;
+  _specCtx.empTasks.push(et);
   renderSpecialistView();
 }
 
