@@ -551,6 +551,7 @@ function buildReqDetail(r) {
            <button class="btn btn-sm" onclick="withdrawQuote(event,'${inv.id}','${r.id}')" style="color:var(--text2);border-color:var(--border)">Stiahnuť</button>`
         : inv.status === 'selected'
           ? `<span style="font-size:12px;color:var(--green);font-weight:500">✓ Vybraný</span>
+             <button class="btn btn-sm" onclick="genTeamLink(event,'${inv.specialist_id}')">📋 Tím</button>
              <button class="btn btn-sm" onclick="cancelWinner(event,'${inv.id}','${r.id}')" style="color:var(--text2);border-color:var(--border)">Zrušiť</button>`
           : '';
       const noteCell = q?.notes
@@ -614,6 +615,19 @@ function buildReqDetail(r) {
 function toggleReq(id) { document.getElementById('rd-' + id)?.classList.toggle('on'); }
 function statusLabel(s) {
   return {sent:'Odoslané',viewed:'Otvorené',submitted:'Ponuka',selected:'Vybraný',rejected:'Nevybraný'}[s] || s;
+}
+
+async function genTeamLink(e, specId) {
+  e.stopPropagation();
+  let { data: et } = await sb.from('employee_tasks').select('token').eq('specialist_id', specId).single();
+  if (!et) {
+    const { data: newEt } = await sb.from('employee_tasks').insert({ specialist_id: specId }).select('token').single();
+    et = newEt;
+  }
+  if (!et) { showToast('Chyba pri vytváraní linku', 'err'); return; }
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const link = base + 'portal.html?task=' + et.token;
+  navigator.clipboard.writeText(link).then(() => showToast('Odkaz skopírovaný'), () => showToast(link));
 }
 
 async function selectWinner(e, invId, reqId) {
