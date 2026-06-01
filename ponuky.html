@@ -334,7 +334,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
 
 async function sendMagicLink() {
   const email = document.getElementById('loginEmail').value.trim();
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: 'https://jozefperichta-ctrl.github.io/prehladpm/ponuky.html' } });
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: 'https://architt-ctrl.github.io/prehladpm/ponuky.html' } });
   const el = document.getElementById('loginMsg');
   if (error) el.innerHTML = `<div class="alert alert-err">${error.message}</div>`;
   else el.innerHTML = `<div class="alert alert-ok">Link odoslaný na <strong>${email}</strong>. Skontrolujte e-mail.</div>`;

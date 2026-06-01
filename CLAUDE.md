@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Single-file (`index.html`) project management dashboard for an architecture firm. No build system, no framework — vanilla HTML/CSS/JS deployed via GitHub Pages.
 
-Live URL: `https://jozefperichta-ctrl.github.io/prehladpm/`
+Live URL: `https://architt-ctrl.github.io/prehladpm/`
 
 To deploy changes: `git add index.html && git commit -m "..." && git push origin main`, then hard-refresh the browser (Ctrl+Shift+R).
 
