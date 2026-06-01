@@ -40,7 +40,10 @@ All mutable state is in module-level `let` variables:
 | `ponukyBadgeSet` | — | `Set<cislo>` projektov s aspoň jednou `submitted` invitation; badge zelená bodka |
 | `taskPonukySet` | — | `Set<task_id>` Caflou task_ids s `submitted` invitation; badge `ponuka ↗` na úlohe |
 | `_vytazenieCache` | — | Cached HTML ext tím modal; invalidovaný pri `syncData` |
-| `_intTimCache` | — | Cached HTML int tím modal; invalidovaný pri `syncData` |
+| `_intTimData` | — | Raw data pre int tím modal `{tasks, projects}`; invalidovaný pri `syncData` (nie HTML cache — kvôli interaktivite) |
+| `finishedTasksOpen` | — | `Set<cislo>` — ktoré projekty majú rozbalené ukončené úlohy |
+| `taskNotesCache` | — | `{taskId: [{id,datum,text}]}` — lazy-loaded komentáre Caflou úloh |
+| `taskNotesOpen` | — | `Set<task_id>` — ktoré úlohy majú rozbalené poznámky |
 
 ### Data flow – Caflou
 
@@ -129,6 +132,12 @@ CAFLOU_USERS             // user_id → meno
 - `setCaflouTaskStatus(cislo, task_id, statusName)` — mení status, aktualizuje cache, volá `refreshUlohy`, PATCHuje Caflou
 - `finishCaflouTask` (✓ tlačidlo) nastaví `finished=true` a skryje úlohu
 
+**Ukončené úlohy (finished tasks):**
+- `finishedTasksOpen = new Set()` — sleduje ktoré projekty majú rozbalené ukončené úlohy
+- `toggleFinishedTasks(cislo)` — pridá/odoberie cislo zo setu, volá `refreshUlohy`
+- `unfinishCaflouTask(cislo, task_id)` — PATCHuje `finished=false`, obnoví úlohu v cache, volá `refreshUlohy`
+- V `buildCaflouTasksHtml`: tlačidlo "▸ N ukončených" → rozbalí zoznam s ↺ tlačidlom na každej
+
 **Task layout (two rows):**
 - Riadok 1: názov úlohy (flex:1, kliknuteľný — otvára edit) + tlačidlá ✓ ✕
 - Riadok 2: status `<select>` dropdown (sfarbený) + meno osoby + deadline + posledná poznámka (skrátená)
@@ -169,7 +178,16 @@ CAFLOU_USERS             // user_id → meno
 - Status, fáza, termín (`bulkSetDeadline`), Interné/Externé, Ukončiť, Vymazať, Dopyty
 - `bulkSetDeadline(cislo, date)` — nastaví `end_time` na všetkých označených úlohách (formát `YYYY-MM-DDT17:00:00+02:00`)
 
-**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`
+**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `unfinishCaflouTask`, `toggleFinishedTasks`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`
+
+### Zápisky (chronologický prehľad)
+
+Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
+
+- `buildChronoContent()` — zbiera záznamy z `dennikMap` (všetky projekty) + `taskNotesCache` (len lazy-loaded úlohy), zoradí podľa `created_at` desc, zobrazí posledných 50
+- Záznamy z denníka: cislo sivé/malé, názov projektu tučný/tmavý; záznamy z úloh: názov úlohy
+- `chronoAddDennik(cislo)` — pridá nový záznam do denníka priamo z modálu, volá `buildChronoContent()` bez zavretia modálu
+- **Poznámka:** task notes sa zobrazia len ak boli v tejto session lazy-loaded (user otvoril projekt)
 
 ### Gemini integration
 
@@ -267,7 +285,9 @@ Dva tlačidlá v headeri:
 - Scanuje rovnako, ale berie len úlohy **bez tagu `ext`** (interné)
 - Člen tímu = `CAFLOU_USERS[t.target_user_id]`
 - Zoradené podľa počtu úloh zostupne; nepriradené (`—`) na konci
-- Cache: `_intTimCache`, invalidovaný pri `syncData`
+- **Interaktívny modal** — mení status (`intTimSetStatus`) a ukončuje (`intTimFinishTask`) priamo v modáli bez zatvorenia
+- Raw data v `_intTimData = {tasks, projects}`, HTML generuje `buildIntTimHtml(data)` pri každej zmene
+- `_intTimData = null` v `syncData()` → vynutí refetch pri ďalšom otvorení
 
 ### Vyhľadávanie projektov
 
@@ -281,9 +301,10 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Supabase backend** (`cfjkomqxzqflotrqxfyl.supabase.co`):
 - `requests` — quote requests (project, profession, phases, notes, `folder_url`, `folder_url_work`, `deadline` date, `caflou_task_id` bigint)
-- `specialists` — professionals (name, profession, email, phone, `portal_token` UUID)
+- `specialists` — professionals (name, profession, email, phone, `portal_token` UUID, `reg` text)
 - `invitations` — links request↔specialist, has `token` (UUID) and `status`: `sent|viewed|submitted|selected|rejected`
-- `quotes` — submitted quotes (`prices` JSONB `{phase: amount}`, `notes`, `submitted_at`)
+- `quotes` — submitted quotes (`prices` JSONB `{phase: amount}`, `notes`, `deadline` date, `submitted_at`)
+- `employee_tasks` — team links per specialist: `(id uuid, specialist_id uuid unique, token uuid unique, order_data jsonb, created_at timestamptz)`
 
 **Key patterns:**
 - `_loading` guard prevents concurrent `loadAll()` calls
@@ -298,6 +319,19 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **request modal fields:** project (Caflou search), profession, phases (checkboxes), notes, `folder_url` (Podklady na nacenenie), `folder_url_work` (Podklady na vypracovanie)
 
+**Zoznam dopytov (`renderRequests`):**
+- Zoskupené podľa projektu — každý projekt je `<details data-proj>` (otvorené pri prvom renderi, stav sa zachováva)
+- V rámci projektu: sub-skupiny podľa profesijnej kategórie (`profCat`) — napr. všetky ZTI dopyty pod nadpisom "ZTI"; nadpis sa zobrazí len ak je viac kategórií
+- V rámci kategórie: zoradené abecedne podľa profesie
+- `profCat(p)` — extrahuje vedúcu veľkú skratku: `^([A-Z]{2,6})\b` (napr. ZTI, UK, STR); fallback: časť pred pomlčkou
+- Open state dopytov (`.row-expand.on`) sa zachováva cez re-rendery
+
+**Zoznam profesistov (`renderSpecialists`):**
+- Zobrazuje len profesistov so zadanou profesiou (`s.profession`) — klienti a nezaradení sú skrytí
+- Zoskupení podľa profesie, abecedne, každá skupina je `<details open>`
+- V rámci skupiny: abecedne podľa mena
+- Kontakty z Google (contacts pole) sa pre tento zoznam ignorujú — kontakty sa používajú len v invite modáli
+
 **Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
 
 **Uzatváranie/otváranie dopytov:** `closeReq(e, id)` → status `closed`. `reopenReq(e, id)` → status `active`. Tlačidlo sa prepína podľa aktuálneho stavu.
@@ -309,6 +343,11 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 - `selectWinner(e, invId, reqId)` — vyberie víťaza: selected/rejected + zapíše do `task_specialists` ak request má `caflou_task_id`
 - `cancelWinner(e, invId, reqId)` — zruší výber: všetci selected/rejected → `submitted`, zmaže `task_specialists` záznam
 - `selectWinner` **nevytvára** Caflou úlohu (bolo odstránené — úloha sa vytvára pred dopytom)
+
+**Team link (odkaz pre tím špecialistu):**
+- `genTeamLink(e, specId)` — upsertne `employee_tasks` pre daného špecialistu (jeden link na špecialistu), skopíruje `portal.html?task=TOKEN` do schránky
+- Tlačidlo **📋 Tím** sa zobrazí pri vybranom špecialistovi v tabuľke ponúk
+- Jozef posiela link manuálne zamestnancom firmy
 
 **Prepojenie dopytu s Caflou úlohou:**
 - `openTaskLink(reqId, cislo)` — načíta Caflou projekty, nájde podľa order_number, načíta úlohy (ext prvé), zobrazí dropdown
@@ -324,33 +363,58 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 **Pozvanie profesistov (invite modal):**
 - Zoznam kontaktov z Google Contacts je rozdelený do sekcií podľa tagov (`<details>` expandable)
 - Sekcia zodpovedajúca profesii dopytu sa automaticky otvorí
-- `renderInviteList` funkcia bola odstránená — sekcie sú renderované priamo v `openInviteModal`
 - Selector pre vybrané checkboxy: `#mInvList input[data-email]:checked:not(:disabled)`
 - Pri upserte do `specialists`: `profession = (c.labels||[])[0] || ''` — len prvý tag, nie join
 
-**Aktivita sa nezobrazuje v riadku projektu** — je redundantná so stavovým filtrom. `projRowHtml` zobrazuje len Gemini zhrnutie (`gem`), nie `stavMap[p.cislo]`.
-
-**`specialists` tabuľka má stĺpec `reg`** (reg. číslo oprávnenia, napr. `1234 AA`). Zobrazuje sa v modali profesistov v `ponuky.html`. `saveSpec()` ho ukladá spolu s ostatnými poliami.
+**`specialists` tabuľka má stĺpec `reg`** (reg. číslo oprávnenia, napr. `1234 AA`). Zobrazuje sa v modali profesistov. `saveSpec()` ho ukladá spolu s ostatnými poliami.
 
 ### portal.html
 
-Specialist-facing form. Dva módy podľa URL parametra:
+Specialist-facing portal. Tri módy podľa URL parametra:
 
 **Mód 1 — pozvánka:** `portal.html?token=UUID`
 - `init()` → načíta invitation by token → `selected`/`rejected` → `renderStatus()`, inak `renderForm()`
 - `_submitCtx` global holds `{invId, phases, curPhase}` to avoid JSON.stringify in onclick attribute
-- `renderForm`: price table per phase, notes field
+- `renderForm`: price table per phase, deadline fields, notes field
+  - "Termín odovzdania PD klientovi" — read-only, z `req.deadline`
+  - "Váš termín odovzdania" — editable, auto-vypočítaný ako `req.deadline - 7 dní`; ukladá sa do `quotes.deadline`
 - `renderStatus`: shows reqBlock (folder links, notes) + quoteBlock (submitted prices, notes)
 - Both folder links shown side by side: `folder_url` (nacenenie) + `folder_url_work` (vypracovanie)
+- `selected` status: zobrazí aj `folder_url_work`, `podklady_datum`, `hotovo_datum`, `r.notes`
 
 **Mód 2 — trhisko profesista:** `portal.html?specialist=UUID`
 - `initSpecialistView()` — načíta špecialistu podľa `portal_token`, načíta aktívne dopyty, pozvánky, ceny
-- `_specCtx = {spec, reqs, invs, qts}` — stav trhiska
+- Aj closed requesty pre selected/rejected invitations (môžu byť uzavreté)
+- `_specCtx = {spec, reqs, srReqs, invs, qts}` — stav trhiska; `srReqs` = requesty pre selected/rejected (closed)
 - `_profFilter = 'own'|'all'` — filter: len vlastná profesia / všetky
-- `renderSpecialistView()` — zobrazí filter bar + karty dopytov
-- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien
+- `renderSpecialistView()`:
+  - Sekcia **Výsledky dopytov** — selected (✅ Boli ste vybraný) a rejected s ponukou (ℹ️ Vybraný bol iný projektant); rozbaľovateľné cez `toggleResultCard`
+  - Otvorené dopyty: zoskupené podľa projektu (`<details open>`), v rámci projektu sub-skupiny podľa `profCat`
+- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien, deadline polami
 - `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; re-render
-- Profesista vidí termíny (`deadline`) a môže sa rozhodnúť čo stíha
+- `profCat(p)` — rovnaká logika ako v ponuky.html
+
+**Mód 3 — zadanie pre tím:** `portal.html?task=UUID`
+- `initEmployeeView()` — načíta `employee_tasks` podľa tokenu → špecialistu → všetky `selected` invitations → requests
+- `_empCtx = {et, spec, invs, reqs}` — stav employee view
+- `renderEmployeeView()`:
+  - Projekty zoskupené podľa `project_cislo`, zoradené podľa `deadline` (najbližší termín = č.1)
+  - Každý projekt je `<details data-pid>` — klik rozbalí jednotlivé úlohy (profesia, fázy, podklady, termíny, poznámky)
+  - **Bez cien** — žiadne finančné dáta
+  - Open state sa zachováva cez re-rendery (číta `details[data-pid][open]` pred re-renderom)
+
+**`employee_tasks` Supabase tabuľka:**
+```sql
+create table employee_tasks (
+  id uuid primary key default gen_random_uuid(),
+  specialist_id uuid references specialists(id) on delete cascade unique,
+  token uuid unique default gen_random_uuid(),
+  order_data jsonb default '[]'::jsonb,
+  created_at timestamptz default now()
+);
+```
+- Jeden záznam na špecialistu (unique constraint)
+- `order_data` — rezervované, momentálne sa nepoužíva (poradie projektov je podľa deadline)
 
 ### sync-fazy.ps1
 
