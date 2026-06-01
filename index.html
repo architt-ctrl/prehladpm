@@ -2280,65 +2280,6 @@ function openChronoModal() {
   sel.innerHTML = '<option value="">— projekt —</option>' +
     activeProjs.map(p => `<option value="${p.cislo}">${p.cislo} – ${p.nazov}</option>`).join('');
   buildChronoContent();
-  loadChronoTaskNotes();
-}
-
-async function loadChronoTaskNotes() {
-  const el = document.getElementById('chronoContent');
-  const statusDiv = Object.assign(document.createElement('div'), {
-    id: 'chrono-loading', style: 'font-size:11px;color:var(--text3);text-align:center;padding:6px',
-    textContent: 'Načítavam zápisky z úloh…'
-  });
-  if (el) el.prepend(statusDiv);
-
-  try {
-    // Build map task_id → project for active projects
-    const projByTaskId = {};
-    projects.filter(p => p.faza !== 'Archív').forEach(p =>
-      (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
-    );
-
-    // Collect ext tasks from cache; for uncached projects fetch from Caflou
-    const extTaskMap = {}; // taskId (number) → cislo
-    for (const [cislo, tasks] of Object.entries(caflouTasksCache)) {
-      if (!Array.isArray(tasks)) continue;
-      tasks.filter(t => !t.finished && (t.tags||[]).includes('ext'))
-           .forEach(t => { extTaskMap[t.id] = cislo; });
-    }
-
-    const cachedCislos = new Set(Object.keys(caflouTasksCache).filter(c => Array.isArray(caflouTasksCache[c])));
-    const needsFetch = projects.some(p => p.faza !== 'Archív' && !cachedCislos.has(p.cislo));
-    if (needsFetch) {
-      let page = 1, hasMore = true;
-      while (hasMore) {
-        const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
-          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
-        const d = await r.json();
-        (d.results || []).forEach(t => {
-          if (t.finished || t.trash || !(t.tags||[]).includes('ext')) return;
-          const p = projByTaskId[t.id]; if (!p) return;
-          extTaskMap[t.id] = p.cislo;
-          if (!caflouTasksCache[p.cislo]) caflouTasksCache[p.cislo] = [];
-          if (!caflouTasksCache[p.cislo].some(x => x.id === t.id)) caflouTasksCache[p.cislo].push(t);
-        });
-        hasMore = !!d.next_page;
-        page++;
-      }
-    }
-
-    const toLoad = Object.entries(extTaskMap)
-      .filter(([id]) => taskNotesCache[id] === undefined)
-      .map(([id, cislo]) => ({ taskId: Number(id), cislo }));
-
-    for (let i = 0; i < toLoad.length; i += 5) {
-      await Promise.all(toLoad.slice(i, i + 5).map(({ cislo, taskId }) => preloadTaskNotes(cislo, taskId)));
-      if (!document.getElementById('chronoModal').classList.contains('hidden')) buildChronoContent();
-    }
-  } catch(e) {
-    console.error('loadChronoTaskNotes:', e);
-  } finally {
-    document.getElementById('chrono-loading')?.remove();
-  }
 }
 
 function buildChronoContent() {
@@ -2369,14 +2310,15 @@ function buildChronoContent() {
     }));
   });
   entries.sort((a, b) => b.ts - a.ts);
+  const top = entries.slice(0, 50);
   const el = document.getElementById('chronoContent');
-  if (!entries.length) {
+  if (!top.length) {
     el.innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px">Žiadne zápisky</div>';
     return;
   }
-  el.innerHTML = entries.map(e => {
+  el.innerHTML = top.map(e => {
     const badge = e.type === 'task'
-      ? `<span style="font-size:10px;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd);border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px" title="${e.taskName}">${e.taskName}</span>`
+      ? `<span style="font-size:10px;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd);border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${e.taskName}">${e.taskName}</span>`
       : '';
     return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55">
       <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
