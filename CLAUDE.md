@@ -300,7 +300,10 @@ Dva tlačidlá v headeri:
 Profession quotes management module. Accessible at `ponuky.html` (linked from `index.html` via `module-nav`).
 
 **Supabase backend** (`cfjkomqxzqflotrqxfyl.supabase.co`):
-- `requests` — quote requests (project, profession, phases, notes, `folder_url`, `folder_url_work`, `deadline` date, `caflou_task_id` bigint)
+- `requests` — quote requests (project, profession, phases, notes, `folder_url`, `folder_url_work`, `deadline` date, `podklady_datum` date, `hotovo_datum` date, `caflou_task_id` bigint)
+  - `deadline` = "Termín odovzdania fázy" (kedy klient dostane PD)
+  - `podklady_datum` = "Kedy dodáme podklady" (kedy firma odovzdá podklady profesistovi)
+  - `hotovo_datum` = "Kedy chceme výsledok" (kedy profesista odovzdá výsledok)
 - `specialists` — professionals (name, profession, email, phone, `portal_token` UUID, `reg` text)
 - `invitations` — links request↔specialist, has `token` (UUID) and `status`: `sent|viewed|submitted|selected|rejected`
 - `quotes` — submitted quotes (`prices` JSONB `{phase: amount}`, `notes`, `deadline` date, `submitted_at`)
@@ -328,9 +331,16 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Zoznam profesistov (`renderSpecialists`):**
 - Zobrazuje len profesistov so zadanou profesiou (`s.profession`) — klienti a nezaradení sú skrytí
-- Zoskupení podľa profesie, abecedne, každá skupina je `<details open>`
+- `s.profession` môže obsahovať viacero štítkov oddelených čiarkou (napr. `"ZTI, technologie"`) — každý štítok = samostatná skupina; profesista s viacerými štítkami sa zobrazí vo viacerých skupinách
+- Skupiny sú abecedne zoradené, každá je `<details>` (zatvorené by default, kliknutím sa rozbalí)
 - V rámci skupiny: abecedne podľa mena
 - Kontakty z Google (contacts pole) sa pre tento zoznam ignorujú — kontakty sa používajú len v invite modáli
+
+**Sync kontaktov (`syncSpecProfessions`):**
+- Fetchne kontakty z Google cez Apps Script `getKontakty`
+- **Aktualizuje** profesiu u existujúcich špecialistov (match podľa emailu): `c.labels.join(', ')` → `s.profession`
+- **Pridá** nových špecialistov z kontaktov, ktorí ešte nie sú v DB (match emailom) a majú aspoň jeden non-klient label
+- Toast: `"aktualizovaných: N, pridaných: N"`
 
 **Mazanie:** `deleteReq(e, id)` — kaskádovo zmaže quotes + invitations + request (s confirm). `deleteSpec(id)` — zmaže špecialistu.
 
@@ -390,7 +400,7 @@ Specialist-facing portal. Tri módy podľa URL parametra:
 - `renderSpecialistView()`:
   - Sekcia **Výsledky dopytov** — selected (✅ Boli ste vybraný) a rejected s ponukou (ℹ️ Vybraný bol iný projektant); rozbaľovateľné cez `toggleResultCard`
   - Otvorené dopyty: zoskupené podľa projektu (`<details open>`), v rámci projektu sub-skupiny podľa `profCat`
-- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien, deadline polami
+- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien; v rozbalenom stave zobrazí všetky 3 termíny dopytu ako chipy: `📅 Termín fázy` (r.deadline), `📁 Podklady` (r.podklady_datum), `✅ Výsledok` (r.hotovo_datum) — zobrazí sa len ten, ktorý je vyplnený
 - `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; re-render
 - `profCat(p)` — rovnaká logika ako v ponuky.html
 
