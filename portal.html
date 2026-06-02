@@ -485,8 +485,11 @@ function renderReqCard(r) {
           <tbody>${priceRows}</tbody>
         </table>
         <p class="hint" style="margin-bottom:14px">Ak fázu neponúkate, nechajte pole prázdne.</p>
-        ${projDl ? `<div class="frow"><label>Termín odovzdania PD klientovi</label>
-          <div class="finput" style="background:var(--bg2);color:var(--text2);cursor:default">${projDl.toLocaleDateString('sk-SK')}</div></div>` : ''}
+        ${(projDl || r.podklady_datum || r.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+          ${projDl ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📅 Termín fázy: <strong>${projDl.toLocaleDateString('sk-SK')}</strong></span>` : ''}
+          ${r.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${new Date(r.podklady_datum + 'T12:00:00').toLocaleDateString('sk-SK')}</strong></span>` : ''}
+          ${r.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${new Date(r.hotovo_datum + 'T12:00:00').toLocaleDateString('sk-SK')}</strong></span>` : ''}
+        </div>` : ''}
         <div class="frow">
           <label>Váš termín odovzdania${projDl ? ' <span style="font-size:11px;color:var(--text3);font-weight:400">(týždeň pred odovzdaním)</span>' : ''}</label>
           <input class="finput" type="date" id="sdl_${r.id}" value="${specDlVal}">
