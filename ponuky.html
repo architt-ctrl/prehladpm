@@ -967,9 +967,11 @@ function renderSpecialists() {
 
   const groups = {};
   profs.forEach(s => {
-    const g = s.profession.trim() || '—';
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(s);
+    const labels = (s.profession || '').split(',').map(l => l.trim()).filter(Boolean);
+    (labels.length ? labels : ['—']).forEach(label => {
+      if (!groups[label]) groups[label] = [];
+      if (!groups[label].find(x => x.id === s.id)) groups[label].push(s);
+    });
   });
 
   el.innerHTML = Object.entries(groups)
@@ -991,7 +993,7 @@ function renderSpecialists() {
           <button class="btn btn-sm" onclick="deleteSpec('${s.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">×</button>
         </div>`;
       }).join('');
-      return `<details open style="border-bottom:1px solid var(--border)">
+      return `<details style="border-bottom:1px solid var(--border)">
         <summary style="padding:9px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none">
           <span>${prof}</span><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:12px">${specs.length}</span>
         </summary>
