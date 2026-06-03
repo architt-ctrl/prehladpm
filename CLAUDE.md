@@ -429,6 +429,7 @@ Specialist-facing portal. Tri módy podľa URL parametra:
 - `toggleCard(reqId)` — toggle `_openCards` Set, re-render (nahrádza `toggleReqCard` + `toggleResultCard`)
 - `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; `_openCards.delete(reqId)`; re-render
 - `profCat(p)` — rovnaká logika ako v ponuky.html
+- **Zachovanie open stavu projektov**: pred `innerHTML =` sa uloží `openProjs = Set` z `details[data-proj][open]`; po renderi sa obnoví cez `d.open = true`. Každý `<details>` má `data-proj="${cislo || name}"`. Bez toho by kliknutie na dopyt zbalilo projekt.
 
 **Mód 3 — zadanie pre tím:** `portal.html?task=UUID`
 - `initEmployeeView()` — nastaví `document.title = 'Zadanie pre tím'`; načíta `employee_tasks` podľa tokenu → špecialistu → všetky `selected` invitations → requests
