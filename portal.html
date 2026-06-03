@@ -386,7 +386,8 @@ function renderSpecialistView() {
         catReqs.map(r => renderReqCard(r)).join('')
       ).join('');
 
-      return `<details style="margin-bottom:8px;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
+      const projKey = proj.cislo || proj.name || '';
+      return `<details data-proj="${projKey}" style="margin-bottom:8px;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
         <summary style="padding:12px 14px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;background:var(--bg2)">
           <span style="flex:1;font-size:17px;font-weight:700;color:${nameColor}">${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
           <span style="font-size:12px;color:var(--text3);font-weight:400">${proj.reqs.length}</span>
@@ -395,6 +396,8 @@ function renderSpecialistView() {
       </details>`;
     }).join('');
   }
+
+  const openProjs = new Set([...document.querySelectorAll('#app details[data-proj][open]')].map(d => d.dataset.proj));
 
   document.getElementById('app').innerHTML = `
     <div class="card" style="margin-bottom:14px">
@@ -407,6 +410,10 @@ function renderSpecialistView() {
       <span style="font-size:12px;color:var(--text3);margin-left:auto">${filtered.length} dopytov</span>
     </div>
     ${cards}`;
+
+  document.querySelectorAll('#app details[data-proj]').forEach(d => {
+    if (openProjs.has(d.dataset.proj)) d.open = true;
+  });
 }
 
 function renderReqCard(r) {
