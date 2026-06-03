@@ -740,12 +740,21 @@ async function genTeamLink(e, specId) {
   navigator.clipboard.writeText(link).then(() => showToast('Odkaz skopírovaný'), () => showToast(link));
 }
 
+function refreshReqDetail(reqId) {
+  const el = document.getElementById('rd-' + reqId);
+  if (!el) return;
+  const r = requests.find(r => r.id === reqId);
+  if (r) el.innerHTML = buildReqDetail(r);
+  el.classList.add('on');
+}
+
 async function selectWinner(e, invId, reqId) {
   e.stopPropagation();
   const invs = invitations.filter(i => i.request_id === reqId);
   await Promise.all(invs.map(i =>
     sb.from('invitations').update({ status: i.id === invId ? 'selected' : 'rejected' }).eq('id', i.id)
   ));
+  invs.forEach(i => { i.status = i.id === invId ? 'selected' : 'rejected'; });
   const req = requests.find(r => r.id === reqId);
   const inv = invitations.find(i => i.id === invId);
   const spec = specialists.find(s => s.id === inv?.specialist_id);
@@ -758,8 +767,7 @@ async function selectWinner(e, invId, reqId) {
       updated_at: new Date().toISOString(),
     });
   }
-  await loadAll();
-  openReq(reqId);
+  refreshReqDetail(reqId);
 }
 
 async function cancelWinner(e, invId, reqId) {
@@ -767,12 +775,12 @@ async function cancelWinner(e, invId, reqId) {
   if (!confirm('Zrušiť výber? Všetci profesisti sa vrátia na stav Ponuka.')) return;
   const invs = invitations.filter(i => i.request_id === reqId && ['selected','rejected'].includes(i.status));
   await Promise.all(invs.map(i => sb.from('invitations').update({ status: 'submitted' }).eq('id', i.id)));
+  invs.forEach(i => { i.status = 'submitted'; });
   const req = requests.find(r => r.id === reqId);
   if (req?.caflou_task_id) {
-    await sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id);
+    await sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id).then(null, () => {});
   }
-  await loadAll();
-  openReq(reqId);
+  refreshReqDetail(reqId);
 }
 
 async function closeReq(e, id) {
@@ -811,12 +819,12 @@ async function withdrawQuote(e, invId, reqId) {
   e.stopPropagation();
   if (!confirm('Stiahnuť ponuku? Ceny sa zmažú a stav sa vráti na Odoslané.')) return;
   const q = quotes.find(q => q.invitation_id === invId);
-  if (q) await sb.from('quotes').delete().eq('id', q.id);
+  if (q) { await sb.from('quotes').delete().eq('id', q.id); quotes = quotes.filter(x => x.id !== q.id); }
   await sb.from('invitations').update({ status: 'sent' }).eq('id', invId);
+  const inv = invitations.find(i => i.id === invId);
+  if (inv) inv.status = 'sent';
   showToast('Ponuka stiahnutá', 'ok');
-  _loading = false;
-  await loadAll();
-  openReq(reqId);
+  refreshReqDetail(reqId);
 }
 
 function copyTxt(t) { navigator.clipboard.writeText(t).catch(() => {}); }
