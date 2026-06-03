@@ -123,8 +123,10 @@
   <a href="suhrn.html" class="mnav-a">Správy</a>
 </nav>
 
+<div id="authLoading" style="text-align:center;padding:60px 16px;color:var(--text2);font-size:13px">Načítavam…</div>
+
 <!-- LOGIN -->
-<div id="loginWrap">
+<div id="loginWrap" class="hidden">
   <div class="login-card">
     <h2>Ponuky profesií</h2>
     <p>Prihláste sa pomocou e-mailovej adresy.</p>
@@ -319,6 +321,7 @@ async function initPush() {
 }
 
 sb.auth.onAuthStateChange(async (event, session) => {
+  document.getElementById('authLoading').classList.add('hidden');
   if (session) {
     document.getElementById('loginWrap').classList.add('hidden');
     document.getElementById('adminWrap').classList.remove('hidden');
