@@ -320,16 +320,44 @@ async function initPush() {
   } catch(e) {}
 }
 
+// Optimistic: zobraz admin panel okamžite z localStorage (bez čakania na token refresh)
+let _initialLoadDone = false;
+(async function() {
+  try {
+    const raw = localStorage.getItem('sb-cfjkomqxzqflotrqxfyl-auth-token');
+    const s = raw ? JSON.parse(raw) : null;
+    if (s?.user?.email) {
+      document.getElementById('authLoading').classList.add('hidden');
+      document.getElementById('loginWrap').classList.add('hidden');
+      document.getElementById('adminWrap').classList.remove('hidden');
+      document.getElementById('navEmail').textContent = s.user.email;
+      _initialLoadDone = true;
+      await loadAll();
+      initPush();
+      openFromUrl();
+    }
+  } catch(e) {}
+})();
+
 sb.auth.onAuthStateChange(async (event, session) => {
   document.getElementById('authLoading').classList.add('hidden');
+  if (event === 'SIGNED_OUT') {
+    _initialLoadDone = false;
+    document.getElementById('loginWrap').classList.remove('hidden');
+    document.getElementById('adminWrap').classList.add('hidden');
+    return;
+  }
   if (session) {
     document.getElementById('loginWrap').classList.add('hidden');
     document.getElementById('adminWrap').classList.remove('hidden');
     document.getElementById('navEmail').textContent = session.user.email;
-    await loadAll();
-    initPush();
-    openFromUrl();
-  } else {
+    if (!_initialLoadDone) {
+      _initialLoadDone = true;
+      await loadAll();
+      initPush();
+      openFromUrl();
+    }
+  } else if (!_initialLoadDone) {
     document.getElementById('loginWrap').classList.remove('hidden');
     document.getElementById('adminWrap').classList.add('hidden');
   }
