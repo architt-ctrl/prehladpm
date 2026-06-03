@@ -767,6 +767,10 @@ async function selectWinner(e, invId, reqId) {
       updated_at: new Date().toISOString(),
     });
   }
+  if (req && req.status !== 'closed') {
+    await sb.from('requests').update({ status: 'closed' }).eq('id', reqId);
+    req.status = 'closed';
+  }
   refreshReqDetail(reqId);
 }
 
