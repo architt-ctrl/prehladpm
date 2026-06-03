@@ -1103,25 +1103,33 @@ function renderSpecialists() {
     });
   });
 
+  const specRow = s => {
+    const portalUrl = s.portal_token
+      ? `${location.origin}${location.pathname.replace('ponuky.html','portal.html')}?specialist=${s.portal_token}`
+      : null;
+    return `<div class="row-item" style="cursor:default">
+      <div style="flex:1;line-height:1.5">
+        <strong>${s.name}</strong>${s.company ? ` <span style="color:var(--text2)">· ${s.company}</span>` : ''}
+        <br><span style="font-size:12px;color:var(--text2)">${s.email}${s.phone ? ' · ' + s.phone : ''}</span>
+      </div>
+      ${portalUrl
+        ? `<button class="btn btn-g btn-sm" title="${portalUrl}" onclick="copyTxt('${portalUrl}');showToast('Link skopírovaný')">🔗 Portál</button>`
+        : `<button class="btn btn-g btn-sm" onclick="generatePortalToken('${s.id}')">🔗 Vytvoriť portál</button>`}
+      <button class="btn btn-g btn-sm" onclick="openSpecModal('${s.id}')">Upraviť</button>
+      <button class="btn btn-sm" onclick="deleteSpec('${s.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">×</button>
+    </div>`;
+  };
+
+  if (q) {
+    const unique = [...new Map(profs.map(s => [s.id, s])).values()].sort((a, b) => a.name.localeCompare(b.name, 'sk'));
+    el.innerHTML = unique.map(specRow).join('');
+    return;
+  }
+
   el.innerHTML = Object.entries(groups)
     .sort((a, b) => a[0].localeCompare(b[0], 'sk'))
     .map(([prof, specs]) => {
-      const rows = specs.sort((a, b) => a.name.localeCompare(b.name, 'sk')).map(s => {
-        const portalUrl = s.portal_token
-          ? `${location.origin}${location.pathname.replace('ponuky.html','portal.html')}?specialist=${s.portal_token}`
-          : null;
-        return `<div class="row-item" style="cursor:default">
-          <div style="flex:1;line-height:1.5">
-            <strong>${s.name}</strong>${s.company ? ` <span style="color:var(--text2)">· ${s.company}</span>` : ''}
-            <br><span style="font-size:12px;color:var(--text2)">${s.email}${s.phone ? ' · ' + s.phone : ''}</span>
-          </div>
-          ${portalUrl
-            ? `<button class="btn btn-g btn-sm" title="${portalUrl}" onclick="copyTxt('${portalUrl}');showToast('Link skopírovaný')">🔗 Portál</button>`
-            : `<button class="btn btn-g btn-sm" onclick="generatePortalToken('${s.id}')">🔗 Vytvoriť portál</button>`}
-          <button class="btn btn-g btn-sm" onclick="openSpecModal('${s.id}')">Upraviť</button>
-          <button class="btn btn-sm" onclick="deleteSpec('${s.id}')" style="color:var(--red);border-color:var(--red-bd);background:var(--red-bg)">×</button>
-        </div>`;
-      }).join('');
+      const rows = specs.sort((a, b) => a.name.localeCompare(b.name, 'sk')).map(specRow).join('');
       return `<details style="border-bottom:1px solid var(--border)">
         <summary style="padding:9px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);background:var(--bg3);cursor:pointer;display:flex;align-items:center;justify-content:space-between;list-style:none;user-select:none">
           <span>${prof}</span><span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:12px">${specs.length}</span>
