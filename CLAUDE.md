@@ -311,8 +311,8 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 
 **Key patterns:**
 - `_loading` guard prevents concurrent `loadAll()` calls
-- `loadAll()` — **2-fázové progressive loading**: všetky 4 Supabase queries štartujú súčasne; render po requests+specialists, re-render po invitations+quotes (rýchlejší prvý render)
-- `loadAll()` má timeout 30s (fáza 1) + 15s (fáza 2) — zobrazí chybu s "Skúsiť znova"
+- `loadAll()` — single render pass, všetky 4 Supabase queries súčasne, `Promise.race` timeout 30s → zobrazí chybu s "Skúsiť znova"
+- **Optimistic auth**: IIFE číta `sb-cfjkomqxzqflotrqxfyl-auth-token` z localStorage priamo (bez čakania na token refresh ktorý trvá ~20s). `_initialLoadDone` flag zabraňuje dvojitému `loadAll()` keď optimistic + `onAuthStateChange` oba nastanú.
 - `loadCaflouProjects()` uses `d.results` (not `d.data`), filter `!p.trash && !p.template`
 - `searchProjects()` uses `p.order_number` (not `p.number`)
 - Save functions (`saveReq`, `saveSpec`) set `_loading = false` before calling `loadAll()`
@@ -320,7 +320,19 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 - Caflou project search in request modal — dropdown appears after typing
 - `openFromUrl()` — číta URL param `?task_id=`, nájde request podľa `caflou_task_id`, otvorí ho a scrollne naň (volané z task badge v index.html)
 
-**request modal fields:** project (Caflou search), profession, phases (checkboxes), notes, `folder_url` (Podklady na nacenenie), `folder_url_work` (Podklady na vypracovanie)
+**Lazy render dopytov:**
+- `renderRequests()` vkladá `buildReqDetail(r)` len pre otvorené riadky (nie pre všetky)
+- `openReq(id)` — pridá triedu `on` + naplní innerHTML ak prázdny
+- `toggleReq(id)` — toggle open/close
+- `refreshReqDetail(reqId)` — prebuduje detail in-place z lokálneho stavu bez `loadAll()`; volá `openReq` na záver
+
+**request modal fields:** project (Caflou search), profession, Caflou úloha (voliteľné — `#mRTaskWrap`), phases (checkboxes), notes, `folder_url`, `folder_url_work`
+
+**Caflou úloha v modali nového dopytu:**
+- `loadTasksForModal(cislo, selectedTaskId)` — načíta ext úlohy projektu z Caflou, naplní `#mRTaskSel` dropdown
+- `selectProject(cislo, name)` volá `loadTasksForModal(cislo)` automaticky po výbere projektu
+- `openReqModal(id)` pri editácii volá `loadTasksForModal(r.project_cislo, r.caflou_task_id)` → predvyberie aktuálnu úlohu
+- `saveReq()` ukladá `caflou_task_id: parseInt(mRTaskSel.value) || null`
 
 **Zoznam dopytov (`renderRequests`):**
 - Zoskupené podľa projektu — každý projekt je `<details data-proj>` (otvorené pri prvom renderi, stav sa zachováva)
@@ -335,6 +347,7 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 - Skupiny sú abecedne zoradené, každá je `<details>` (zatvorené by default, kliknutím sa rozbalí)
 - V rámci skupiny: abecedne podľa mena
 - Kontakty z Google (contacts pole) sa pre tento zoznam ignorujú — kontakty sa používajú len v invite modáli
+- **Vyhľadávanie**: `#specSearch` input nad `#specList`; `renderSpecialists()` číta jeho hodnotu, filtruje podľa mena/profesie/emailu. Pri aktívnom vyhľadávaní → plochý abecedný zoznam (bez skupín, bez `<details>`)
 
 **Sync kontaktov (`syncSpecProfessions`):**
 - Fetchne kontakty z Google cez Apps Script `getKontakty`
@@ -349,9 +362,9 @@ Profession quotes management module. Accessible at `ponuky.html` (linked from `i
 **Manuálne zadanie cien:** tlačidlo "✎ Ceny" v každom riadku tabuľky profesistov → `openCenyModal(invId, reqId)` → modal s inputmi pre každú fázu + poznámka → `saveCeny()` INSERT/UPDATE do `quotes`, status → `submitted`. Stav modalu v `_cenyInvId`, `_cenyReqId`.
 
 **Správa ponúk:**
-- `withdrawQuote(e, invId, reqId)` — stiahne ponuku: zmaže `quotes`, status → `sent`
-- `selectWinner(e, invId, reqId)` — vyberie víťaza: selected/rejected + zapíše do `task_specialists` ak request má `caflou_task_id`
-- `cancelWinner(e, invId, reqId)` — zruší výber: všetci selected/rejected → `submitted`, zmaže `task_specialists` záznam
+- `withdrawQuote(e, invId, reqId)` — stiahne ponuku: zmaže `quotes`, status → `sent`; local state + `refreshReqDetail`
+- `selectWinner(e, invId, reqId)` — vyberie víťaza: selected/rejected + zapíše do `task_specialists`; **auto-uzavrie request** (status → `closed`); local state + `refreshReqDetail`
+- `cancelWinner(e, invId, reqId)` — zruší výber: všetci selected/rejected → `submitted`, zmaže `task_specialists`; local state + `refreshReqDetail`
 - `selectWinner` **nevytvára** Caflou úlohu (bolo odstránené — úloha sa vytvára pred dopytom)
 
 **Team link (odkaz pre tím špecialistu):**
@@ -394,18 +407,31 @@ Specialist-facing portal. Tri módy podľa URL parametra:
 
 **Mód 2 — trhisko profesista:** `portal.html?specialist=UUID`
 - `initSpecialistView()` — načíta špecialistu podľa `portal_token`, načíta aktívne dopyty, pozvánky, ceny
-- Aj closed requesty pre selected/rejected invitations (môžu byť uzavreté)
-- `_specCtx = {spec, reqs, srReqs, invs, qts}` — stav trhiska; `srReqs` = requesty pre selected/rejected (closed)
+- Aj closed requesty pre selected/rejected invitations (`srReqs`) — deduplikované voči `reqs`
+- `_specCtx = {spec, reqs, srReqs, invs, qts}` — stav trhiska
 - `_profFilter = 'own'|'all'` — filter: len vlastná profesia / všetky
-- `renderSpecialistView()`:
-  - Sekcia **Výsledky dopytov** — selected (✅ Boli ste vybraný) a rejected s ponukou (ℹ️ Vybraný bol iný projektant); rozbaľovateľné cez `toggleResultCard`
-  - Otvorené dopyty: zoskupené podľa projektu (`<details open>`), v rámci projektu sub-skupiny podľa `profCat`
-- `renderReqCard(r)` — karta dopytu s formulárom pre zadanie cien; v rozbalenom stave zobrazí všetky 3 termíny dopytu ako chipy: `📅 Termín fázy` (r.deadline), `📁 Podklady` (r.podklady_datum), `✅ Výsledok` (r.hotovo_datum) — zobrazí sa len ten, ktorý je vyplnený
-- `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; re-render
+- `_openCards = new Set()` — ktoré req karty sú rozbalené (nahrádza `_quoteOpen` + `_resultOpen`)
+
+**`renderSpecialistView()`:**
+- Všetky requesty (active + closed) v jednej množine, filtrované podľa `_profFilter`
+- Zoskupené podľa projektu → `<details>` **bez `open`** (zbalené pri načítaní)
+- **Farba názvu projektu** podľa priority:
+  - Zelená `#1a6b3c` — aspoň 1 `selected` invitation v projekte
+  - Modrá `#1a4a8c` — aspoň 1 `submitted` invitation (bez selected)
+  - Normálna — žiadna ponuka
+- **Zoradenie**: zelené → modré → normálne; v rámci skupiny podľa `podklady_datum` asc (nulls last); earliest `podklady_datum` z req skupiny projektu
+- V rámci projektu: sub-skupiny podľa `profCat` (15px bold); dopyt meno (13px, `var(--text2)`) + phase badges
+- **Žiadna separátna sekcia "Výsledky dopytov"** — selected/rejected sa zobrazujú priamo v projekte
+
+**`renderReqCard(r)`** — zvláda všetky stavy:
+- `selected` alebo `rejected + qt` → result card (zelený/sivý border-left, ✅/ℹ️, rozbaľovateľné ceny + info)
+- ostatné → form card (zadanie cien, termín, poznámka, submit button)
+- `toggleCard(reqId)` — toggle `_openCards` Set, re-render (nahrádza `toggleReqCard` + `toggleResultCard`)
+- `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; `_openCards.delete(reqId)`; re-render
 - `profCat(p)` — rovnaká logika ako v ponuky.html
 
 **Mód 3 — zadanie pre tím:** `portal.html?task=UUID`
-- `initEmployeeView()` — načíta `employee_tasks` podľa tokenu → špecialistu → všetky `selected` invitations → requests
+- `initEmployeeView()` — nastaví `document.title = 'Zadanie pre tím'`; načíta `employee_tasks` podľa tokenu → špecialistu → všetky `selected` invitations → requests
 - `_empCtx = {et, spec, invs, reqs}` — stav employee view
 - `renderEmployeeView()`:
   - Projekty zoskupené podľa `project_cislo`, zoradené podľa `deadline` (najbližší termín = č.1)
