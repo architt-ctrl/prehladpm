@@ -338,54 +338,83 @@ function renderSpecialistView() {
     ? openReqs.filter(r => myProfs.some(p => (r.profession || '').toLowerCase().includes(p) || p.includes((r.profession || '').toLowerCase())))
     : openReqs;
 
-  // Build results section (selected/rejected)
+  // Build results section (selected/rejected) — grouped by project + profCat
   const allDecidedReqs = [...reqs.filter(r => decidedReqIds.has(r.id)), ...(srReqs || [])];
-  const resultsHtml = allDecidedReqs.some(r => { const inv = invs.find(i => i.request_id === r.id); return inv?.status === 'selected' || qts.some(q => q.invitation_id === inv?.id); }) ? `
-    <div style="margin-bottom:18px">
+  const decidedVisible = allDecidedReqs.filter(r => {
+    const inv = invs.find(i => i.request_id === r.id);
+    return inv?.status === 'selected' || qts.some(q => q.invitation_id === inv?.id);
+  });
+  let resultsHtml = '';
+  if (decidedVisible.length) {
+    const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
+    const resProjMap = {};
+    decidedVisible.forEach(r => {
+      const key = r.project_cislo || r.project_name || r.id;
+      if (!resProjMap[key]) resProjMap[key] = { cislo: r.project_cislo, name: r.project_name, reqs: [] };
+      resProjMap[key].reqs.push(r);
+    });
+    const resProjects = Object.entries(resProjMap).sort(([a], [b]) => b.localeCompare(a, 'sk'));
+    const resCards = resProjects.map(([, proj]) => {
+      const sorted = [...proj.reqs].sort((a, b) => (a.profession || '').localeCompare(b.profession || '', 'sk'));
+      const catMap = {};
+      sorted.forEach(r => { const c = profCat(r.profession); if (!catMap[c]) catMap[c] = []; catMap[c].push(r); });
+      const cats = Object.entries(catMap).sort(([a], [b]) => a.localeCompare(b, 'sk'));
+      const showCats = cats.length > 1;
+      const content = cats.map(([cat, catReqs]) =>
+        (showCats ? `<div style="padding:6px 2px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);border-bottom:1px solid var(--border)55;margin:8px 0 4px">${cat}</div>` : '') +
+        catReqs.map(r => {
+          const inv = invs.find(i => i.request_id === r.id);
+          const sel = inv?.status === 'selected';
+          const qt = qts.find(q => q.invitation_id === inv?.id);
+          const isOpen = _resultOpen === r.id;
+          const phases = Array.isArray(r.phases) ? r.phases : [];
+          const priceRows = qt && phases.length ? phases.map(ph => {
+            const v = qt.prices?.[ph];
+            return `<tr><td class="phase-name">${ph}</td><td style="text-align:right;font-weight:500">${v != null ? Number(v).toLocaleString('sk-SK') + ' € bez DPH' : '—'}</td></tr>`;
+          }).join('') : '';
+          return `<div class="req-card" style="border-left:3px solid ${sel ? '#1e7a4a' : '#c8bfb5'}">
+            <div class="req-card-hdr" onclick="toggleResultCard('${r.id}')">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:15px;font-weight:600;margin-bottom:4px">${r.profession}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+                <span style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'}">
+                  ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
+                </span>
+                <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
+              </div>
+            </div>
+            <div style="display:${isOpen ? 'block' : 'none'}">
+              <div class="req-card-body">
+                ${sel ? (() => {
+                  const infoItems = [
+                    r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
+                    r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
+                    r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
+                  ].filter(Boolean);
+                  return `${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
+                })() : ''}
+                ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
+                  <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
+                ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
+              </div>
+            </div>
+          </div>`;
+        }).join('')
+      ).join('');
+      return `<details open style="margin-bottom:16px">
+        <summary style="padding:8px 2px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;border-bottom:2px solid var(--border);margin-bottom:10px">
+          <span style="flex:1;font-size:17px;font-weight:700;color:var(--text)">${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
+          <span style="font-size:13px;color:var(--text3);font-weight:400">${proj.reqs.length}</span>
+        </summary>
+        ${content}
+      </details>`;
+    }).join('');
+    resultsHtml = `<div style="margin-bottom:18px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);margin-bottom:8px">Výsledky dopytov</div>
-      ${allDecidedReqs.map(r => {
-        const inv = invs.find(i => i.request_id === r.id);
-        const sel = inv?.status === 'selected';
-        const qt = qts.find(q => q.invitation_id === inv?.id);
-        if (!sel && !qt) return '';
-        const isOpen = _resultOpen === r.id;
-        const phases = Array.isArray(r.phases) ? r.phases : [];
-        const priceRows = qt && phases.length ? phases.map(ph => {
-          const v = qt.prices?.[ph];
-          return `<tr><td class="phase-name">${ph}</td><td style="text-align:right;font-weight:500">${v != null ? Number(v).toLocaleString('sk-SK') + ' € bez DPH' : '—'}</td></tr>`;
-        }).join('') : '';
-        return `<div class="req-card" style="border-left:3px solid ${sel ? '#1e7a4a' : '#c8bfb5'}">
-          <div class="req-card-hdr" onclick="toggleResultCard('${r.id}')">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:14px;font-weight:600;margin-bottom:2px">${r.project_cislo ? r.project_cislo + ' – ' : ''}${r.project_name}</div>
-              <div style="font-size:12px;color:var(--text2)">${r.profession}</div>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-              <span style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'}">
-                ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
-              </span>
-              <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
-            </div>
-          </div>
-          <div style="display:${isOpen ? 'block' : 'none'}">
-            <div class="req-card-body">
-              ${sel ? (() => {
-                const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
-                const infoItems = [
-                  r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
-                  r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
-                  r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
-                ].filter(Boolean);
-                return `${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
-              })() : ''}
-              ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
-                <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
-              ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
-            </div>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>` : '';
+      ${resCards}
+    </div>`;
+  }
 
   // Group filtered by project, sort by profession within each
   let cards;
@@ -412,9 +441,9 @@ function renderSpecialistView() {
       ).join('');
 
       return `<details open style="margin-bottom:16px">
-        <summary style="padding:5px 2px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;border-bottom:2px solid var(--border);margin-bottom:10px">
-          <span style="flex:1">${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
-          <span style="font-weight:400;text-transform:none;letter-spacing:0">${proj.reqs.length}</span>
+        <summary style="padding:8px 2px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;user-select:none;border-bottom:2px solid var(--border);margin-bottom:10px">
+          <span style="flex:1;font-size:17px;font-weight:700;color:var(--text)">${proj.cislo ? proj.cislo + ' – ' : ''}${proj.name}</span>
+          <span style="font-size:13px;color:var(--text3);font-weight:400">${proj.reqs.length}</span>
         </summary>
         ${content}
       </details>`;
@@ -557,6 +586,7 @@ let _empCtx = null;
 
 async function initEmployeeView() {
   document.querySelector('.top-sub').textContent = '· Zadanie pre t\xedm';
+  document.title = 'Zadanie pre t\xedm';
   const { data: et } = await sb.from('employee_tasks').select('*').eq('token', taskToken).single();
   if (!et) { renderError('Neplatn\xfd link – zadanie nenájdené.'); return; }
 
