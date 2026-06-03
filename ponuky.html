@@ -173,6 +173,8 @@
         <button class="btn btn-p btn-sm" onclick="openSpecModal()">+ Pridať profesista</button>
         <button id="btnSyncSpec" class="btn btn-sm" onclick="syncSpecProfessions()" style="margin-left:8px">↻ Sync kontakty</button>
       </div>
+      <input id="specSearch" type="search" placeholder="Hľadať profesistov…" oninput="renderSpecialists()"
+        style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg2);color:var(--text);margin-bottom:10px;outline:none">
       <div class="card" id="specList"><div class="empty">Načítavam...</div></div>
     </div>
   </div>
@@ -1029,9 +1031,15 @@ async function doInvite() {
 // ── PROFESISTI ────────────────────────────────────────────────────────────────
 function renderSpecialists() {
   const el = document.getElementById('specList');
+  const q = (document.getElementById('specSearch')?.value || '').toLowerCase().trim();
 
-  const profs = specialists.filter(s => s.profession && s.profession.toLowerCase() !== 'klient');
-  if (!profs.length) { el.innerHTML = '<div class="empty">Žiadni profesisti.</div>'; return; }
+  let profs = specialists.filter(s => s.profession && s.profession.toLowerCase() !== 'klient');
+  if (q) profs = profs.filter(s =>
+    (s.name || '').toLowerCase().includes(q) ||
+    (s.profession || '').toLowerCase().includes(q) ||
+    (s.email || '').toLowerCase().includes(q)
+  );
+  if (!profs.length) { el.innerHTML = `<div class="empty">${q ? 'Žiadne výsledky.' : 'Žiadni profesisti.'}</div>`; return; }
 
   const groups = {};
   profs.forEach(s => {
