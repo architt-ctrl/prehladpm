@@ -570,7 +570,7 @@ function renderRequests() {
             <span style="font-size:12px;color:var(--text2);margin-right:6px">${nSub}/${invs.length}</span>
             <span class="badge ${r.status === 'active' ? 'b-active' : 'b-closed'}">${r.status === 'active' ? 'Aktívny' : 'Uzavretý'}</span>
           </div>
-          <div class="row-expand${openReqs.has(r.id) ? ' on' : ''}" id="rd-${r.id}">${buildReqDetail(r)}</div>
+          <div class="row-expand${openReqs.has(r.id) ? ' on' : ''}" id="rd-${r.id}">${openReqs.has(r.id) ? buildReqDetail(r) : ''}</div>
         </div>`;
       }).join('');
     }).join('');
@@ -674,7 +674,24 @@ function buildReqDetail(r) {
   return info + dateInfoHtml + note + tbl + btns + links;
 }
 
-function toggleReq(id) { document.getElementById('rd-' + id)?.classList.toggle('on'); }
+function openReq(id) {
+  const el = document.getElementById('rd-' + id);
+  if (!el) return;
+  el.classList.add('on');
+  if (!el.innerHTML.trim()) {
+    const r = requests.find(r => r.id === id);
+    if (r) el.innerHTML = buildReqDetail(r);
+  }
+}
+function toggleReq(id) {
+  const el = document.getElementById('rd-' + id);
+  if (!el) return;
+  const opening = el.classList.toggle('on');
+  if (opening && !el.innerHTML.trim()) {
+    const r = requests.find(r => r.id === id);
+    if (r) el.innerHTML = buildReqDetail(r);
+  }
+}
 function statusLabel(s) {
   return {sent:'Odoslané',viewed:'Otvorené',submitted:'Ponuka',selected:'Vybraný',rejected:'Nevybraný'}[s] || s;
 }
@@ -711,7 +728,7 @@ async function selectWinner(e, invId, reqId) {
     });
   }
   await loadAll();
-  document.getElementById('rd-' + reqId)?.classList.add('on');
+  openReq(reqId);
 }
 
 async function cancelWinner(e, invId, reqId) {
@@ -724,7 +741,7 @@ async function cancelWinner(e, invId, reqId) {
     await sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id);
   }
   await loadAll();
-  document.getElementById('rd-' + reqId)?.classList.add('on');
+  openReq(reqId);
 }
 
 async function closeReq(e, id) {
@@ -768,7 +785,7 @@ async function withdrawQuote(e, invId, reqId) {
   showToast('Ponuka stiahnutá', 'ok');
   _loading = false;
   await loadAll();
-  document.getElementById('rd-' + reqId)?.classList.add('on');
+  openReq(reqId);
 }
 
 function copyTxt(t) { navigator.clipboard.writeText(t).catch(() => {}); }
@@ -818,7 +835,7 @@ async function saveCeny() {
   showToast('Ceny uložené ✓', 'ok');
   _loading = false;
   await loadAll();
-  document.getElementById('rd-' + _cenyReqId)?.classList.add('on');
+  openReq(_cenyReqId);
 }
 
 // ── REQUEST MODAL ─────────────────────────────────────────────────────────────
@@ -955,7 +972,7 @@ async function doInvite() {
 
   closeModal('modalInvite');
   await loadAll();
-  document.getElementById('rd-' + inviteReqId)?.classList.add('on');
+  openReq(inviteReqId);
 }
 
 // ── PROFESISTI ────────────────────────────────────────────────────────────────
@@ -1075,7 +1092,7 @@ function openFromUrl() {
   if (!taskId) return;
   const matching = requests.filter(r => String(r.caflou_task_id) === taskId);
   if (!matching.length) return;
-  matching.forEach(r => document.getElementById('rd-' + r.id)?.classList.add('on'));
+  matching.forEach(r => openReq(r.id));
   // Scroll na prvý nájdený dopyt
   const first = document.getElementById('rd-' + matching[0].id);
   if (first) setTimeout(() => first.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
@@ -1140,7 +1157,7 @@ async function saveTaskLink(reqId) {
   showToast(taskId ? 'Úloha napojená ✓' : 'Prepojenie zrušené', 'ok');
   _loading = false;
   await loadAll();
-  document.getElementById('rd-' + reqId)?.classList.add('on');
+  openReq(reqId);
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
