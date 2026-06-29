@@ -2599,8 +2599,8 @@ async function loadCaflouTasks(cislo, caflou_id) {
       }
     } catch(e) {}
     el.innerHTML = buildCaflouTasksHtml(cislo);
-    // Preload notes for ext tasks in background (each will call refreshUlohy when done)
-    all.filter(t => !t.finished && (t.tags||[]).includes('ext'))
+    // Preload notes for all active tasks in background (each will call refreshUlohy when done)
+    all.filter(t => !t.finished)
        .forEach(t => preloadTaskNotes(cislo, t.id));
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
@@ -2843,8 +2843,8 @@ function buildCaflouTasksHtml(cislo) {
           title="Vymazať" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--red);
           display:flex;align-items:center;justify-content:center">✕</button>`;
-    const notesOpen = isExt && taskNotesOpen.has(t.id);
-    const cachedNotes = isExt ? taskNotesCache[t.id] : null;
+    const notesOpen = taskNotesOpen.has(t.id);
+    const cachedNotes = taskNotesCache[t.id];
     const lastNote = Array.isArray(cachedNotes) && cachedNotes.length > 0 && !notesOpen ? cachedNotes[0] : null;
     return `<div style="border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:6px;padding:5px 0 2px 0;font-size:12px">
@@ -2861,10 +2861,10 @@ function buildCaflouTasksHtml(cislo) {
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
-        ${lastNote ? `<span onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">${lastNote.datum}: ${lastNote.text}</span>` : (isExt ? `<span style="flex:1"></span>` : '')}
-        ${isExt ? `<button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>` : ''}
+        ${lastNote ? `<span onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">${lastNote.datum}: ${lastNote.text}</span>` : `<span style="flex:1"></span>`}
+        <button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>
       </div>
-      ${isExt && notesOpen ? `<div onclick="event.stopPropagation()" style="padding:0 0 5px 0">${buildTaskNotesHtml(cislo, t.id)}</div>` : ''}
+      ${notesOpen ? `<div onclick="event.stopPropagation()" style="padding:0 0 5px 0">${buildTaskNotesHtml(cislo, t.id)}</div>` : ''}
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
         <input id="tn-${editKey}" value="${safeName}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
