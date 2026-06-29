@@ -524,3 +524,35 @@ let projectTaskIds = []; // záložné task IDs z URL
 ### caflou.env (gitignored)
 
 Contains `CAFLOU_API_KEY` and `CAFLOU_ACCOUNT_ID`. Never commit this file.
+
+---
+
+## ROZPRACOVANÉ: Caflou výdavok pri schválení ponuky
+
+**Cieľ:** Pri `selectWinner` v `ponuky.html` automaticky:
+1. Priradiť vybraného profesionista k externej úlohe v Caflou (už funguje cez `task_specialists`)
+2. Vytvoriť výdavok (náklad) v Caflou napojený na danú úlohu a dodávateľa (= externistu)
+
+**Plán implementácie (4 kroky):**
+
+**Krok 1 — Zistiť Caflou API endpoint pre výdavky (BLOKUJE OSTATNÉ)**
+- Treba zachytiť network request (F12 → Network) pri manuálnom vytvorení výdavku v Caflou
+- Hľadať `POST` na `/costs`, `/expenses`, `/project-costs` alebo podobné
+- Zaznamenať: URL endpoint, štruktúru payloadu (project_id, task_id, amount, company_id, ...)
+- Caflou firmy/dodávatelia = existujúce záznamy; treba zistiť aj endpoint pre ich zoznam (napr. `/contacts`, `/companies`)
+
+**Krok 2 — Sparovanie externistu s Caflou firmou**
+- Pridať stĺpec `caflou_company_id` (bigint, nullable) do `specialists` tabuľky v Supabase
+- V záložke Profesisti v `ponuky.html` pridať pole na nastavenie Caflou firmy (raz ručne per profesionist)
+- Dropdown načítaný z Caflou kontaktov/firiem API; ak API neexistuje → manuálne zadanie ID
+
+**Krok 3 — Suma výdavku**
+- Zdroj: `quotes.prices` (JSONB `{faza: suma}`) pre vybraného špecialistu
+- Jedna ponuka = jeden stupeň = jedna suma → zobrať hodnotu z `prices` (súčet ak viac fáz)
+
+**Krok 4 — Implementácia v `selectWinner`**
+- Po existujúcej logike (selected/rejected + task_specialists zápis) zavolať novú funkciu
+- `createCaflouExpense(taskId, projectCaflouId, companyId, amount, description)`
+- Fire-and-forget s `.then(null, () => {})` (rovnaký vzor ako ostatné Supabase/Caflou calls)
+
+**Stav:** Čaká na Krok 1 (network inspect od Jozefa)
