@@ -54,7 +54,14 @@ function harmNajskorMoznyStart(priradenie, dnes) {
 // Zoradenie nenaplánovaných priradení podľa priority pred hromadným plánovaním:
 // 1. prioritné (záväzný termín s klientom) pred bežnými
 // 2. medzi prioritnými: skorší termin_klient prv
-// 3. inak: staršie priradenie (created_at) prv
+// 3. inak: kto sa ozval skôr (ozvali_sa_datum, business dátum prvého kontaktu - nie dátum zápisu do systému),
+//    fallback na created_at ak nie je vyplnený
+function harmZoradPodlaOzvani(a, b) {
+  const oa = a.ozvali_sa_datum ? a.ozvali_sa_datum.getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0);
+  const ob = b.ozvali_sa_datum ? b.ozvali_sa_datum.getTime() : (b.created_at ? new Date(b.created_at).getTime() : 0);
+  return oa - ob;
+}
+
 function harmZoradPodlaPriority(nenaplanovane) {
   return [...nenaplanovane].sort((a, b) => {
     if (!!a.prioritny !== !!b.prioritny) return a.prioritny ? -1 : 1;
@@ -63,9 +70,7 @@ function harmZoradPodlaPriority(nenaplanovane) {
       const db = b.termin_klient ? b.termin_klient.getTime() : Infinity;
       if (da !== db) return da - db;
     }
-    const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
-    return ca - cb;
+    return harmZoradPodlaOzvani(a, b);
   });
 }
 
@@ -103,7 +108,7 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
     commited.push({ cislo: a.cislo, poradie: a.poradie, projektant: a.projektant, start_datum: start, koniec_datum: koniec, alokacia_percent: a.alokacia_percent });
   });
 
-  nepripravene.forEach(a => {
+  [...nepripravene].sort(harmZoradPodlaOzvani).forEach(a => {
     vysledky.push(Object.assign({}, a, { navrhovany_start: null, navrhovany_koniec: null }));
   });
 
@@ -137,7 +142,7 @@ function harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     harmPridajTyzdne, harmIntervalyPrekryvaju, harmJeKapacitaVolna, harmNajdiNajskorsiStart,
-    harmNajskorMoznyStart, harmZoradPodlaPriority, harmNaplanujFrontu,
+    harmNajskorMoznyStart, harmZoradPodlaOzvani, harmZoradPodlaPriority, harmNaplanujFrontu,
     harmNavrhniPodkladyDatum, harmNajdiNavrhyPreDopyty,
   };
 }

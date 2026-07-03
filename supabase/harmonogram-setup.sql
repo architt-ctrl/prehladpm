@@ -14,6 +14,7 @@ create table if not exists harmonogram (
   najskor_od date,                              -- manuálny spodný limit štartu (napr. očakávaný dátum vybavenia povolenia/schválenia klientom), relevantné až keď pripravene_pokracovat = true - žiadna fáza sa nereťazí automaticky od konca predchádzajúcej
   prioritny boolean not null default false,     -- záväzný termín s klientom
   termin_klient date,                           -- pevný termín, relevantné len ak prioritny = true
+  ozvali_sa_datum date,                         -- kedy sa klient/projekt predbežne ozval (business dátum, nie dátum zápisu do systému) - poradie medzi čakajúcimi, najmä nepripravenými
   poznamka text,
   created_at timestamptz not null default now()
 );
