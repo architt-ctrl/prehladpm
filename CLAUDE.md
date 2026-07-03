@@ -71,6 +71,12 @@ Same Supabase project as `ponuky.html` (`cfjkomqxzqflotrqxfyl.supabase.co`, anon
 - Display: `buildDennikListHtml(cislo)` shows 3 newest entries; older ones hidden behind "Zobraziť staršie" toggle
 - **Caflou comments API** cannot be used for reading history — filters are ignored server-side, returns 20 items/page across 1000+ pages of bot activity. Supabase is the only reliable cross-device store.
 - One-time history recovery: `recover-dennik.ps1` (in repo) scans all Caflou comment pages and imports `kind=human, commented_type=Project` entries to Supabase.
+- **Priebežná synchronizácia (2026-07-03):** `pridajDennik`/`recover-dennik.ps1` riešia len dashboard→Supabase a jednorazovú historickú obnovu — **kolegove komentáre napísané priamo v Caflou sa predtým do denníka ani do push notifikácií vôbec nedostali** (žiadny live sync neexistoval, nešlo o regresiu). Doplnené: Apps Script `sledujKomentare` (`appscript/Code.gs`) — time-driven trigger, sleduje globálny `GET /api/v1/{account}/comments` (zoradený od najnovšieho), zastaví sa pri už videnom ID (kurzor v `PropertiesService`), filtruje `kind='human' && commented_type='Project' && user_id !== CAFLOU_OWN_USER_ID` (vylúčenie komentárov, ktoré do Caflou zapísal sám dashboard cez `caflouAddComment` — inak by vznikli duplicity) a zapíše nájdené do Supabase `dennik` cez REST (anon key, rovnaká RLS ako pri ostatných dennik zápisoch — funguje aj mimo prihlásenej session, na rozdiel od `specialists`). Zápis do `dennik` automaticky spustí existujúci push webhook, žiadna extra logika netreba.
+  - Prvý beh trigeru len inicializuje kurzor (nezáplavuje denník starými záznamami — tie už doniesol `recover-dennik.ps1`)
+  - `maxPages = 15` (per=100) bezpečnostný strop na beh — pri vysokom objeme "bot" aktivity (automatické systémové komentáre pri každej zmene statusu/výdavku/úlohy) môže byť treba zvýšiť alebo skrátiť interval triggeru, inak sa časť starších komentárov medzi behmi preskočí
+  - **Vyžaduje nastavenie triggeru ručne** v Apps Script editore (Triggers → Add Trigger → `sledujKomentare` → Time-driven), rovnako ako `sledujMaily`
+  - **Vyžaduje doplniť `CAFLOU_ACCOUNT_ID`** v `Code.gs` (zatiaľ placeholder `YOUR_CAFLOU_ACCOUNT_ID`) priamo v Apps Script editore
+  - Predpoklad `CAFLOU_OWN_USER_ID = 50310` (Caflou user, pod ktorým beží API kľúč) — overené pri testovaní Caflou výdavkov (transfer vytvorený cez API mal `user_id: 50310`); ak by sa objavili duplicitné záznamy v denníku, over toto ID
 
 ### Caflou status → fáza mapping (`CAFLOU_STATUS_MAP`)
 
@@ -210,6 +216,7 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 - Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
 - Po každej zmene kódu treba aktualizovať nasadenie (Deploy → Manage → nová verzia)
 - Trigger `sledujMaily` — time-driven, každú hodinu; hľadá `newer_than:1d label:inbox`
+- Trigger `sledujKomentare` — time-driven (nastaviť ručne, odporúčaná každá hodina, prípadne kratšie ak je vysoký objem aktivity) — sleduje nové **ľudské komentáre na projektoch napísané priamo v Caflou** (kolega), zapisuje ich do Supabase `dennik` → tým sa automaticky spustí existujúci push webhook (žiadna extra logika netreba). Detaily nižšie.
 - `oauthScopes` v `appsscript.json` musí obsahovať `https://mail.google.com/`, `drive` (`https://www.googleapis.com/auth/drive`) aj `documents` (`https://www.googleapis.com/auth/documents`) — inak `DriveApp`/`DocumentApp` hádzajú permissions error
 - `doPost` **musí mať try-catch** okolo celého tela — inak nekachnutý exception vráti HTML bez CORS hlavičiek → prehliadač dostane "Failed to fetch"
 - Gemini model: `gemini-2.5-flash` — `volajGemini` aj `analyzovatGemini` používajú tento model. `gemini-2.0-flash` a `gemini-2.0-flash-lite` majú `limit: 0` na free tier (nefungujú)

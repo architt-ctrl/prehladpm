@@ -1,5 +1,9 @@
 var GEMINI_API_KEY = 'YOUR_GEMINI_API_KEY';
 var CAFLOU_API_KEY = 'YOUR_CAFLOU_API_KEY';
+var CAFLOU_ACCOUNT_ID = 'YOUR_CAFLOU_ACCOUNT_ID';
+var CAFLOU_OWN_USER_ID = 50310; // Caflou user_id API kľúča - komentáre s týmto user_id napísal dashboard (caflouAddComment), nie kolega priamo v Caflou
+var SUPABASE_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
 var SHEET_MAILY = 'Maily – prehľad';
 var SHEET_PROJEKTY = 'Projekty';
 
@@ -51,6 +55,93 @@ function nacitajProjekty() {
   return projekty;
 }
 
+// ── SLEDOVANIE KOMENTÁROV Z CAFLOU → DENNÍK (+ automaticky spustí push cez existujúci webhook) ──
+// Trigger: time-driven, treba nastaviť ručne v Apps Script editore (Triggers → Add Trigger → sledujKomentare → Time-driven → Hour timer)
+function sledujKomentare() {
+  var props = PropertiesService.getScriptProperties();
+  var lastIdRaw = props.getProperty('posledny_komentar_id');
+  var lastId = parseInt(lastIdRaw || '0', 10);
+  var isFirstRun = !lastIdRaw;
+
+  var projMap = isFirstRun ? {} : nacitajProjektyCaflou();
+  var novyLastId = lastId;
+  var entries = [];
+  var page = 1;
+  var maxPages = 15; // bezpečnostný strop - pri veľkom objeme "bot" aktivity medzi behmi treba prípadne zvýšiť alebo skrátiť interval triggeru
+
+  outerLoop:
+  while (page <= maxPages) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/comments?page=' + page + '&per=100', {
+      headers: { 'Authorization': 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    if (resp.getResponseCode() >= 300) { Logger.log('Caflou comments chyba: ' + resp.getContentText()); break; }
+    var d = JSON.parse(resp.getContentText());
+    var results = d.results || [];
+    if (!results.length) break;
+    for (var i = 0; i < results.length; i++) {
+      var c = results[i];
+      if (c.id > novyLastId) novyLastId = c.id;
+      if (!isFirstRun && c.id <= lastId) break outerLoop;
+      if (!isFirstRun && c.kind === 'human' && c.commented_type === 'Project' && c.text && c.user_id !== CAFLOU_OWN_USER_ID) {
+        var cislo = projMap[c.commented_id];
+        if (cislo) {
+          entries.push({ cislo: cislo, datum: formatDatumSk(c.created_at), text: c.text, created_at: c.created_at });
+        }
+      }
+    }
+    if (!d.next_page) break;
+    page++;
+  }
+
+  if (entries.length) {
+    zapisDoSupabaseDennik(entries);
+    Logger.log('Nových záznamov do denníka z Caflou: ' + entries.length);
+  }
+  // Prvý beh len inicializuje kurzor na aktuálne najnovší komentár - historické záznamy už doniesol recover-dennik.ps1, netreba ich importovať znova
+  props.setProperty('posledny_komentar_id', String(novyLastId));
+}
+
+function nacitajProjektyCaflou() {
+  var map = {};
+  var page = 1;
+  while (true) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/projects?per=100&page=' + page, {
+      headers: { 'Authorization': 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    var d = JSON.parse(resp.getContentText());
+    (d.results || []).forEach(function(p) {
+      if (!p.trash && !p.template && p.order_number) map[p.id] = p.order_number;
+    });
+    if (!d.next_page) break;
+    page++;
+  }
+  return map;
+}
+
+function formatDatumSk(iso) {
+  var dt = new Date(iso);
+  return dt.getDate() + '.' + (dt.getMonth() + 1) + '.' + dt.getFullYear();
+}
+
+function zapisDoSupabaseDennik(entries) {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/dennik', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Prefer': 'return=minimal'
+    },
+    payload: JSON.stringify(entries),
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() >= 300) {
+    Logger.log('Chyba zápisu do Supabase dennik: ' + resp.getContentText());
+  }
+}
+
 // ── GEMINI ANALÝZA ────────────────────────────────────────────────────────
 function analyzovatGemini(predmet, odosielatel, telo, projekty) {
   var projektList = projekty.map(function(p) {
@@ -70,23 +161,22 @@ function analyzovatGemini(predmet, odosielatel, telo, projekty) {
     '"priorita":"high / medium / low"}\n\n' +
     'Predmet: ' + predmet + '\nOd: ' + odosielatel + '\nTelo: ' + telo;
 
+  var token = ScriptApp.getOAuthToken();
+  var endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
   for (var pokus = 0; pokus < 3; pokus++) {
-    var response = UrlFetchApp.fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GEMINI_API_KEY,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        payload: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1 }
-        }),
-        muteHttpExceptions: true
-      }
-    );
+    var response = UrlFetchApp.fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      payload: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1 }
+      }),
+      muteHttpExceptions: true
+    });
     var code = response.getResponseCode();
     if (code === 503 || code === 429) {
-      Logger.log('Preťažený, čakám 30s...');
-      Utilities.sleep(30000);
+      Logger.log('Gemini preťažený, čakám 5s...');
+      Utilities.sleep(5000);
       continue;
     }
     var result = JSON.parse(response.getContentText());
