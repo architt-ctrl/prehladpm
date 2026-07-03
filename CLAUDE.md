@@ -308,7 +308,7 @@ Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci pro
 
 **Rozsah:** len interný tím (architekti/projektanti), nie externí profesisti — tí majú vlastnú kapacitu/firmu, riešia sa cez `ponuky.html`. Prepojenie na externistov je len cez `podklady_datum` (pozri nižšie).
 
-**Dátový model (`supabase/harmonogram-setup.sql`, tabuľka `harmonogram`, treba spustiť ručne):**
+**Dátový model (`supabase/harmonogram-setup.sql`, tabuľka `harmonogram` — vytvorená v Supabase 2026-07-03):**
 ```
 { cislo, faza_kod (SZ|DSP/PS|RP|UP|Studia|Inziniering — rovnaký kód ako ponuky.html requests.phases),
   podpodfaza (viď nižšie — príprava pre profesie|koordinácia s profesiami|dopracovanie dokumentácie, null pre Studia/Inziniering),
@@ -342,7 +342,13 @@ Studia a Inžiniering podpodfázy nemajú (`podpodfaza = null`).
 
 **Prepojenie na Caflou úlohy (Jozef, rozhodnuté, zatiaľ neimplementované):** každý riadok harmonogramu sa má naviazať na konkrétnu Caflou úlohu (`caflou_task_id`, pole pripravené v schéme) — existujúcu, alebo sa má vytvoriť nová. Projektant tak uvidí svoju prácu bežne v Caflou, nie len v samostatnom harmonograme. Dátum úlohy (`end_time`) by sa mal držať v súlade s `navrhovany_koniec`/`koniec_datum` (rovnaký vzor ako `bulkSetDeadline`). **Dôvod, prečo sa napriek tomu nesynchronizuje aktuálna záťaž tímu automaticky z Caflou úloh:** Caflou úlohy nemajú štruktúrovaný odhad trvania/alokácie per fáza — len priradenie + termín. Aktuálnu záťaž (čo tím robí PRÁVE TERAZ) treba na začiatku ručne zapísať do `harmonogram` (rovnako ako čakajúce projekty), inak by algoritmus považoval každého za voľného od dneška.
 
-**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), skutočné napojenie na Supabase (zatiaľ len in-memory funkcie), prepojenie `caflou_task_id` (vytváranie/synchronizácia úloh v Caflou), prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje), jednorazové ručné zadanie aktuálnej záťaže tímu pred prvým použitím.
+**Napojenie na Supabase (`harmonogram-data.js`, HOTOVO 2026-07-03):** dátová vrstva nad `harmonogram-logic.js` — rovnaký dual export (module.exports aj `<script>` global, v prehliadači očakáva funkcie logiky na `window`). Kľúčové funkcie:
+- `harmFetchAll(sb)` — načíta celú tabuľku, konvertuje stringové dátumy na `Date`, dopočíta `koniec_datum` zo `start_datum + trvanie_tyzdne` (tabuľka koniec neukladá)
+- `harmSpustiPlanovanie(sb, {dnes, maxPercent})` — kompletný beh: fetch → `harmNaplanujFrontu` nad nenaplánovanými (`start_datum IS NULL`) → zapíše `start_datum` novonaplánovaným → `harmNajdiNavrhyPreDopyty` nad `requests` súvisiacich projektov. Vracia `{vysledky, pocetZapisanych, navrhyPodklady}`
+- Návrhy `podklady_datum` sa LEN vracajú, do `requests` sa nezapisujú (rozhodnuté — čaká na UI so schvaľovaním)
+- Overené živým testom proti Supabase (insert → plánovanie → kontrola zápisu → cleanup); PostgREST bulk insert vyžaduje rovnaké kľúče vo všetkých objektoch
+
+**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), prepojenie `caflou_task_id` (vytváranie/synchronizácia úloh v Caflou), prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje), jednorazové ručné zadanie aktuálnej záťaže tímu pred prvým použitím.
 
 ### ponuky.html
 
