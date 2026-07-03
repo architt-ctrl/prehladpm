@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Harmonogram</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg:#f5f3ef; --bg2:#fff; --bg3:#f0ede8;
+      --border:#e4dfd8; --border2:#c8bfb5;
+      --text:#2c2825; --text2:#6b6460; --text3:#9e9590;
+      --green:#1e7a4a; --grn-bg:#f0faf5; --grn-bd:#b8e6cc;
+      --blue:#1a5fa0; --blu-bg:#f0f6fd; --blu-bd:#b8d4f0;
+      --orange:#c96a1a; --ora-bg:#fdf6f0; --ora-bd:#f5d9be;
+      --red:#c0392b; --red-bg:#fdf2f1; --red-bd:#f5c6c2;
+      --sans:'DM Sans',system-ui,sans-serif;
+      --r:10px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{-webkit-font-smoothing:antialiased}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh}
+
+    .module-nav{background:var(--text);display:flex;padding:0 12px;overflow-x:auto;scrollbar-width:none}
+    .module-nav::-webkit-scrollbar{display:none}
+    .mnav-a{color:rgba(245,243,239,.45);text-decoration:none;padding:9px 10px;font-size:12px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent}
+    .mnav-a.cur,.mnav-a:hover{color:#f5f3ef}
+    .mnav-a.cur{border-bottom-color:rgba(245,243,239,.55)}
+
+    .page-hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;height:52px;gap:10px;position:sticky;top:0;z-index:50}
+    .page-hdr h1{font-size:16px;font-weight:600;flex:1}
+
+    .main{max-width:980px;margin:0 auto;padding:20px 16px}
+
+    #loginWrap{max-width:380px;margin:60px auto;padding:0 16px}
+    .login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:28px}
+    .login-card h2{font-size:18px;margin-bottom:6px}
+    .login-card p{color:var(--text2);font-size:13px;margin-bottom:20px}
+
+    .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+    .card+.card{margin-top:12px}
+    .sec-title{font-size:14px;font-weight:600;margin:20px 0 8px}
+    .sec-title:first-child{margin-top:0}
+
+    .badge{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:500;white-space:nowrap}
+    .b-faza{background:var(--blu-bg);color:var(--blue);border:1px solid var(--blu-bd)}
+    .b-pod{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+    .b-prio{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+    .b-ready{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .b-wait{background:var(--ora-bg);color:var(--orange);border:1px solid var(--ora-bd)}
+
+    .hrow{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+    .hrow:last-child{border-bottom:none}
+    .hrow .grow{flex:1;min-width:160px}
+    .hrow .nm{font-weight:500}
+    .hrow .sub{font-size:12px;color:var(--text2);margin-top:1px}
+    .hrow .dates{font-size:12px;color:var(--text2);white-space:nowrap}
+    .ibtn{background:none;border:none;cursor:pointer;font-size:14px;padding:3px 6px;color:var(--text3);border-radius:5px}
+    .ibtn:hover{background:var(--bg3);color:var(--text)}
+
+    .proj-hdr{padding:9px 14px;font-size:13px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
+
+    /* Timeline */
+    .tl-wrap{overflow-x:auto;padding:8px 14px 14px}
+    .tl-table{border-collapse:collapse}
+    .tl-table td,.tl-table th{padding:0}
+    .tl-name{font-size:12px;font-weight:500;padding-right:10px!important;white-space:nowrap;text-align:left}
+    .tl-cell{width:20px;height:20px;min-width:20px;border:1px solid var(--bg2);border-radius:3px;background:var(--bg3)}
+    .tl-cell.l1{background:#cde9d8}
+    .tl-cell.l2{background:#63b98a}
+    .tl-cell.l3{background:var(--green)}
+    .tl-cell.over{background:var(--red)}
+    .tl-mon{font-size:10px;color:var(--text3);text-align:left;font-weight:500;padding-bottom:3px!important;white-space:nowrap}
+
+    .frow{margin-bottom:14px}
+    .frow label{display:block;font-size:12px;color:var(--text2);font-weight:500;margin-bottom:5px}
+    .finput{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 11px;font-size:14px;color:var(--text);font-family:var(--sans);outline:none}
+    .finput:focus{border-color:var(--blue);background:var(--bg2)}
+    textarea.finput{resize:vertical;min-height:56px}
+    .frow-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:480px){.frow-2{grid-template-columns:1fr}}
+    .chk-lbl{display:flex;align-items:center;gap:6px;font-size:13px;padding:6px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:7px;cursor:pointer;user-select:none}
+    .chk-lbl:has(input:checked){background:var(--blu-bg);border-color:var(--blu-bd);color:var(--blue)}
+
+    .btn{display:inline-flex;align-items:center;gap:5px;padding:8px 14px;border-radius:7px;border:none;font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer}
+    .btn-p{background:var(--text);color:#f5f3ef}
+    .btn-p:hover{background:#1a1614}
+    .btn-g{background:transparent;color:var(--text2);border:1px solid var(--border)}
+    .btn-g:hover{background:var(--bg3)}
+    .btn-grn{background:var(--green);color:#fff}
+    .btn-sm{padding:5px 10px;font-size:12px}
+    .btn-row{display:flex;gap:8px;flex-wrap:wrap}
+
+    .overlay{position:fixed;inset:0;background:rgba(44,40,37,.45);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:32px 12px;overflow-y:auto}
+    .modal{background:var(--bg2);border-radius:var(--r);padding:22px;width:100%;max-width:540px}
+    .modal h3{font-size:16px;margin-bottom:18px}
+
+    .alert{padding:10px 13px;border-radius:7px;font-size:13px;margin-bottom:12px}
+    .alert-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .alert-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+
+    .suggest-box{position:absolute;z-index:200;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:7px;box-shadow:0 4px 16px rgba(0,0,0,.1);margin-top:2px;max-height:220px;overflow-y:auto}
+    .suggest-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px}
+    .suggest-item:last-child{border-bottom:none}
+    .suggest-item:hover{background:var(--bg3)}
+
+    .hidden{display:none!important}
+    .empty{padding:24px 16px;color:var(--text2);font-size:13px;text-align:center}
+    .toast{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:14px;font-weight:500;z-index:9999;white-space:nowrap}
+    .toast-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .toast-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+  </style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<nav class="module-nav">
+  <a href="index.html" class="mnav-a">Projekty</a>
+  <a href="ponuky.html" class="mnav-a">Ponuky profesií</a>
+  <a href="suhrn.html" class="mnav-a">Správy</a>
+  <a href="harmonogram.html" class="mnav-a cur">Harmonogram</a>
+</nav>
+
+<div id="authLoading" style="text-align:center;padding:60px 16px;color:var(--text2);font-size:13px">Načítavam…</div>
+
+<!-- LOGIN -->
+<div id="loginWrap" class="hidden">
+  <div class="login-card">
+    <h2>Harmonogram</h2>
+    <p>Prihláste sa pomocou e-mailovej adresy.</p>
+    <div class="frow">
+      <label>E-mail</label>
+      <input class="finput" type="email" id="loginEmail" placeholder="vas@email.com">
+    </div>
+    <div id="loginMsg"></div>
+    <button class="btn btn-p" style="width:100%;justify-content:center" onclick="sendMagicLink()">Poslať prihlasovací link</button>
+  </div>
+</div>
+
+<!-- ADMIN -->
+<div id="adminWrap" class="hidden">
+  <div class="page-hdr">
+    <h1>Harmonogram</h1>
+    <span style="font-size:12px;color:var(--text3)" id="navEmail"></span>
+    <button class="btn btn-g btn-sm" onclick="sb.auth.signOut()">Odhlásiť</button>
+  </div>
+  <div class="main">
+    <div class="btn-row" style="margin-bottom:16px">
+      <button class="btn btn-p btn-sm" onclick="openFazaModal()">+ Pridať fázu</button>
+      <button class="btn btn-grn btn-sm" id="btnPlan" onclick="naplanovat()">⚡ Naplánovať čakajúce</button>
+    </div>
+
+    <div class="sec-title">Vyťaženie tímu (najbližších 26 týždňov)</div>
+    <div class="card"><div class="tl-wrap" id="timeline"><div class="empty">Načítavam…</div></div></div>
+
+    <div class="sec-title">Naplánované fázy</div>
+    <div class="card" id="planList"><div class="empty">Načítavam…</div></div>
+
+    <div class="sec-title">Čakajúce fázy</div>
+    <div class="card" id="waitList"><div class="empty">Načítavam…</div></div>
+  </div>
+</div>
+
+<!-- MODAL: fáza -->
+<div class="overlay hidden" id="modalFaza">
+<div class="modal">
+  <h3 id="mFTitle">Nová fáza</h3>
+  <div class="frow" style="position:relative">
+    <label>Projekt</label>
+    <input class="finput" id="mFSearch" placeholder="Hľadaj podľa názvu alebo čísla..." autocomplete="off" oninput="searchProjects(this.value)">
+    <div id="mFSuggest"></div>
+  </div>
+  <div class="frow-2">
+    <div class="frow"><label>Číslo projektu</label><input class="finput" id="mFCislo" placeholder="24-021"></div>
+    <div class="frow"><label>Názov (len info)</label><input class="finput" id="mFNazov" placeholder="BD Nitra"></div>
+  </div>
+  <div class="frow-2">
+    <div class="frow">
+      <label>Fáza</label>
+      <select class="finput" id="mFFaza" onchange="syncPodpodfazaVisibility()">
+        <option value="Studia">Štúdia</option>
+        <option value="SZ">Stavebný zámer</option>
+        <option value="DSP/PS">Projekt stavby</option>
+        <option value="RP">Realizačný projekt</option>
+        <option value="UP">Územný plán</option>
+        <option value="Inziniering">Inžiniering</option>
+      </select>
+    </div>
+    <div class="frow" id="mFPodWrap">
+      <label>Podpodfáza</label>
+      <select class="finput" id="mFPod">
+        <option value="">—</option>
+        <option value="príprava pre profesie">príprava pre profesie</option>
+        <option value="koordinácia s profesiami">koordinácia s profesiami</option>
+        <option value="dopracovanie dokumentácie">dopracovanie dokumentácie</option>
+      </select>
+    </div>
+  </div>
+  <div class="frow-2">
+    <div class="frow">
+      <label>Projektant</label>
+      <select class="finput" id="mFProjektant"></select>
+    </div>
+    <div class="frow"><label>Poradie v projekte</label><input class="finput" type="number" id="mFPoradie" value="1" min="1"></div>
+  </div>
+  <div class="frow-2">
+    <div class="frow"><label>Trvanie (týždne)</label><input class="finput" type="number" id="mFTrvanie" step="0.5" min="0.5" placeholder="2"></div>
+    <div class="frow"><label>Alokácia %</label><input class="finput" type="number" id="mFAlokacia" value="100" min="1" max="100"></div>
+  </div>
+  <div class="frow-2">
+    <div class="frow"><label>Štart (ručne — napr. aktuálna práca)</label><input class="finput" type="date" id="mFStart"></div>
+    <div class="frow"><label>Najskôr od</label><input class="finput" type="date" id="mFNajskor"></div>
+  </div>
+  <div class="frow" style="display:flex;gap:8px;flex-wrap:wrap">
+    <label class="chk-lbl"><input type="checkbox" id="mFReady"> pripravené pokračovať</label>
+    <label class="chk-lbl"><input type="checkbox" id="mFPrio" onchange="document.getElementById('mFTerminWrap').style.display=this.checked?'':'none'"> prioritný (záväzný termín)</label>
+  </div>
+  <div class="frow-2">
+    <div class="frow" id="mFTerminWrap" style="display:none"><label>Termín s klientom</label><input class="finput" type="date" id="mFTermin"></div>
+    <div class="frow"><label>Ozvali sa (dátum)</label><input class="finput" type="date" id="mFOzvali"></div>
+  </div>
+  <div class="frow"><label>Poznámka</label><textarea class="finput" id="mFPozn"></textarea></div>
+  <div class="btn-row" style="justify-content:flex-end">
+    <button class="btn btn-g" onclick="closeFazaModal()">Zrušiť</button>
+    <button class="btn btn-p" onclick="saveFaza()">Uložiť</button>
+  </div>
+</div>
+</div>
+
+<!-- MODAL: výsledok plánovania -->
+<div class="overlay hidden" id="modalPlan">
+<div class="modal">
+  <h3>Výsledok plánovania</h3>
+  <div id="mPlanBody"></div>
+  <div class="btn-row" style="justify-content:flex-end;margin-top:14px">
+    <button class="btn btn-p" onclick="document.getElementById('modalPlan').classList.add('hidden')">OK</button>
+  </div>
+</div>
+</div>
+
+<script src="harmonogram-logic.js"></script>
+<script src="harmonogram-data.js"></script>
+<script>
+const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
+
+// Interný tím — rovnaké mená ako CAFLOU_USERS v index.html
+const HARM_PROJEKTANTI = ['Alexandra','Tomáš','Lenka','Miroslava','Jozef','Ivan','Soňa','Andrea','Erik','Veronika','Lucia'];
+const FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stav. zámer', 'DSP/PS':'Projekt stavby', 'RP':'Real. projekt', 'UP':'Územný plán', 'Inziniering':'Inžiniering' };
+const POD_SKRATKA = { 'príprava pre profesie':'príprava', 'koordinácia s profesiami':'koordinácia', 'dopracovanie dokumentácie':'dopracovanie' };
+
+let rows = [];          // logic-tvar riadky (Date objekty, koniec_datum dopočítaný) z harmRowToLogic
+let rawById = {};       // id -> surový DB riadok (pre edit formulár)
+let caflouProjects = [];
+let caflouNames = {};   // cislo -> názov projektu (len na zobrazenie)
+let editFazaId = null;
+
+// ── AUTH (rovnaký vzor ako ponuky.html) ──────────────────────────────────────
+let _initialLoadDone = false;
+(async function() {
+  try {
+    const raw = localStorage.getItem('sb-cfjkomqxzqflotrqxfyl-auth-token');
+    const s = raw ? JSON.parse(raw) : null;
+    if (s?.user?.email) {
+      document.getElementById('authLoading').classList.add('hidden');
+      document.getElementById('adminWrap').classList.remove('hidden');
+      document.getElementById('navEmail').textContent = s.user.email;
+      _initialLoadDone = true;
+      await loadAll();
+      loadCaflouProjects();
+    }
+  } catch(e) {}
+})();
+
+sb.auth.onAuthStateChange(async (event, session) => {
+  document.getElementById('authLoading').classList.add('hidden');
+  if (event === 'SIGNED_OUT') {
+    _initialLoadDone = false;
+    document.getElementById('loginWrap').classList.remove('hidden');
+    document.getElementById('adminWrap').classList.add('hidden');
+    return;
+  }
+  if (session) {
+    document.getElementById('loginWrap').classList.add('hidden');
+    document.getElementById('adminWrap').classList.remove('hidden');
+    document.getElementById('navEmail').textContent = session.user.email;
+    if (!_initialLoadDone) {
+      _initialLoadDone = true;
+      await loadAll();
+      loadCaflouProjects();
+    }
+  } else if (!_initialLoadDone) {
+    document.getElementById('loginWrap').classList.remove('hidden');
+    document.getElementById('adminWrap').classList.add('hidden');
+  }
+});
+
+async function sendMagicLink() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: 'https://architt-ctrl.github.io/prehladpm/harmonogram.html' } });
+  const el = document.getElementById('loginMsg');
+  if (error) el.innerHTML = `<div class="alert alert-err">${error.message}</div>`;
+  else el.innerHTML = `<div class="alert alert-ok">Link odoslaný na <strong>${email}</strong>. Skontrolujte e-mail.</div>`;
+}
+
+// ── DATA ──────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  const { data, error } = await sb.from('harmonogram').select('*').order('created_at');
+  if (error) {
+    document.getElementById('planList').innerHTML = `<div class="empty">Chyba: ${error.message}</div>`;
+    return;
+  }
+  rawById = {};
+  (data || []).forEach(r => { rawById[r.id] = r; });
+  rows = (data || []).map(harmRowToLogic);
+  renderAll();
+}
+
+function fmtD(d) {
+  if (!d) return '—';
+  return `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function projLabel(cislo) {
+  const n = caflouNames[cislo];
+  return n ? `${cislo} – ${n}` : cislo;
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function renderAll() {
+  renderTimeline();
+  renderPlanned();
+  renderWaiting();
+}
+
+function fazaBadges(r) {
+  let h = `<span class="badge b-faza">${esc(FAZA_LABEL[r.faza_kod] || r.faza_kod)}</span>`;
+  if (r.podpodfaza) h += ` <span class="badge b-pod">${esc(POD_SKRATKA[r.podpodfaza] || r.podpodfaza)}</span>`;
+  if (r.prioritny) h += ` <span class="badge b-prio">termín ${fmtD(r.termin_klient)}</span>`;
+  return h;
+}
+
+function renderTimeline() {
+  const el = document.getElementById('timeline');
+  const planned = rows.filter(r => r.start_datum);
+  if (!planned.length) { el.innerHTML = '<div class="empty">Zatiaľ nič naplánované</div>'; return; }
+
+  // pondelok aktuálneho týždňa
+  const dnes = new Date(); dnes.setHours(0,0,0,0);
+  const monday = new Date(dnes.getTime() - ((dnes.getDay() + 6) % 7) * 86400000);
+  const WEEKS = 26;
+
+  const mena = HARM_PROJEKTANTI.filter(m => planned.some(r => r.projektant === m))
+    .concat([...new Set(planned.map(r => r.projektant))].filter(m => !HARM_PROJEKTANTI.includes(m)));
+
+  // hlavička s mesiacmi
+  let monRow = '<tr><th></th>';
+  let lastMon = -1;
+  for (let w = 0; w < WEEKS; w++) {
+    const ws = new Date(monday.getTime() + w * 7 * 86400000);
+    if (ws.getMonth() !== lastMon) {
+      lastMon = ws.getMonth();
+      monRow += `<th class="tl-mon">${ws.toLocaleDateString('sk', {month:'short'})}</th>`;
+    } else monRow += '<th></th>';
+  }
+  monRow += '</tr>';
+
+  const body = mena.map(m => {
+    let cells = '';
+    for (let w = 0; w < WEEKS; w++) {
+      const ws = new Date(monday.getTime() + w * 7 * 86400000);
+      const we = new Date(ws.getTime() + 7 * 86400000);
+      const hits = planned.filter(r => r.projektant === m && r.start_datum < we && ws < r.koniec_datum);
+      const load = hits.reduce((s, r) => s + r.alokacia_percent, 0);
+      const cls = load > 100 ? 'over' : load >= 100 ? 'l3' : load >= 50 ? 'l2' : load > 0 ? 'l1' : '';
+      const tip = hits.length ? `${fmtD(ws)} • ${load}%\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
+      cells += `<td><div class="tl-cell ${cls}" title="${esc(tip)}"></div></td>`;
+    }
+    return `<tr><td class="tl-name">${esc(m)}</td>${cells}</tr>`;
+  }).join('');
+
+  el.innerHTML = `<table class="tl-table">${monRow}${body}</table>`;
+}
+
+function rowActions(r) {
+  let h = `<button class="ibtn" title="Upraviť" onclick="openFazaModal('${r.id}')">✎</button>`;
+  if (r.start_datum) h += `<button class="ibtn" title="Zrušiť naplánovanie" onclick="zrusStart('${r.id}')">↺</button>`;
+  h += `<button class="ibtn" title="Vymazať" onclick="deleteFaza('${r.id}')">✕</button>`;
+  return h;
+}
+
+function renderPlanned() {
+  const el = document.getElementById('planList');
+  const planned = rows.filter(r => r.start_datum).sort((a, b) => a.start_datum - b.start_datum);
+  if (!planned.length) { el.innerHTML = '<div class="empty">Zatiaľ nič naplánované</div>'; return; }
+
+  const byProjektant = {};
+  planned.forEach(r => { (byProjektant[r.projektant] = byProjektant[r.projektant] || []).push(r); });
+
+  el.innerHTML = Object.keys(byProjektant).sort().map(m => {
+    const volnyOd = new Date(Math.max(...byProjektant[m].map(r => r.koniec_datum.getTime())));
+    return `<div class="proj-hdr">${esc(m)} <span style="font-weight:400;color:var(--text2)">· voľná plná kapacita od ${fmtD(volnyOd)}</span></div>` +
+      byProjektant[m].map(r => `
+        <div class="hrow">
+          <div class="grow">
+            <div class="nm">${esc(projLabel(r.cislo))}</div>
+            <div class="sub">${fazaBadges(r)}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
+          </div>
+          <span class="dates">${fmtD(r.start_datum)} → ${fmtD(r.koniec_datum)} · ${r.alokacia_percent}%</span>
+          ${rowActions(r)}
+        </div>`).join('');
+  }).join('');
+}
+
+function renderWaiting() {
+  const el = document.getElementById('waitList');
+  const waiting = rows.filter(r => !r.start_datum);
+  if (!waiting.length) { el.innerHTML = '<div class="empty">Žiadne čakajúce fázy</div>'; return; }
+
+  const ready = harmZoradPodlaPriority(waiting.filter(r => r.pripravene_pokracovat));
+  const notReady = waiting.filter(r => !r.pripravene_pokracovat).sort(harmZoradPodlaOzvani);
+
+  const renderRow = r => `
+    <div class="hrow">
+      <div class="grow">
+        <div class="nm">${esc(projLabel(r.cislo))}</div>
+        <div class="sub">${fazaBadges(r)} · ${esc(r.projektant)} · ${r.trvanie_tyzdne} týž. · ${r.alokacia_percent}%${r.najskor_od ? ' · najskôr od ' + fmtD(r.najskor_od) : ''}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
+      </div>
+      <button class="btn btn-g btn-sm" onclick="toggleReady('${r.id}', ${r.pripravene_pokracovat ? 'false' : 'true'})">${r.pripravene_pokracovat ? '⏸ pozastaviť' : '▶ pripravené'}</button>
+      ${rowActions(r)}
+    </div>`;
+
+  let h = '';
+  if (ready.length) h += `<div class="proj-hdr"><span class="badge b-ready">pripravené na naplánovanie</span></div>` + ready.map(renderRow).join('');
+  if (notReady.length) h += `<div class="proj-hdr"><span class="badge b-wait">čaká sa (klient / povolenie)</span></div>` + notReady.map(renderRow).join('');
+  el.innerHTML = h;
+}
+
+// ── AKCIE ─────────────────────────────────────────────────────────────────────
+async function naplanovat() {
+  const btn = document.getElementById('btnPlan');
+  btn.disabled = true; btn.textContent = '⚡ Plánujem…';
+  try {
+    const { vysledky, pocetZapisanych, navrhyPodklady } = await harmSpustiPlanovanie(sb);
+    await loadAll();
+
+    const naplanovane = vysledky.filter(v => v.navrhovany_start);
+    const nenasloSa = vysledky.filter(v => v.pripravene_pokracovat && !v.navrhovany_start);
+    let h = '';
+    if (naplanovane.length) {
+      h += `<div class="alert alert-ok">Naplánovaných fáz: ${pocetZapisanych}</div>` +
+        naplanovane.map(v => `<div style="font-size:13px;padding:4px 0">${esc(projLabel(v.cislo))} · ${esc(FAZA_LABEL[v.faza_kod] || v.faza_kod)}${v.podpodfaza ? ' ('+esc(POD_SKRATKA[v.podpodfaza])+')' : ''} · ${esc(v.projektant)} → <strong>${fmtD(v.navrhovany_start)} – ${fmtD(v.navrhovany_koniec)}</strong></div>`).join('');
+    } else {
+      h += `<div class="alert alert-ok">Nebolo čo plánovať — žiadne pripravené čakajúce fázy.</div>`;
+    }
+    if (nenasloSa.length) {
+      h += `<div class="alert alert-err" style="margin-top:10px">Nenašlo sa voľné okno (do 2 rokov): ${nenasloSa.map(v => esc(v.cislo)).join(', ')}</div>`;
+    }
+    if (navrhyPodklady.length) {
+      h += `<div style="font-size:13px;font-weight:600;margin:14px 0 6px">Návrhy „Kedy dodáme podklady" pre dopyty (zapíš ručne v Ponukách):</div>` +
+        navrhyPodklady.map(n => `<div style="font-size:13px;padding:3px 0">${esc(projLabel(n.cislo))} · ${esc(n.faza_kod)} → <strong>${fmtD(n.navrhovany_podklady_datum)}</strong></div>`).join('');
+    }
+    document.getElementById('mPlanBody').innerHTML = h;
+    document.getElementById('modalPlan').classList.remove('hidden');
+  } catch(e) {
+    showToast('Chyba plánovania: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ Naplánovať čakajúce';
+  }
+}
+
+async function zrusStart(id) {
+  if (!confirm('Zrušiť naplánovanie? Fáza sa vráti medzi čakajúce.')) return;
+  const { error } = await sb.from('harmonogram').update({ start_datum: null }).eq('id', id);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  showToast('Naplánovanie zrušené');
+  loadAll();
+}
+
+async function toggleReady(id, val) {
+  const { error } = await sb.from('harmonogram').update({ pripravene_pokracovat: val }).eq('id', id);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  loadAll();
+}
+
+async function deleteFaza(id) {
+  const r = rawById[id];
+  if (!confirm(`Vymazať fázu ${r ? r.cislo + ' ' + r.faza_kod : ''}?`)) return;
+  const { error } = await sb.from('harmonogram').delete().eq('id', id);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  showToast('Fáza vymazaná');
+  loadAll();
+}
+
+// ── MODAL fáza ────────────────────────────────────────────────────────────────
+function syncPodpodfazaVisibility() {
+  const faza = document.getElementById('mFFaza').value;
+  const relevant = faza === 'SZ' || faza === 'DSP/PS' || faza === 'RP';
+  document.getElementById('mFPodWrap').style.display = relevant ? '' : 'none';
+  if (!relevant) document.getElementById('mFPod').value = '';
+}
+
+function openFazaModal(id) {
+  editFazaId = id || null;
+  const r = id ? rawById[id] : null;
+  document.getElementById('mFTitle').textContent = r ? 'Upraviť fázu' : 'Nová fáza';
+  document.getElementById('mFSearch').value = '';
+  document.getElementById('mFSuggest').innerHTML = '';
+  document.getElementById('mFCislo').value = r ? r.cislo : '';
+  document.getElementById('mFNazov').value = r ? (caflouNames[r.cislo] || '') : '';
+  document.getElementById('mFFaza').value = r ? r.faza_kod : 'Studia';
+  document.getElementById('mFPod').value = r ? (r.podpodfaza || '') : '';
+  document.getElementById('mFProjektant').innerHTML = HARM_PROJEKTANTI.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  document.getElementById('mFProjektant').value = r ? r.projektant : 'Jozef';
+  document.getElementById('mFPoradie').value = r ? r.poradie : 1;
+  document.getElementById('mFTrvanie').value = r ? r.trvanie_tyzdne : '';
+  document.getElementById('mFAlokacia').value = r ? r.alokacia_percent : 100;
+  document.getElementById('mFStart').value = r ? (r.start_datum || '') : '';
+  document.getElementById('mFNajskor').value = r ? (r.najskor_od || '') : '';
+  document.getElementById('mFReady').checked = r ? !!r.pripravene_pokracovat : false;
+  document.getElementById('mFPrio').checked = r ? !!r.prioritny : false;
+  document.getElementById('mFTerminWrap').style.display = (r && r.prioritny) ? '' : 'none';
+  document.getElementById('mFTermin').value = r ? (r.termin_klient || '') : '';
+  document.getElementById('mFOzvali').value = r ? (r.ozvali_sa_datum || '') : '';
+  document.getElementById('mFPozn').value = r ? (r.poznamka || '') : '';
+  syncPodpodfazaVisibility();
+  if (r) document.getElementById('mFPod').value = r.podpodfaza || '';
+  document.getElementById('modalFaza').classList.remove('hidden');
+}
+
+function closeFazaModal() {
+  document.getElementById('modalFaza').classList.add('hidden');
+  editFazaId = null;
+}
+
+async function saveFaza() {
+  const cislo = document.getElementById('mFCislo').value.trim();
+  const trvanie = parseFloat(document.getElementById('mFTrvanie').value);
+  if (!cislo) { showToast('Chýba číslo projektu', 'err'); return; }
+  if (!trvanie || trvanie <= 0) { showToast('Chýba trvanie', 'err'); return; }
+
+  const rec = {
+    cislo,
+    faza_kod: document.getElementById('mFFaza').value,
+    podpodfaza: document.getElementById('mFPod').value || null,
+    projektant: document.getElementById('mFProjektant').value,
+    poradie: parseInt(document.getElementById('mFPoradie').value) || 1,
+    trvanie_tyzdne: trvanie,
+    alokacia_percent: Math.min(100, Math.max(1, parseInt(document.getElementById('mFAlokacia').value) || 100)),
+    start_datum: document.getElementById('mFStart').value || null,
+    najskor_od: document.getElementById('mFNajskor').value || null,
+    pripravene_pokracovat: document.getElementById('mFReady').checked,
+    prioritny: document.getElementById('mFPrio').checked,
+    termin_klient: document.getElementById('mFTermin').value || null,
+    ozvali_sa_datum: document.getElementById('mFOzvali').value || null,
+    poznamka: document.getElementById('mFPozn').value.trim() || null,
+  };
+
+  const q = editFazaId
+    ? sb.from('harmonogram').update(rec).eq('id', editFazaId)
+    : sb.from('harmonogram').insert(rec);
+  const { error } = await q;
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  showToast(editFazaId ? 'Fáza upravená' : 'Fáza pridaná');
+  closeFazaModal();
+  loadAll();
+}
+
+// ── CAFLOU AUTOCOMPLETE (rovnaký vzor ako ponuky.html) ────────────────────────
+async function loadCaflouProjects() {
+  if (!cfg.caflou_key || !cfg.caflou_id || caflouProjects.length) return;
+  try {
+    let all = [], page = 1;
+    while (true) {
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/projects?per=100&page=${page}`, {
+        headers: { 'Authorization': `Bearer ${cfg.caflou_key}` }
+      });
+      const d = await r.json();
+      const items = (d.results || []).filter(p => !p.trash && !p.template);
+      all = all.concat(items);
+      if (items.length < 100) break;
+      page++;
+    }
+    caflouProjects = all;
+    caflouNames = {};
+    all.forEach(p => { if (p.order_number) caflouNames[p.order_number] = p.name || ''; });
+    renderAll(); // doplň názvy projektov do už vykreslených riadkov
+  } catch(e) {}
+}
+
+function searchProjects(q) {
+  const box = document.getElementById('mFSuggest');
+  if (!q.trim() || !caflouProjects.length) { box.innerHTML = ''; return; }
+  const ql = q.toLowerCase();
+  const matches = caflouProjects.filter(p =>
+    (p.name || '').toLowerCase().includes(ql) || (p.order_number || '').toLowerCase().includes(ql)
+  ).slice(0, 8);
+  if (!matches.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="suggest-box">' +
+    matches.map(p => `<div class="suggest-item" onclick="selectProject('${(p.order_number||'').replace(/'/g,"\\'")}','${(p.name||'').replace(/'/g,"\\'")}')">
+      <span style="color:var(--text3);margin-right:8px">${p.order_number || ''}</span>${p.name || ''}
+    </div>`).join('') + '</div>';
+}
+
+function selectProject(cislo, name) {
+  document.getElementById('mFCislo').value = cislo;
+  document.getElementById('mFNazov').value = name;
+  document.getElementById('mFSearch').value = (cislo ? cislo + ' – ' : '') + name;
+  document.getElementById('mFSuggest').innerHTML = '';
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type === 'err' ? 'toast-err' : 'toast-ok');
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+</script>
+</body>
+</html>

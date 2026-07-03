@@ -348,7 +348,15 @@ Studia a Inžiniering podpodfázy nemajú (`podpodfaza = null`).
 - Návrhy `podklady_datum` sa LEN vracajú, do `requests` sa nezapisujú (rozhodnuté — čaká na UI so schvaľovaním)
 - Overené živým testom proti Supabase (insert → plánovanie → kontrola zápisu → cleanup); PostgREST bulk insert vyžaduje rovnaké kľúče vo všetkých objektoch
 
-**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), prepojenie `caflou_task_id` (vytváranie/synchronizácia úloh v Caflou), prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje), jednorazové ručné zadanie aktuálnej záťaže tímu pred prvým použitím.
+**UI (`harmonogram.html`, HOTOVO 2026-07-03):** samostatný modul (rozhodnuté — nie rozšírenie index.html), rovnaký vzor ako `ponuky.html`: DM Sans CSS, `module-nav` (linky doplnené do index/ponuky/suhrn), optimistic auth + magic link, Caflou project autocomplete cez `cfg` (`pmCfg3`), `showToast`. Načítava `harmonogram-logic.js` + `harmonogram-data.js` ako `<script>` (v tomto poradí — data vrstva očakáva funkcie logiky na `window`).
+- **Vyťaženie tímu** — týždenná mapa 26 týždňov: bunka = projektant × týždeň, farba podľa súčtu alokácií (0 / <50 / <100 / 100 / >100 červená), tooltip s rozpisom fáz. `HARM_PROJEKTANTI` — hardcoded mená z `CAFLOU_USERS`
+- **Naplánované fázy** — zoskupené per projektant, s "voľná plná kapacita od" (max koniec), ✎ edit / ↺ zrušiť naplánovanie (`start_datum = null`) / ✕ vymazať
+- **Čakajúce fázy** — dve skupiny: pripravené (zoradené `harmZoradPodlaPriority`) a nepripravené (`harmZoradPodlaOzvani`); tlačidlo ▶/⏸ prepína `pripravene_pokracovat`
+- **⚡ Naplánovať čakajúce** — volá `harmSpustiPlanovanie(sb)`, výsledok v modáli: naplánované fázy s termínmi, fázy bez voľného okna, návrhy `podklady_datum` (len na ručný zápis v Ponukách)
+- **Modal fázy** — Caflou search, fáza/podpodfáza (podpodfáza viditeľná len pre SZ/DSP-PS/RP), projektant, trvanie (step 0.5), alokácia, **ručný štart** (na jednorazové zadanie aktuálnej záťaže tímu), najskôr od, príznaky, termín s klientom (viditeľný len ak prioritný), ozvali sa, poznámka
+- Názvy projektov sa doťahujú z Caflou (`caflouNames`), bez Caflou credentials modul funguje tiež (zobrazí len čísla)
+
+**Nedorobené / ďalší krok:** prepojenie `caflou_task_id` (vytváranie/synchronizácia úloh v Caflou), prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje), jednorazové ručné zadanie aktuálnej záťaže tímu pred prvým použitím (cez ručný štart v modáli).
 
 ### ponuky.html
 
