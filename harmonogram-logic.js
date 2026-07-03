@@ -38,6 +38,95 @@ function harmNajdiNajskorsiStart(existujuce, projektant, najskorMozny, trvanieTy
   return null;
 }
 
+// ── Reálny priebeh pri preťažení ─────────────────────────────────────────────
+// Zadané trvanie platí, keď má práca k dispozícii plnú zadanú alokáciu. Keď má človek v niektorý
+// deň naraz viac práce než 100 %, práce sa reálne spomalia a ich koniec sa posunie za nominálny.
+// Pravidlo delenia kapacity (Jozef): práca s pevným termínom (prioritny) sa robí prednostne naplno;
+// ostatné si delia zvyšok pomerne. Ak majú termín všetky prekryté práce (alebo žiadna), delia sa
+// pomerne všetky. Automatický plánovač preťaženie sám nevytvára - vzniká len ručne zadanými štartmi.
+function harmDenKey(projektant, datum) {
+  return `${projektant}|${datum.getFullYear()}-${datum.getMonth() + 1}-${datum.getDate()}`;
+}
+
+// priradenia: [{projektant, start_datum: Date, trvanie_tyzdne, alokacia_percent, prioritny, ...}]
+// Vracia { priradenia: kópie s realny_koniec (Date) a spomalene (bool),
+//          usage: Map(harmDenKey -> reálne odpracované % v daný deň) }.
+// Simulácia po dňoch: každá práca potrebuje trvanie*7*alokácia "percento-dní" úsilia; denne dostane
+// najviac svoju alokáciu, pri preťažení menej (podľa pravidla vyššie), takže dobieha dlhšie.
+function harmSimulujRealne(priradenia) {
+  const kopie = priradenia
+    .filter(p => p.start_datum && (p.trvanie_tyzdne > 0 || (p.koniec_datum && p.koniec_datum > p.start_datum)))
+    .map(p => Object.assign({}, p, {
+      realny_koniec: null,
+      spomalene: false,
+      // trvanie sa dá odvodiť aj z koniec_datum (záznamy bez explicitného trvania)
+      _trv: p.trvanie_tyzdne > 0 ? p.trvanie_tyzdne : (p.koniec_datum - p.start_datum) / HARM_TYZDEN_MS,
+    }));
+  const usage = new Map();
+  const perProjektant = {};
+  kopie.forEach(k => { (perProjektant[k.projektant] = perProjektant[k.projektant] || []).push(k); });
+
+  Object.keys(perProjektant).forEach(meno => {
+    const list = perProjektant[meno];
+    list.forEach(k => { k._zostava = k._trv * 7 * k.alokacia_percent; });
+    let den = new Date(Math.min(...list.map(k => k.start_datum.getTime())));
+    const limit = den.getTime() + 5 * 365 * HARM_DEN_MS; // poistka proti nekonečnej slučke
+    while (list.some(k => !k.realny_koniec) && den.getTime() < limit) {
+      const aktivne = list.filter(k => !k.realny_koniec && k.start_datum <= den);
+      if (aktivne.length) {
+        const prio = aktivne.filter(k => k.prioritny);
+        const bezne = aktivne.filter(k => !k.prioritny);
+        const pridelene = new Map();
+        const rozdel = (skupina, kap) => {
+          const sum = skupina.reduce((s, k) => s + k.alokacia_percent, 0);
+          if (!sum || kap <= 0) { skupina.forEach(k => pridelene.set(k, 0)); return 0; }
+          const f = Math.min(1, kap / sum);
+          skupina.forEach(k => pridelene.set(k, k.alokacia_percent * f));
+          return Math.min(kap, sum);
+        };
+        const prePrio = rozdel(prio, 100);
+        rozdel(bezne, 100 - prePrio);
+        let sucet = 0;
+        aktivne.forEach(k => {
+          const g = pridelene.get(k) || 0;
+          if (g < k.alokacia_percent - 1e-9) k.spomalene = true;
+          k._zostava -= g;
+          sucet += g;
+          if (k._zostava <= 1e-6) k.realny_koniec = new Date(den.getTime() + HARM_DEN_MS);
+        });
+        if (sucet > 0) usage.set(harmDenKey(meno, den), sucet);
+      }
+      den = new Date(den.getTime() + HARM_DEN_MS);
+    }
+    list.forEach(k => { if (!k.realny_koniec) k.realny_koniec = new Date(limit); delete k._zostava; delete k._trv; });
+  });
+  return { priradenia: kopie, usage };
+}
+
+// Denná verzia kontroly kapacity - namiesto intervalových súčtov číta usage mapu zo simulácie,
+// takže rešpektuje aj nerovnomerne rozloženú (spomalenú) prácu.
+function harmJeKapacitaVolnaDni(usage, projektant, start, koniec, potrebnaAlokacia, maxPercent) {
+  maxPercent = maxPercent || 100;
+  for (let t = start.getTime(); t < koniec.getTime(); t += HARM_DEN_MS) {
+    const obsadene = usage.get(harmDenKey(projektant, new Date(t))) || 0;
+    if (obsadene + potrebnaAlokacia > maxPercent + 1e-9) return false;
+  }
+  return true;
+}
+
+function harmNajdiNajskorsiStartDni(usage, projektant, najskorMozny, trvanieTyzdne, alokaciaPercent, maxPercent) {
+  let kandidat = new Date(najskorMozny);
+  const limit = harmPridajTyzdne(kandidat, 104);
+  while (kandidat < limit) {
+    const koniec = harmPridajTyzdne(kandidat, trvanieTyzdne);
+    if (harmJeKapacitaVolnaDni(usage, projektant, kandidat, koniec, alokaciaPercent, maxPercent)) {
+      return kandidat;
+    }
+    kandidat = new Date(kandidat.getTime() + HARM_DEN_MS);
+  }
+  return null;
+}
+
 // Najskorší možný štart danej fázy = dnes, prípadne posunutý na najskor_od (manuálny spodný limit).
 // Žiadna fáza sa nereťazí automaticky podľa konca predchádzajúcej - medzi takmer všetkými fázami je reálne
 // nejaký vonkajší medzikrok (klient, povolenie/inžiniering...), ktorý nevie žiadny algoritmus odhadnúť.
@@ -103,8 +192,13 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
   const nepripravene = nenaplanovane.filter(a => !a.pripravene_pokracovat);
 
   const zoradene = harmZoradPodlaPriority(pripravene);
-  const commited = existujuceNaplanovane.map(e => Object.assign({}, e));
   const vysledky = [];
+
+  // Reálny priebeh existujúcich naplánovaných prác: pri ručne zadaných prekryvoch nad 100 %
+  // sa práce spomalia a ich konce posunú - nové plánovanie aj reťazenie blokov musí vychádzať
+  // z týchto reálnych koncov, nie z nominálnych (start + trvanie).
+  const sim = harmSimulujRealne(existujuceNaplanovane);
+  const usage = sim.usage;
 
   // Reťazenie blokov VNÚTRI jednej fázy: bloky (podpodfázy) na seba nadväzujú prirodzene bez
   // vonkajšieho medzikroku, na rozdiel od reťazenia medzi fázami (to ostáva zakázané - viď
@@ -112,8 +206,8 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
   // môže začať najskôr po konci VŠETKÝCH predchádzajúcich blokov tej istej fázy.
   const blokKey = b => `${b.cislo}|${b.faza_kod}|${b.poradie}`;
   const konceBlokov = new Map();
-  existujuceNaplanovane.forEach(e => {
-    if (e.podpodfaza && e.koniec_datum) konceBlokov.set(blokKey(e), e.koniec_datum);
+  sim.priradenia.forEach(e => {
+    if (e.podpodfaza && e.realny_koniec) konceBlokov.set(blokKey(e), e.realny_koniec);
   });
   const vsetkyBloky = nenaplanovane.concat(existujuceNaplanovane).filter(b => b.podpodfaza);
 
@@ -136,12 +230,18 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
       }
     }
 
-    const start = harmNajdiNajskorsiStart(commited, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
+    const start = harmNajdiNajskorsiStartDni(usage, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
     const koniec = start ? harmPridajTyzdne(start, a.trvanie_tyzdne) : null;
     const vysledok = Object.assign({}, a, { navrhovany_start: start, navrhovany_koniec: koniec });
     vysledky.push(vysledok);
-    if (a.podpodfaza && koniec) konceBlokov.set(blokKey(a), koniec);
-    commited.push({ cislo: a.cislo, faza_kod: a.faza_kod, podpodfaza: a.podpodfaza, poradie: a.poradie, projektant: a.projektant, start_datum: start, koniec_datum: koniec, alokacia_percent: a.alokacia_percent });
+    if (start) {
+      // commit do usage mapy - nová práca sa zmestila popod strop, takže beží nominálne a nikoho nespomalí
+      for (let t = start.getTime(); t < koniec.getTime(); t += HARM_DEN_MS) {
+        const k = harmDenKey(a.projektant, new Date(t));
+        usage.set(k, (usage.get(k) || 0) + a.alokacia_percent);
+      }
+      if (a.podpodfaza) konceBlokov.set(blokKey(a), koniec);
+    }
   });
 
   [...nepripravene].sort(harmZoradPodlaOzvani).forEach(a => {
@@ -181,6 +281,7 @@ function harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     harmPridajTyzdne, harmIntervalyPrekryvaju, harmJeKapacitaVolna, harmNajdiNajskorsiStart,
+    harmDenKey, harmSimulujRealne, harmJeKapacitaVolnaDni, harmNajdiNajskorsiStartDni,
     harmNajskorMoznyStart, harmZoradPodlaOzvani, harmPoradieTiebreak, harmZoradPodlaPriority, harmNaplanujFrontu,
     harmNavrhniPodkladyDatum, harmNajdiNavrhyPreDopyty,
   };

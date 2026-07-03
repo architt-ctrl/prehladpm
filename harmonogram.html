@@ -287,6 +287,7 @@ const POD_SKRATKA = { 'príprava pre profesie':'príprava', 'koordinácia s prof
 
 let rows = [];          // logic-tvar riadky (Date objekty, koniec_datum dopočítaný) z harmRowToLogic
 let rawById = {};       // id -> surový DB riadok (pre edit formulár)
+let simById = {};       // id -> {realny_koniec, spomalene} zo simulácie reálneho priebehu (prekryvy nad 100 %)
 let caflouProjects = [];
 let caflouNames = {};   // cislo -> názov projektu (len na zobrazenie)
 let editFazaId = null;
@@ -349,6 +350,10 @@ async function loadAll() {
   rawById = {};
   (data || []).forEach(r => { rawById[r.id] = r; });
   rows = (data || []).map(harmRowToLogic);
+  // reálny priebeh: pri ručných prekryvoch nad 100 % sa práce spomalia a konce posunú
+  simById = {};
+  harmSimulujRealne(rows.filter(r => r.start_datum)).priradenia
+    .forEach(p => { simById[p.id] = { realny_koniec: p.realny_koniec, spomalene: p.spomalene }; });
   renderAll();
 }
 
@@ -410,10 +415,13 @@ function renderTimeline() {
     for (let w = 0; w < WEEKS; w++) {
       const ws = new Date(monday.getTime() + w * 7 * 86400000);
       const we = new Date(ws.getTime() + 7 * 86400000);
-      const hits = planned.filter(r => r.projektant === m && r.start_datum < we && ws < r.koniec_datum);
+      const hits = planned.filter(r => {
+        const kon = (simById[r.id] && simById[r.id].realny_koniec) || r.koniec_datum;
+        return r.projektant === m && r.start_datum < we && ws < kon;
+      });
       const load = hits.reduce((s, r) => s + r.alokacia_percent, 0);
       const cls = load > 100 ? 'over' : load >= 100 ? 'l3' : load >= 50 ? 'l2' : load > 0 ? 'l1' : '';
-      const tip = hits.length ? `${fmtD(ws)} • ${load}%\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
+      const tip = hits.length ? `${fmtD(ws)} • ${load}%${load > 100 ? ' — preťažené, práce sa spomaľujú' : ''}\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
       cells += `<td><div class="tl-cell ${cls}" title="${esc(tip)}"></div></td>`;
     }
     return `<tr><td class="tl-name">${esc(m)}</td>${cells}</tr>`;
@@ -437,18 +445,25 @@ function renderPlanned() {
   const byProjektant = {};
   planned.forEach(r => { (byProjektant[r.projektant] = byProjektant[r.projektant] || []).push(r); });
 
+  const realKoniec = r => (simById[r.id] && simById[r.id].realny_koniec) || r.koniec_datum;
   el.innerHTML = Object.keys(byProjektant).sort().map(m => {
-    const volnyOd = new Date(Math.max(...byProjektant[m].map(r => r.koniec_datum.getTime())));
+    const volnyOd = new Date(Math.max(...byProjektant[m].map(r => realKoniec(r).getTime())));
     return `<div class="proj-hdr">${esc(m)} <span style="font-weight:400;color:var(--text2)">· voľná plná kapacita od ${fmtD(volnyOd)}</span></div>` +
-      byProjektant[m].map(r => `
+      byProjektant[m].map(r => {
+        const spomalene = simById[r.id] && simById[r.id].spomalene;
+        const datumy = spomalene
+          ? `${fmtD(r.start_datum)} → <span style="text-decoration:line-through;opacity:.6">${fmtD(r.koniec_datum)}</span> <strong style="color:var(--orange)">reálne ${fmtD(realKoniec(r))}</strong>`
+          : `${fmtD(r.start_datum)} → ${fmtD(r.koniec_datum)}`;
+        return `
         <div class="hrow">
           <div class="grow">
             <div class="nm">${esc(projLabel(r.cislo))}</div>
-            <div class="sub">${fazaBadges(r)}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
+            <div class="sub">${fazaBadges(r)}${spomalene ? ' <span class="badge b-wait">spomalené — súbeh prác</span>' : ''}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
           </div>
-          <span class="dates">${fmtD(r.start_datum)} → ${fmtD(r.koniec_datum)} · ${r.alokacia_percent}%</span>
+          <span class="dates">${datumy} · ${r.alokacia_percent}%</span>
           ${rowActions(r)}
-        </div>`).join('');
+        </div>`;
+      }).join('');
   }).join('');
 }
 

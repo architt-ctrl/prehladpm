@@ -94,11 +94,19 @@
     const vysledky = harmPlan(vsetky, dnes, maxPercent);
     const pocetZapisanych = await harmZapisNaplanovane(sb, vysledky);
 
+    // Reálne konce existujúcich prác (pri ručných prekryvoch nad 100 % sa práca spomalí a koniec
+    // posunie) - návrhy podkladov pre dopyty musia vychádzať z nich, nie z nominálneho konca.
+    const sim = logic.harmSimulujRealne(vsetky.filter(r => r.start_datum));
+    const realneKonce = new Map(sim.priradenia.map(p => [p.id, p.realny_koniec]));
+
     const naplanovaneMapa = new Map(vysledky.map(v => [v.id, v]));
     const kompletne = vsetky.map(r => {
       const v = naplanovaneMapa.get(r.id);
       if (v && v.navrhovany_start) {
         return Object.assign({}, r, { start_datum: v.navrhovany_start, koniec_datum: v.navrhovany_koniec });
+      }
+      if (r.start_datum && realneKonce.get(r.id)) {
+        return Object.assign({}, r, { koniec_datum: realneKonce.get(r.id) });
       }
       return r;
     });
