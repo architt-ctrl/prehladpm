@@ -74,18 +74,25 @@ function harmSimulujRealne(priradenia) {
     while (list.some(k => !k.realny_koniec) && den.getTime() < limit) {
       const aktivne = list.filter(k => !k.realny_koniec && k.start_datum <= den);
       if (aktivne.length) {
-        const prio = aktivne.filter(k => k.prioritny);
-        const bezne = aktivne.filter(k => !k.prioritny);
+        // Poradie nárokov na denných 100 %:
+        // 1. práce s termínom (prioritny) pred bežnými
+        // 2. v rámci skupiny: kto začal skôr, drží svoje tempo; neskorší berú len zvyšok
+        //    ("voľná kapacita sa vždy využije - práca začne hneď a dokončí sa neskôr")
+        // 3. rovnaký deň štartu: delia sa pomerne ("robia sa naraz")
         const pridelene = new Map();
-        const rozdel = (skupina, kap) => {
+        let kapacita = 100;
+        const rozdel = skupina => {
           const sum = skupina.reduce((s, k) => s + k.alokacia_percent, 0);
-          if (!sum || kap <= 0) { skupina.forEach(k => pridelene.set(k, 0)); return 0; }
-          const f = Math.min(1, kap / sum);
+          if (!sum || kapacita <= 0) { skupina.forEach(k => pridelene.set(k, 0)); return; }
+          const f = Math.min(1, kapacita / sum);
           skupina.forEach(k => pridelene.set(k, k.alokacia_percent * f));
-          return Math.min(kap, sum);
+          kapacita -= Math.min(kapacita, sum);
         };
-        const prePrio = rozdel(prio, 100);
-        rozdel(bezne, 100 - prePrio);
+        [aktivne.filter(k => k.prioritny), aktivne.filter(k => !k.prioritny)].forEach(trieda => {
+          const podlaStartu = {};
+          trieda.forEach(k => { (podlaStartu[k.start_datum.getTime()] = podlaStartu[k.start_datum.getTime()] || []).push(k); });
+          Object.keys(podlaStartu).map(Number).sort((x, y) => x - y).forEach(t => rozdel(podlaStartu[t]));
+        });
         let sucet = 0;
         aktivne.forEach(k => {
           const g = pridelene.get(k) || 0;
@@ -200,6 +207,43 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
   const sim = harmSimulujRealne(existujuceNaplanovane);
   const usage = sim.usage;
 
+  // Dni, v ktorých už niekto štartuje (existujúce aj novo naplánované) - nová práca v ten deň
+  // u toho istého človeka nezačne (viď komentár pri naplanujDoVolnychKapacit).
+  const startyPodlaDna = new Set();
+  existujuceNaplanovane.forEach(e => {
+    if (e.start_datum) startyPodlaDna.add(harmDenKey(e.projektant, e.start_datum));
+  });
+
+  // Nájde prvý deň s voľnou kapacitou a odsimuluje dopĺňanie práce do voľných zvyškov dní.
+  // Vracia {start, koniec, spomalene}; commitne spotrebu priamo do usage mapy.
+  function naplanujDoVolnychKapacit(a, najskorMozny) {
+    const limitStart = harmPridajTyzdne(najskorMozny, 104);
+    let d = new Date(najskorMozny);
+    while (d < limitStart) {
+      const volne = maxPercent - (usage.get(harmDenKey(a.projektant, d)) || 0);
+      if (volne > 1e-9 && !startyPodlaDna.has(harmDenKey(a.projektant, d))) break;
+      d = new Date(d.getTime() + HARM_DEN_MS);
+    }
+    if (d >= limitStart) return { start: null, koniec: null, spomalene: false };
+
+    const start = d;
+    let zostava = a.trvanie_tyzdne * 7 * a.alokacia_percent;
+    const limitKoniec = start.getTime() + 5 * 365 * HARM_DEN_MS;
+    const spotreba = []; // [kľúč, koľko] - commit až keď je isté, že sa práca stihne celá
+    while (zostava > 1e-6 && d.getTime() < limitKoniec) {
+      const kluc = harmDenKey(a.projektant, d);
+      const volne = maxPercent - (usage.get(kluc) || 0);
+      const g = Math.min(a.alokacia_percent, Math.max(0, volne), zostava);
+      if (g > 1e-9) { spotreba.push([kluc, g]); zostava -= g; }
+      d = new Date(d.getTime() + HARM_DEN_MS);
+    }
+    if (zostava > 1e-6) return { start: null, koniec: null, spomalene: false };
+    spotreba.forEach(([kluc, g]) => usage.set(kluc, (usage.get(kluc) || 0) + g));
+    const koniec = d;
+    const nominal = harmPridajTyzdne(start, a.trvanie_tyzdne);
+    return { start, koniec, spomalene: koniec.getTime() > nominal.getTime() + 1 };
+  }
+
   // Reťazenie blokov VNÚTRI jednej fázy: bloky (podpodfázy) na seba nadväzujú prirodzene bez
   // vonkajšieho medzikroku, na rozdiel od reťazenia medzi fázami (to ostáva zakázané - viď
   // harmNajskorMoznyStart). Koniec každého bloku s koncom sa eviduje tu; blok s poradie > 1
@@ -230,17 +274,22 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
       }
     }
 
-    const start = harmNajdiNajskorsiStartDni(usage, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
-    const koniec = start ? harmPridajTyzdne(start, a.trvanie_tyzdne) : null;
-    const vysledok = Object.assign({}, a, { navrhovany_start: start, navrhovany_koniec: koniec });
+    // Voľná kapacita sa vždy využije: práca začne v prvý deň, keď je u projektanta čokoľvek voľné,
+    // denne si berie min(vlastná alokácia, voľný zvyšok) a dokončí sa, keď vyčerpá svoje úsilie -
+    // pri čiastočnom súbehu teda reálne trvá dlhšie než nominál (start + trvanie). Nikdy pritom
+    // nespomalí skôr začaté práce (berie len zvyšok). Deň, keď štartuje iná práca toho istého
+    // človeka, sa preskočí - pravidlo "rovnaký deň štartu = pomerné delenie" by inak spomalilo
+    // existujúcu prácu a plán by nesedel s prepočtom pri ďalšom načítaní.
+    const plan = naplanujDoVolnychKapacit(a, najskor);
+    const vysledok = Object.assign({}, a, {
+      navrhovany_start: plan.start,
+      navrhovany_koniec: plan.koniec,
+      navrhovane_spomalene: plan.spomalene,
+    });
     vysledky.push(vysledok);
-    if (start) {
-      // commit do usage mapy - nová práca sa zmestila popod strop, takže beží nominálne a nikoho nespomalí
-      for (let t = start.getTime(); t < koniec.getTime(); t += HARM_DEN_MS) {
-        const k = harmDenKey(a.projektant, new Date(t));
-        usage.set(k, (usage.get(k) || 0) + a.alokacia_percent);
-      }
-      if (a.podpodfaza) konceBlokov.set(blokKey(a), koniec);
+    if (plan.start) {
+      startyPodlaDna.add(harmDenKey(a.projektant, plan.start));
+      if (a.podpodfaza) konceBlokov.set(blokKey(a), plan.koniec);
     }
   });
 

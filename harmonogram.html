@@ -421,7 +421,7 @@ function renderTimeline() {
       });
       const load = hits.reduce((s, r) => s + r.alokacia_percent, 0);
       const cls = load > 100 ? 'over' : load >= 100 ? 'l3' : load >= 50 ? 'l2' : load > 0 ? 'l1' : '';
-      const tip = hits.length ? `${fmtD(ws)} • ${load}%${load > 100 ? ' — preťažené, práce sa spomaľujú' : ''}\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
+      const tip = hits.length ? `${fmtD(ws)} • ${Math.min(load, 100)}%${load > 100 ? ' — kapacita plná, časť prác postupuje pomalšie' : ''}\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
       cells += `<td><div class="tl-cell ${cls}" title="${esc(tip)}"></div></td>`;
     }
     return `<tr><td class="tl-name">${esc(m)}</td>${cells}</tr>`;
@@ -505,7 +505,7 @@ async function naplanovat() {
     let h = '';
     if (naplanovane.length) {
       h += `<div class="alert alert-ok">Naplánovaných fáz: ${pocetZapisanych}</div>` +
-        naplanovane.map(v => `<div style="font-size:13px;padding:4px 0">${esc(projLabel(v.cislo))} · ${esc(FAZA_LABEL[v.faza_kod] || v.faza_kod)}${v.podpodfaza ? ' ('+esc(POD_SKRATKA[v.podpodfaza])+')' : ''} · ${esc(v.projektant)} → <strong>${fmtD(v.navrhovany_start)} – ${fmtD(v.navrhovany_koniec)}</strong></div>`).join('');
+        naplanovane.map(v => `<div style="font-size:13px;padding:4px 0">${esc(projLabel(v.cislo))} · ${esc(FAZA_LABEL[v.faza_kod] || v.faza_kod)}${v.podpodfaza ? ' ('+esc(POD_SKRATKA[v.podpodfaza])+')' : ''} · ${esc(v.projektant)} → <strong>${fmtD(v.navrhovany_start)} – ${fmtD(v.navrhovany_koniec)}</strong>${v.navrhovane_spomalene ? ' <span style="color:var(--orange)">(beží popri inom, preto dlhšie)</span>' : ''}</div>`).join('');
     } else {
       h += `<div class="alert alert-ok">Nebolo čo plánovať — žiadne pripravené čakajúce fázy.</div>`;
     }
