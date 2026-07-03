@@ -895,15 +895,23 @@ async function selectWinner(e, invId, reqId) {
   }
   if (req?.caflou_task_id && spec) {
     const qt = quotes.find(q => q.invitation_id === invId);
-    const amount = qt?.prices ? Object.values(qt.prices).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
-    if (amount > 0) {
+    const phaseEntries = Object.entries(qt?.prices || {}).filter(([, v]) => Number(v) > 0);
+    if (phaseEntries.length) {
       if (spec.caflou_company_id) {
-        createCaflouExpense(req.caflou_task_id, spec.caflou_company_id, amount, `${spec.name} – ${req.profession || ''}`)
-          .then(transferId => {
-            if (!transferId) return;
-            showToast(`Výdavok ${amount.toFixed(2)} € zapísaný do Caflou`, 'ok');
-            if (qt) { sb.from('quotes').update({ caflou_transfer_id: transferId }).eq('id', qt.id).then(null, () => {}); }
-          });
+        (async () => {
+          const transferIds = {};
+          for (const [phase, amount] of phaseEntries) {
+            const transferId = await createCaflouExpense(req.caflou_task_id, spec.caflou_company_id, Number(amount), `${spec.name} – ${req.profession || ''} – ${phase}`);
+            if (transferId) transferIds[phase] = transferId;
+          }
+          const okCount = Object.keys(transferIds).length;
+          if (okCount) {
+            showToast(`Zapísaných výdavkov do Caflou: ${okCount}/${phaseEntries.length}`, okCount === phaseEntries.length ? 'ok' : 'err');
+            if (qt) { sb.from('quotes').update({ caflou_transfer_ids: transferIds }).eq('id', qt.id).then(null, () => {}); }
+          } else {
+            showToast('Zápis výdavkov do Caflou zlyhal', 'err');
+          }
+        })();
       } else {
         showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v záložke Profesisti', 'err');
       }

@@ -588,11 +588,12 @@ fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
 **Krok 3 — HOTOVO (2026-07-03):**
 - Suma = `Object.values(qt.prices).reduce((a,b) => a + (Number(b)||0), 0)` — súčet všetkých fáz v `quotes.prices` pre víťaznú invitation
 
-**Krok 4 — HOTOVO (2026-07-03):**
+**Krok 4 — HOTOVO (2026-07-03, opravené 2026-07-03):**
 - `createCaflouExpense(taskId, companyId, amount, description)` v `ponuky.html` — najprv `GET /tasks/{taskId}` na zistenie `project_id`, potom `POST /transfers` s `{transfer: {kind:'expense', project_id, task_id, company_id, name, value, currency:'EUR', date: dnes}}`
 - Volané v `selectWinner` po existujúcej task_specialists/closed logike — **nie úplne fire-and-forget ako pôvodne plánované**: beží asynchrónne bez blokovania UI, ale výsledok sa hlási cez toast (úspech aj neúspech), keďže ide o finančné dáta a tichý fail by bol zavádzajúci
 - Ak profesista nemá `caflou_company_id`, výdavok sa nevytvorí a zobrazí sa upozornenie namiesto tichého no-op
-- **ID výdavku sa ukladá** (2026-07-03): `createCaflouExpense` vracia `id` vytvoreného transferu, `selectWinner` ho zapíše do `quotes.caflou_transfer_id` (nový stĺpec, SQL `supabase/caflou-transfer-id-setup.sql` — treba spustiť ručne). **Zámerne sa zatiaľ nepoužíva na nič ďalšie** — `cancelWinner` transfer nezmaže, len máme ID pripravené na budúce použitie. Rozhodnuté s Jozefom: túto medzeru zatiaľ neriešiť.
+- **OPRAVA:** pôvodne sa sčítali všetky fázy z `quotes.prices` do jedného výdavku — nesprávne, Jozef to zachytil pri prvom teste. Teraz sa **pre každú fázu v `prices` vytvára samostatný `transfer`** (`description` obsahuje aj názov fázy), volané sekvenčne v cykle
+- **ID výdavkov sa ukladá**: `quotes.caflou_transfer_ids` (jsonb mapa `{faza: transfer_id}`, nie `caflou_transfer_id` bigint ako pôvodne — ten je teraz nepoužívaný pozostatok). SQL `supabase/caflou-transfer-id-setup.sql` — treba spustiť ručne. **Zámerne sa zatiaľ nepoužíva na nič ďalšie** — `cancelWinner` transfer nezmaže, len máme ID pripravené na budúce použitie. Rozhodnuté s Jozefom: túto medzeru zatiaľ neriešiť.
 
 **Stav:** Kroky 1-4 implementované, čaká sa na živé otestovanie celého flow (výber víťaza → vznik výdavku v Caflou) od Jozefa.
 
