@@ -179,7 +179,7 @@
   <div class="frow-2">
     <div class="frow">
       <label>Fáza</label>
-      <select class="finput" id="mFFaza" onchange="syncPodpodfazaVisibility()">
+      <select class="finput" id="mFFaza" onchange="syncFazaBlocks()">
         <option value="Studia">Štúdia</option>
         <option value="SZ">Stavebný zámer</option>
         <option value="DSP/PS">Projekt stavby</option>
@@ -188,40 +188,72 @@
         <option value="Inziniering">Inžiniering</option>
       </select>
     </div>
-    <div class="frow" id="mFPodWrap">
-      <label>Podpodfáza</label>
-      <select class="finput" id="mFPod">
-        <option value="">—</option>
-        <option value="príprava pre profesie">príprava pre profesie</option>
-        <option value="koordinácia s profesiami">koordinácia s profesiami</option>
-        <option value="dopracovanie dokumentácie">dopracovanie dokumentácie</option>
-      </select>
-    </div>
-  </div>
-  <div class="frow-2">
     <div class="frow">
-      <label>Projektant</label>
+      <label>Kto to bude robiť</label>
       <select class="finput" id="mFProjektant"></select>
     </div>
-    <div class="frow"><label>Poradie v projekte</label><input class="finput" type="number" id="mFPoradie" value="1" min="1"></div>
   </div>
-  <div class="frow-2">
-    <div class="frow"><label>Trvanie (týždne)</label><input class="finput" type="number" id="mFTrvanie" step="0.5" min="0.5" placeholder="2"></div>
-    <div class="frow"><label>Alokácia %</label><input class="finput" type="number" id="mFAlokacia" value="100" min="1" max="100"></div>
+
+  <!-- SZ / Projekt stavby / RP: tri bloky naraz -->
+  <div class="frow" id="mFBlocksWrap" style="display:none">
+    <label>Fáza sa skladá z troch blokov, ktoré idú za sebou — zadaj trvanie každého. Percento = koľko kapacity projektanta blok zaberie.</label>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1;font-size:13px">1. príprava pre profesie</span>
+        <input class="finput" style="width:76px" type="number" id="mFTrv1" step="0.5" min="0.5" placeholder="týž.">
+        <input class="finput" style="width:66px" type="number" id="mFAlo1" value="100" min="1" max="100"><span style="font-size:12px;color:var(--text3)">%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1;font-size:13px">2. koordinácia s profesiami</span>
+        <input class="finput" style="width:76px" type="number" id="mFTrv2" step="0.5" min="0.5" placeholder="týž.">
+        <input class="finput" style="width:66px" type="number" id="mFAlo2" value="40" min="1" max="100"><span style="font-size:12px;color:var(--text3)">%</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1;font-size:13px">3. dopracovanie dokumentácie</span>
+        <input class="finput" style="width:76px" type="number" id="mFTrv3" step="0.5" min="0.5" placeholder="týž.">
+        <input class="finput" style="width:66px" type="number" id="mFAlo3" value="100" min="1" max="100"><span style="font-size:12px;color:var(--text3)">%</span>
+      </div>
+    </div>
   </div>
-  <div class="frow-2">
-    <div class="frow"><label>Štart (ručne — napr. aktuálna práca)</label><input class="finput" type="date" id="mFStart"></div>
-    <div class="frow"><label>Najskôr od</label><input class="finput" type="date" id="mFNajskor"></div>
+
+  <!-- Štúdia / ÚP / Inžiniering (a úprava jedného bloku): jedno trvanie -->
+  <div class="frow-2" id="mFSingleWrap">
+    <div class="frow"><label>Ako dlho to potrvá (týždne)</label><input class="finput" type="number" id="mFTrvanie" step="0.5" min="0.5" placeholder="napr. 3"></div>
+    <div class="frow"><label>Kapacita projektanta (%)</label><input class="finput" type="number" id="mFAlokacia" value="100" min="1" max="100"></div>
   </div>
-  <div class="frow" style="display:flex;gap:8px;flex-wrap:wrap">
-    <label class="chk-lbl"><input type="checkbox" id="mFReady"> pripravené pokračovať</label>
-    <label class="chk-lbl"><input type="checkbox" id="mFPrio" onchange="document.getElementById('mFTerminWrap').style.display=this.checked?'':'none'"> prioritný (záväzný termín)</label>
+  <div id="mFPodInfo" class="alert alert-ok" style="display:none"></div>
+
+  <div class="frow">
+    <label>V akom stave to je?</label>
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <label class="chk-lbl"><input type="radio" name="mFStav" value="bezi" onchange="syncStavVisibility()"> 🔨 Už sa na tom robí</label>
+      <label class="chk-lbl"><input type="radio" name="mFStav" value="ready" onchange="syncStavVisibility()" checked> ✅ Môže začať — čaká len na voľnú kapacitu</label>
+      <label class="chk-lbl"><input type="radio" name="mFStav" value="wait" onchange="syncStavVisibility()"> ⏳ Zatiaľ nemôže začať (čakáme na klienta / povolenie)</label>
+    </div>
   </div>
-  <div class="frow-2">
-    <div class="frow" id="mFTerminWrap" style="display:none"><label>Termín s klientom</label><input class="finput" type="date" id="mFTermin"></div>
-    <div class="frow"><label>Ozvali sa (dátum)</label><input class="finput" type="date" id="mFOzvali"></div>
-  </div>
-  <div class="frow"><label>Poznámka</label><textarea class="finput" id="mFPozn"></textarea></div>
+  <div class="frow" id="mFStartWrap" style="display:none"><label>Odkedy sa na tom reálne robí?</label><input class="finput" type="date" id="mFStart"></div>
+
+  <details style="margin-bottom:14px">
+    <summary style="font-size:13px;color:var(--text2);cursor:pointer;padding:4px 0">Viac možností (priorita, termíny…)</summary>
+    <div style="padding-top:12px">
+      <div class="frow">
+        <label>Začať sa dá najskôr od — skôr to nejde, napr. kým nepríde povolenie (bežne nechaj prázdne)</label>
+        <input class="finput" type="date" id="mFNajskor">
+      </div>
+      <div class="frow" style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="chk-lbl"><input type="checkbox" id="mFPrio" onchange="document.getElementById('mFTerminWrap').style.display=this.checked?'':'none'"> prioritný — klientovi sme sľúbili pevný termín</label>
+      </div>
+      <div class="frow" id="mFTerminWrap" style="display:none">
+        <label>Dokedy sme klientovi sľúbili odovzdanie?</label>
+        <input class="finput" type="date" id="mFTermin">
+      </div>
+      <div class="frow">
+        <label>Kedy sa klient prvýkrát ozval? — určuje poradie medzi čakajúcimi (prázdne = dnes)</label>
+        <input class="finput" type="date" id="mFOzvali">
+      </div>
+      <div class="frow"><label>Poznámka</label><textarea class="finput" id="mFPozn"></textarea></div>
+    </div>
+  </details>
   <div class="btn-row" style="justify-content:flex-end">
     <button class="btn btn-g" onclick="closeFazaModal()">Zrušiť</button>
     <button class="btn btn-p" onclick="saveFaza()">Uložiť</button>
@@ -453,13 +485,17 @@ async function naplanovat() {
     await loadAll();
 
     const naplanovane = vysledky.filter(v => v.navrhovany_start);
-    const nenasloSa = vysledky.filter(v => v.pripravene_pokracovat && !v.navrhovany_start);
+    const cakaNaPredoslu = vysledky.filter(v => v.caka_na_predoslu);
+    const nenasloSa = vysledky.filter(v => v.pripravene_pokracovat && !v.navrhovany_start && !v.caka_na_predoslu);
     let h = '';
     if (naplanovane.length) {
       h += `<div class="alert alert-ok">Naplánovaných fáz: ${pocetZapisanych}</div>` +
         naplanovane.map(v => `<div style="font-size:13px;padding:4px 0">${esc(projLabel(v.cislo))} · ${esc(FAZA_LABEL[v.faza_kod] || v.faza_kod)}${v.podpodfaza ? ' ('+esc(POD_SKRATKA[v.podpodfaza])+')' : ''} · ${esc(v.projektant)} → <strong>${fmtD(v.navrhovany_start)} – ${fmtD(v.navrhovany_koniec)}</strong></div>`).join('');
     } else {
       h += `<div class="alert alert-ok">Nebolo čo plánovať — žiadne pripravené čakajúce fázy.</div>`;
+    }
+    if (cakaNaPredoslu.length) {
+      h += `<div class="alert alert-err" style="margin-top:10px">Čaká na naplánovanie predchádzajúceho bloku fázy: ${cakaNaPredoslu.map(v => esc(v.cislo + ' ' + (POD_SKRATKA[v.podpodfaza] || ''))).join(', ')}</div>`;
     }
     if (nenasloSa.length) {
       h += `<div class="alert alert-err" style="margin-top:10px">Nenašlo sa voľné okno (do 2 rokov): ${nenasloSa.map(v => esc(v.cislo)).join(', ')}</div>`;
@@ -501,38 +537,63 @@ async function deleteFaza(id) {
 }
 
 // ── MODAL fáza ────────────────────────────────────────────────────────────────
-function syncPodpodfazaVisibility() {
-  const faza = document.getElementById('mFFaza').value;
-  const relevant = faza === 'SZ' || faza === 'DSP/PS' || faza === 'RP';
-  document.getElementById('mFPodWrap').style.display = relevant ? '' : 'none';
-  if (!relevant) document.getElementById('mFPod').value = '';
+const HARM_BLOKY = [
+  { podpodfaza: 'príprava pre profesie', alo: 100 },
+  { podpodfaza: 'koordinácia s profesiami', alo: 40 },
+  { podpodfaza: 'dopracovanie dokumentácie', alo: 100 },
+];
+function fazaMaBloky(f) { return f === 'SZ' || f === 'DSP/PS' || f === 'RP'; }
+
+// Pri vytváraní SZ/PS/RP sa zobrazujú 3 bloky; pri Štúdii/ÚP/Inžinieringu a pri úprave
+// existujúceho riadku (= jeden konkrétny blok) jedno trvanie.
+function syncFazaBlocks() {
+  const multi = !editFazaId && fazaMaBloky(document.getElementById('mFFaza').value);
+  document.getElementById('mFBlocksWrap').style.display = multi ? '' : 'none';
+  document.getElementById('mFSingleWrap').style.display = multi ? 'none' : '';
+}
+
+function syncStavVisibility() {
+  const stav = (document.querySelector('input[name="mFStav"]:checked') || {}).value;
+  document.getElementById('mFStartWrap').style.display = stav === 'bezi' ? '' : 'none';
+  if (stav === 'bezi' && !document.getElementById('mFStart').value) {
+    document.getElementById('mFStart').value = new Date().toISOString().slice(0, 10);
+  }
 }
 
 function openFazaModal(id) {
   editFazaId = id || null;
   const r = id ? rawById[id] : null;
-  document.getElementById('mFTitle').textContent = r ? 'Upraviť fázu' : 'Nová fáza';
+  document.getElementById('mFTitle').textContent = r ? 'Upraviť blok fázy' : 'Nová fáza';
   document.getElementById('mFSearch').value = '';
   document.getElementById('mFSuggest').innerHTML = '';
   document.getElementById('mFCislo').value = r ? r.cislo : '';
   document.getElementById('mFNazov').value = r ? (caflouNames[r.cislo] || '') : '';
   document.getElementById('mFFaza').value = r ? r.faza_kod : 'Studia';
-  document.getElementById('mFPod').value = r ? (r.podpodfaza || '') : '';
   document.getElementById('mFProjektant').innerHTML = HARM_PROJEKTANTI.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
   document.getElementById('mFProjektant').value = r ? r.projektant : 'Jozef';
-  document.getElementById('mFPoradie').value = r ? r.poradie : 1;
   document.getElementById('mFTrvanie').value = r ? r.trvanie_tyzdne : '';
   document.getElementById('mFAlokacia').value = r ? r.alokacia_percent : 100;
+  ['1','2','3'].forEach((n, i) => {
+    document.getElementById('mFTrv' + n).value = '';
+    document.getElementById('mFAlo' + n).value = HARM_BLOKY[i].alo;
+  });
+  const podInfo = document.getElementById('mFPodInfo');
+  if (r && r.podpodfaza) {
+    podInfo.style.display = '';
+    podInfo.textContent = 'Upravuješ blok: ' + r.podpodfaza;
+  } else podInfo.style.display = 'none';
+
+  const stav = r ? (r.start_datum ? 'bezi' : (r.pripravene_pokracovat ? 'ready' : 'wait')) : 'ready';
+  document.querySelectorAll('input[name="mFStav"]').forEach(el => { el.checked = el.value === stav; });
   document.getElementById('mFStart').value = r ? (r.start_datum || '') : '';
   document.getElementById('mFNajskor').value = r ? (r.najskor_od || '') : '';
-  document.getElementById('mFReady').checked = r ? !!r.pripravene_pokracovat : false;
   document.getElementById('mFPrio').checked = r ? !!r.prioritny : false;
   document.getElementById('mFTerminWrap').style.display = (r && r.prioritny) ? '' : 'none';
   document.getElementById('mFTermin').value = r ? (r.termin_klient || '') : '';
   document.getElementById('mFOzvali').value = r ? (r.ozvali_sa_datum || '') : '';
   document.getElementById('mFPozn').value = r ? (r.poznamka || '') : '';
-  syncPodpodfazaVisibility();
-  if (r) document.getElementById('mFPod').value = r.podpodfaza || '';
+  syncFazaBlocks();
+  syncStavVisibility();
   document.getElementById('modalFaza').classList.remove('hidden');
 }
 
@@ -543,33 +604,66 @@ function closeFazaModal() {
 
 async function saveFaza() {
   const cislo = document.getElementById('mFCislo').value.trim();
-  const trvanie = parseFloat(document.getElementById('mFTrvanie').value);
   if (!cislo) { showToast('Chýba číslo projektu', 'err'); return; }
-  if (!trvanie || trvanie <= 0) { showToast('Chýba trvanie', 'err'); return; }
 
-  const rec = {
+  const faza = document.getElementById('mFFaza').value;
+  const stav = (document.querySelector('input[name="mFStav"]:checked') || {}).value || 'ready';
+  const startVal = document.getElementById('mFStart').value || null;
+  if (stav === 'bezi' && !startVal) { showToast('Zadaj, odkedy sa na tom robí', 'err'); return; }
+
+  const spolocne = {
     cislo,
-    faza_kod: document.getElementById('mFFaza').value,
-    podpodfaza: document.getElementById('mFPod').value || null,
+    faza_kod: faza,
     projektant: document.getElementById('mFProjektant').value,
-    poradie: parseInt(document.getElementById('mFPoradie').value) || 1,
-    trvanie_tyzdne: trvanie,
-    alokacia_percent: Math.min(100, Math.max(1, parseInt(document.getElementById('mFAlokacia').value) || 100)),
-    start_datum: document.getElementById('mFStart').value || null,
+    pripravene_pokracovat: stav !== 'wait',
     najskor_od: document.getElementById('mFNajskor').value || null,
-    pripravene_pokracovat: document.getElementById('mFReady').checked,
     prioritny: document.getElementById('mFPrio').checked,
-    termin_klient: document.getElementById('mFTermin').value || null,
-    ozvali_sa_datum: document.getElementById('mFOzvali').value || null,
+    termin_klient: (document.getElementById('mFPrio').checked && document.getElementById('mFTermin').value) || null,
+    ozvali_sa_datum: document.getElementById('mFOzvali').value || new Date().toISOString().slice(0, 10),
     poznamka: document.getElementById('mFPozn').value.trim() || null,
   };
 
-  const q = editFazaId
-    ? sb.from('harmonogram').update(rec).eq('id', editFazaId)
-    : sb.from('harmonogram').insert(rec);
+  const cistaAlokacia = v => Math.min(100, Math.max(1, parseInt(v) || 100));
+  let q;
+
+  if (editFazaId) {
+    const trvanie = parseFloat(document.getElementById('mFTrvanie').value);
+    if (!trvanie || trvanie <= 0) { showToast('Chýba trvanie', 'err'); return; }
+    q = sb.from('harmonogram').update(Object.assign({}, spolocne, {
+      trvanie_tyzdne: trvanie,
+      alokacia_percent: cistaAlokacia(document.getElementById('mFAlokacia').value),
+      start_datum: stav === 'bezi' ? startVal : null,
+    })).eq('id', editFazaId);
+  } else if (fazaMaBloky(faza)) {
+    const bloky = [];
+    for (let i = 0; i < 3; i++) {
+      const t = parseFloat(document.getElementById('mFTrv' + (i + 1)).value);
+      if (!t || t <= 0) { showToast(`Chýba trvanie bloku ${i + 1} (${HARM_BLOKY[i].podpodfaza})`, 'err'); return; }
+      bloky.push(Object.assign({}, spolocne, {
+        podpodfaza: HARM_BLOKY[i].podpodfaza,
+        poradie: i + 1,
+        trvanie_tyzdne: t,
+        alokacia_percent: cistaAlokacia(document.getElementById('mFAlo' + (i + 1)).value),
+        // "Už sa na tom robí" = beží prvý blok; ďalšie dva naplánuje algoritmus za neho
+        start_datum: (i === 0 && stav === 'bezi') ? startVal : null,
+      }));
+    }
+    q = sb.from('harmonogram').insert(bloky);
+  } else {
+    const trvanie = parseFloat(document.getElementById('mFTrvanie').value);
+    if (!trvanie || trvanie <= 0) { showToast('Chýba trvanie', 'err'); return; }
+    q = sb.from('harmonogram').insert(Object.assign({}, spolocne, {
+      podpodfaza: null,
+      poradie: 1,
+      trvanie_tyzdne: trvanie,
+      alokacia_percent: cistaAlokacia(document.getElementById('mFAlokacia').value),
+      start_datum: stav === 'bezi' ? startVal : null,
+    }));
+  }
+
   const { error } = await q;
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
-  showToast(editFazaId ? 'Fáza upravená' : 'Fáza pridaná');
+  showToast(editFazaId ? 'Blok upravený' : 'Fáza pridaná');
   closeFazaModal();
   loadAll();
 }

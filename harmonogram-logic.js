@@ -62,6 +62,13 @@ function harmZoradPodlaOzvani(a, b) {
   return oa - ob;
 }
 
+// Tiebreak pre bloky (podpodfázy) tej istej fázy: musia sa plánovať v poradí 1,2,3
+// (príprava -> koordinácia -> dopracovanie), inak by reťazenie nižšie nemalo z čoho vychádzať.
+function harmPoradieTiebreak(a, b) {
+  if (a.cislo === b.cislo && a.faza_kod === b.faza_kod) return (a.poradie || 0) - (b.poradie || 0);
+  return 0;
+}
+
 function harmZoradPodlaPriority(nenaplanovane) {
   return [...nenaplanovane].sort((a, b) => {
     if (!!a.prioritny !== !!b.prioritny) return a.prioritny ? -1 : 1;
@@ -70,7 +77,7 @@ function harmZoradPodlaPriority(nenaplanovane) {
       const db = b.termin_klient ? b.termin_klient.getTime() : Infinity;
       if (da !== db) return da - db;
     }
-    return harmZoradPodlaOzvani(a, b);
+    return harmZoradPodlaOzvani(a, b) || harmPoradieTiebreak(a, b);
   });
 }
 
@@ -99,13 +106,42 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
   const commited = existujuceNaplanovane.map(e => Object.assign({}, e));
   const vysledky = [];
 
+  // Reťazenie blokov VNÚTRI jednej fázy: bloky (podpodfázy) na seba nadväzujú prirodzene bez
+  // vonkajšieho medzikroku, na rozdiel od reťazenia medzi fázami (to ostáva zakázané - viď
+  // harmNajskorMoznyStart). Koniec každého bloku s koncom sa eviduje tu; blok s poradie > 1
+  // môže začať najskôr po konci VŠETKÝCH predchádzajúcich blokov tej istej fázy.
+  const blokKey = b => `${b.cislo}|${b.faza_kod}|${b.poradie}`;
+  const konceBlokov = new Map();
+  existujuceNaplanovane.forEach(e => {
+    if (e.podpodfaza && e.koniec_datum) konceBlokov.set(blokKey(e), e.koniec_datum);
+  });
+  const vsetkyBloky = nenaplanovane.concat(existujuceNaplanovane).filter(b => b.podpodfaza);
+
   zoradene.forEach(a => {
-    const najskor = harmNajskorMoznyStart(a, dnes);
+    let najskor = harmNajskorMoznyStart(a, dnes);
+
+    if (a.podpodfaza && a.poradie > 1) {
+      const predosle = vsetkyBloky.filter(b =>
+        b.cislo === a.cislo && b.faza_kod === a.faza_kod && b.poradie < a.poradie);
+      let blokovane = false;
+      predosle.forEach(p => {
+        const kon = konceBlokov.get(blokKey(p));
+        if (!kon) blokovane = true;
+        else if (kon > najskor) najskor = kon;
+      });
+      if (blokovane) {
+        // predchádzajúci blok sa nepodarilo naplánovať (alebo nie je pripravený) - tento nemôže dostať termín
+        vysledky.push(Object.assign({}, a, { navrhovany_start: null, navrhovany_koniec: null, caka_na_predoslu: true }));
+        return;
+      }
+    }
+
     const start = harmNajdiNajskorsiStart(commited, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
     const koniec = start ? harmPridajTyzdne(start, a.trvanie_tyzdne) : null;
     const vysledok = Object.assign({}, a, { navrhovany_start: start, navrhovany_koniec: koniec });
     vysledky.push(vysledok);
-    commited.push({ cislo: a.cislo, poradie: a.poradie, projektant: a.projektant, start_datum: start, koniec_datum: koniec, alokacia_percent: a.alokacia_percent });
+    if (a.podpodfaza && koniec) konceBlokov.set(blokKey(a), koniec);
+    commited.push({ cislo: a.cislo, faza_kod: a.faza_kod, podpodfaza: a.podpodfaza, poradie: a.poradie, projektant: a.projektant, start_datum: start, koniec_datum: koniec, alokacia_percent: a.alokacia_percent });
   });
 
   [...nepripravene].sort(harmZoradPodlaOzvani).forEach(a => {
@@ -145,7 +181,7 @@ function harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     harmPridajTyzdne, harmIntervalyPrekryvaju, harmJeKapacitaVolna, harmNajdiNajskorsiStart,
-    harmNajskorMoznyStart, harmZoradPodlaOzvani, harmZoradPodlaPriority, harmNaplanujFrontu,
+    harmNajskorMoznyStart, harmZoradPodlaOzvani, harmPoradieTiebreak, harmZoradPodlaPriority, harmNaplanujFrontu,
     harmNavrhniPodkladyDatum, harmNajdiNavrhyPreDopyty,
   };
 }
