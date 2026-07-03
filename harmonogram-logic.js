@@ -38,14 +38,15 @@ function harmNajdiNajskorsiStart(existujuce, projektant, najskorMozny, trvanieTy
   return null;
 }
 
-// Najskorší možný štart danej fázy = dnes, alebo koniec predchádzajúcej fázy (podľa poradie) toho istého projektu,
-// podľa toho, čo je neskôr. Hľadá v zozname vsetkyPriradenia (už naplánované aj priebežne dopočítané v tejto dávke).
-function harmNajskorMoznyStart(priradenie, vsetkyPriradenia, dnes) {
-  const predchadzajuca = vsetkyPriradenia.find(p =>
-    p.cislo === priradenie.cislo && p.poradie === priradenie.poradie - 1);
+// Najskorší možný štart danej fázy = dnes, prípadne posunutý na najskor_od (manuálny spodný limit).
+// Žiadna fáza sa nereťazí automaticky podľa konca predchádzajúcej - medzi takmer všetkými fázami je reálne
+// nejaký vonkajší medzikrok (klient, povolenie/inžiniering...), ktorý nevie žiadny algoritmus odhadnúť.
+// najskor_od zadáva človek ručne (napr. "čakáme povolenie okolo tohto dátumu"); prvá fáza projektu (Štúdia)
+// ho typicky nemá vyplnený vôbec, keďže nemá na čo čakať - vtedy platí len dnešný dátum.
+function harmNajskorMoznyStart(priradenie, dnes) {
   let najskor = new Date(dnes);
-  if (predchadzajuca && predchadzajuca.koniec_datum && predchadzajuca.koniec_datum > najskor) {
-    najskor = predchadzajuca.koniec_datum;
+  if (priradenie.najskor_od && priradenie.najskor_od > najskor) {
+    najskor = priradenie.najskor_od;
   }
   return najskor;
 }
@@ -80,8 +81,7 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
   const vysledky = [];
 
   zoradene.forEach(a => {
-    const kontext = commited.concat(vysledky);
-    const najskor = harmNajskorMoznyStart(a, kontext, dnes);
+    const najskor = harmNajskorMoznyStart(a, dnes);
     const start = harmNajdiNajskorsiStart(commited, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
     const koniec = start ? harmPridajTyzdne(start, a.trvanie_tyzdne) : null;
     const vysledok = Object.assign({}, a, { navrhovany_start: start, navrhovany_koniec: koniec });

@@ -311,15 +311,18 @@ Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci pro
 **Dátový model (`supabase/harmonogram-setup.sql`, tabuľka `harmonogram`, treba spustiť ručne):**
 ```
 { cislo, faza_kod (SZ|DSP/PS|RP|UP|Studia|Inziniering — rovnaký kód ako ponuky.html requests.phases),
-  projektant, poradie (poradie fázy v rámci projektu, vynucuje sekvenciu),
+  projektant, poradie (len na zobrazenie/triedenie, algoritmus ho nepoužíva),
   trvanie_tyzdne (zadáva Jozef/šéf ručne), alokacia_percent (default 100, umožňuje čiastočný úväzok na viacero projektov naraz),
-  start_datum (null = nenaplánované), prioritny (záväzný termín s klientom), termin_klient, poznamka }
+  start_datum (null = nenaplánované), najskor_od (manuálny spodný limit štartu),
+  prioritny (záväzný termín s klientom), termin_klient, poznamka }
 ```
+
+**DÔLEŽITÉ — žiadne automatické reťazenie fáz:** pôvodný návrh mal fázu s `poradie=N` automaticky nadväzovať hneď po konci `poradie=N-1` toho istého projektu. Jozef to opravil: v realite skoro nikdy nejde jedna fáza plynulo za druhou — medzi fázami je typicky vonkajší medzikrok (schválenie klientom, čakanie na povolenie/inžiniering...), ktorého dĺžku nevie žiadny algoritmus odhadnúť. Preto: **jediný zdroj "najskôr možného štartu" je `najskor_od`**, ručne zadaný človekom. Prvá fáza projektu (Štúdia) ho typicky nemá vyplnený vôbec (nemá na čo čakať), takže sa použije len dnešný dátum.
 
 **Algoritmus (`harmonogram-logic.js`, exportuje cez `module.exports` aj pre `<script>` global):**
 - `harmJeKapacitaVolna` — pre daného projektanta a interval kontroluje, či súčet `alokacia_percent` prekrývajúcich sa priradení + nová alokácia nepresiahne 100 %
 - `harmNajdiNajskorsiStart` — posúva kandidátsky dátum po dňoch (strop 2 roky dopredu), kým nenájde voľné okno na celú dobu trvania
-- `harmNajskorMoznyStart` — vynucuje poradie fáz v rámci projektu (fáza s `poradie=N` nesmie začať skôr než skončí `poradie=N-1` toho istého `cislo`)
+- `harmNajskorMoznyStart(priradenie, dnes)` — vráti `max(dnes, priradenie.najskor_od)` — žiadne reťazenie na predchádzajúcu fázu
 - `harmZoradPodlaPriority` — `prioritny` projekty prv (podľa `termin_klient` ASC), inak podľa `created_at`
 - `harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPercent)` — hlavná funkcia, spracuje frontu v poradí priority, každé naplánované priradenie sa hneď "commitne" do kontextu pre ďalšie v poradí (greedy, nie globálne optimálne, ale zodpovedá tomu, ako by to robil človek ručne)
 - `harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests)` — prepojenie na `ponuky.html`: keď sa naplánuje interná fáza, navrhne `podklady_datum` (MVP predpoklad: podklady sú hotové hneď na začiatku fázy, nie na konci — treba overiť v praxi, môže byť potrebný offset) pre dopyty rovnakého `cislo`+`faza_kod`, **nikdy neprepíše už ručne zadaný `podklady_datum`**
