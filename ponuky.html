@@ -172,6 +172,7 @@
       <div class="btn-row" style="margin-bottom:14px">
         <button class="btn btn-p btn-sm" onclick="openSpecModal()">+ Pridať profesista</button>
         <button id="btnSyncSpec" class="btn btn-sm" onclick="syncSpecProfessions()" style="margin-left:8px">↻ Sync kontakty</button>
+        <button id="btnAutoAssignCaflou" class="btn btn-sm" onclick="autoAssignCaflouCompanies()" style="margin-left:8px">🔗 Auto-priradiť Caflou firmy</button>
       </div>
       <input id="specSearch" type="search" placeholder="Hľadať profesistov…" oninput="renderSpecialists()"
         style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg2);color:var(--text);margin-bottom:10px;outline:none">
@@ -468,6 +469,73 @@ async function syncSpecProfessions() {
     showToast('Chyba: ' + e.message, 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '↻ Sync kontakty'; }
+  }
+}
+
+// ── AUTO-PRIRADENIE CAFLOU FIRMY ──────────────────────────────────────────────
+function normCompanyName(s) {
+  if (!s) return '';
+  return s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\b(s\.?\s?r\.?\s?o\.?|a\.?\s?s\.?|spol\.?\s?s\s?r\.?\s?o\.?|ing\.?|doc\.?|phd\.?|csc\.?|mba\.?|msc\.?)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+async function fetchAllCaflou(resource) {
+  let all = [], page = 1;
+  while (true) {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/${resource}?per=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    const d = await r.json();
+    const items = (d.results || []).filter(x => !x.trash);
+    all = all.concat(items);
+    if (!d.next_page) break;
+    page++;
+  }
+  return all;
+}
+
+async function autoAssignCaflouCompanies() {
+  if (!cfg.caflou_key) { showToast('Chýbajú Caflou credentials', 'err'); return; }
+  const btn = document.getElementById('btnAutoAssignCaflou');
+  if (btn) { btn.disabled = true; btn.textContent = 'Priraďujem...'; }
+  try {
+    const [companies, contactsC] = await Promise.all([fetchAllCaflou('companies'), fetchAllCaflou('contacts')]);
+    const companyByNorm = new Map(companies.map(c => [normCompanyName(c.name), c]));
+    const contactByEmail = new Map(contactsC.filter(c => c.email).map(c => [c.email.toLowerCase().trim(), c]));
+    const contactByNorm = new Map(contactsC.map(c => [normCompanyName(c.name), c]));
+    const companyById = new Map(companies.map(c => [c.id, c]));
+
+    const toApply = [];
+    for (const s of specialists) {
+      if (s.caflou_company_id) continue;
+      const emailKey = (s.email || '').toLowerCase().trim();
+      const byEmail = emailKey && contactByEmail.get(emailKey);
+      if (byEmail?.company_id) { toApply.push({ s, company_id: byEmail.company_id }); continue; }
+      const companyKey = normCompanyName(s.company);
+      const byCompanyName = companyKey && companyByNorm.get(companyKey);
+      if (byCompanyName) { toApply.push({ s, company_id: byCompanyName.id }); continue; }
+      const nameKey = normCompanyName(s.name);
+      const byName = nameKey && contactByNorm.get(nameKey);
+      if (byName?.company_id) { toApply.push({ s, company_id: byName.company_id }); continue; }
+    }
+
+    if (!toApply.length) { showToast('Nenašli sa žiadne nové zhody'); return; }
+
+    let ok = 0;
+    for (const m of toApply) {
+      const { error } = await sb.from('specialists').update({ caflou_company_id: m.company_id }).eq('id', m.s.id);
+      if (!error) { m.s.caflou_company_id = m.company_id; ok++; }
+    }
+    const skipped = specialists.filter(s => !s.caflou_company_id).length;
+    showToast(`Priradených: ${ok}, bez zhody: ${skipped}`);
+    renderSpecialists();
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔗 Auto-priradiť Caflou firmy'; }
   }
 }
 
