@@ -5,6 +5,7 @@ create table if not exists harmonogram (
   id uuid primary key default gen_random_uuid(),
   cislo text not null,                          -- Caflou order_number projektu
   faza_kod text not null,                       -- rovnaký kód ako ponuky.html requests.phases: SZ | DSP/PS | RP | UP | Studia | Inziniering
+  podpodfaza text,                              -- z tabuľky "fázovanie projektu" (tabulky/fázovanie projektu.gsheet): príprava pre profesie | koordinácia s profesiami | dopracovanie dokumentácie. Relevantné pre SZ/PS/RP, null pre Studia/Inziniering. Každá sa plánuje ako samostatný riadok.
   projektant text not null,                     -- meno člena interného tímu (rovnaké mená ako CAFLOU_USERS)
   poradie integer not null default 1,           -- poradie fázy v rámci projektu (1,2,3...) - len na zobrazenie/triedenie, algoritmus ho na plánovanie nepoužíva
   trvanie_tyzdne numeric not null,              -- odhad dĺžky fázy v týždňoch (zadáva Jozef/šéf ručne)
@@ -15,6 +16,7 @@ create table if not exists harmonogram (
   prioritny boolean not null default false,     -- záväzný termín s klientom
   termin_klient date,                           -- pevný termín, relevantné len ak prioritny = true
   ozvali_sa_datum date,                         -- kedy sa klient/projekt predbežne ozval (business dátum, nie dátum zápisu do systému) - poradie medzi čakajúcimi, najmä nepripravenými
+  caflou_task_id bigint,                        -- prepojenie na konkrétnu Caflou úlohu (existujúcu alebo vytvorenú) - projektant tak vidí svoju prácu bežne v Caflou. Dátum úlohy (end_time) by sa mal držať v súlade s navrhovany_koniec/koniec_datum. ZATIAĽ NEIMPLEMENTOVANÉ - len pripravené pole.
   poznamka text,
   created_at timestamptz not null default now()
 );

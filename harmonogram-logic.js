@@ -117,9 +117,12 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
 
 // ── Prepojenie na ponuky.html (podklady_datum) ──────────────────────────────
 // MVP predpoklad: podklady pre externistov sú k dispozícii hneď na začiatku internej fázy
-// (nie až na konci) - dá sa neskôr upraviť pridaním offsetu, ak sa ukáže, že to v praxi nesedí.
+// Presné pravidlo podľa tabulky/fázovanie projektu.gsheet: podklady pre externistov sú hotové presne vtedy,
+// keď skončí podpodfáza "príprava pre profesie" danej podfázy (SZ/PS/RP) - nie na začiatku celej fázy.
+// Pre iné podpodfázy (koordinácia s profesiami, dopracovanie dokumentácie) sa podklady_datum nenavrhuje vôbec.
 function harmNavrhniPodkladyDatum(harmonogramZaznam) {
-  return harmonogramZaznam.start_datum || harmonogramZaznam.navrhovany_start || null;
+  if (harmonogramZaznam.podpodfaza !== 'príprava pre profesie') return null;
+  return harmonogramZaznam.koniec_datum || harmonogramZaznam.navrhovany_koniec || null;
 }
 
 // harmonogramZaznamy: naplánované/navrhované záznamy (majú faza_kod, cislo, start_datum alebo navrhovany_start)

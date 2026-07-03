@@ -311,11 +311,19 @@ Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci pro
 **Dátový model (`supabase/harmonogram-setup.sql`, tabuľka `harmonogram`, treba spustiť ručne):**
 ```
 { cislo, faza_kod (SZ|DSP/PS|RP|UP|Studia|Inziniering — rovnaký kód ako ponuky.html requests.phases),
+  podpodfaza (viď nižšie — príprava pre profesie|koordinácia s profesiami|dopracovanie dokumentácie, null pre Studia/Inziniering),
   projektant, poradie (len na zobrazenie/triedenie, algoritmus ho nepoužíva),
   trvanie_tyzdne (zadáva Jozef/šéf ručne), alokacia_percent (default 100, umožňuje čiastočný úväzok na viacero projektov naraz),
-  start_datum (null = nenaplánované), najskor_od (manuálny spodný limit štartu),
-  prioritny (záväzný termín s klientom), termin_klient, poznamka }
+  start_datum (null = nenaplánované), pripravene_pokracovat (default false), najskor_od (manuálny spodný limit štartu),
+  prioritny (záväzný termín s klientom), termin_klient, ozvali_sa_datum, poznamka }
 ```
+
+**Podpodfázy (zdroj: `tabulky/fázovanie projektu.gsheet`, Google Sheet, treba čítať cez Drive MCP — je to cloud-only placeholder súbor, `Read`/`cat`/`Get-Content` naň zlyhajú s "Invalid request code"/"Incorrect function"):** SZ aj PS (a predpokladá sa aj RP, hoci to v tabuľke explicitne nie je) sa delia na 3 podpodfázy, každá sa plánuje ako **samostatný riadok** v `harmonogram`:
+1. **príprava pre profesie** — koniec tejto podpodfázy = presne to, čo sa má navrhnúť ako `podklady_datum` v `ponuky.html` (nie začiatok celej fázy, ako bol pôvodný MVP predpoklad)
+2. **koordinácia s profesiami** — obdobie, kedy externisti pracujú paralelne s nami
+3. **dopracovanie dokumentácie** — po prijatí ich výstupov
+
+Studia a Inžiniering podpodfázy nemajú (`podpodfaza = null`).
 
 **DÔLEŽITÉ — žiadne automatické reťazenie fáz:** pôvodný návrh mal fázu s `poradie=N` automaticky nadväzovať hneď po konci `poradie=N-1` toho istého projektu. Jozef to opravil: v realite skoro nikdy nejde jedna fáza plynulo za druhou — medzi fázami je typicky vonkajší medzikrok (schválenie klientom, čakanie na povolenie/inžiniering...), ktorého dĺžku nevie žiadny algoritmus odhadnúť. Preto: **jediný zdroj "najskôr možného štartu" je `najskor_od`**, ručne zadaný človekom. Prvá fáza projektu (Štúdia) ho typicky nemá vyplnený vôbec (nemá na čo čakať), takže sa použije len dnešný dátum.
 
@@ -327,11 +335,14 @@ Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci pro
 - `harmNajskorMoznyStart(priradenie, dnes)` — vráti `max(dnes, priradenie.najskor_od)` — žiadne reťazenie na predchádzajúcu fázu
 - `harmZoradPodlaPriority` — `prioritny` projekty prv (podľa `termin_klient` ASC), inak podľa `created_at`
 - `harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPercent)` — hlavná funkcia; najprv rozdelí vstup na `pripravene`/`nepripravene` podľa `pripravene_pokracovat`, plánuje len pripravené (v poradí priority, každé naplánované priradenie sa hneď "commitne" do kontextu pre ďalšie v poradí — greedy, nie globálne optimálne, ale zodpovedá tomu, ako by to robil človek ručne), nepripravené vráti s `navrhovany_start/koniec = null`
-- `harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests)` — prepojenie na `ponuky.html`: keď sa naplánuje interná fáza, navrhne `podklady_datum` (MVP predpoklad: podklady sú hotové hneď na začiatku fázy, nie na konci — treba overiť v praxi, môže byť potrebný offset) pre dopyty rovnakého `cislo`+`faza_kod`, **nikdy neprepíše už ručne zadaný `podklady_datum`**
+- `harmNavrhniPodkladyDatum(harmonogramZaznam)` — vráti `koniec_datum`/`navrhovany_koniec` LEN ak `podpodfaza === 'príprava pre profesie'`, inak `null` (spresnené z pôvodného MVP predpokladu "začiatok celej fázy")
+- `harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests)` — prepojenie na `ponuky.html`: keď sa naplánuje/dokončí "príprava pre profesie", navrhne `podklady_datum` pre dopyty rovnakého `cislo`+`faza_kod`, **nikdy neprepíše už ručne zadaný `podklady_datum`**
 
 **Overené testom** (`scratchpad/test-harmonogram.js`, nekomitnuté, len na overenie): 3 projektanti, prekrývajúce sa čiastočné alokácie, poradie fáz v rámci projektu, priorita, aj prepojenie na `ponuky.html` — všetky kontroly OK vrátane exhaustívnej kontroly, že nikto nikdy nepresiahne 100 % v žiadnom dni.
 
-**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), skutočné napojenie na Supabase (zatiaľ len in-memory funkcie), rozhodnúť o offsete pre `podklady_datum`, prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje).
+**Prepojenie na Caflou úlohy (Jozef, rozhodnuté, zatiaľ neimplementované):** každý riadok harmonogramu sa má naviazať na konkrétnu Caflou úlohu (`caflou_task_id`, pole pripravené v schéme) — existujúcu, alebo sa má vytvoriť nová. Projektant tak uvidí svoju prácu bežne v Caflou, nie len v samostatnom harmonograme. Dátum úlohy (`end_time`) by sa mal držať v súlade s `navrhovany_koniec`/`koniec_datum` (rovnaký vzor ako `bulkSetDeadline`). **Dôvod, prečo sa napriek tomu nesynchronizuje aktuálna záťaž tímu automaticky z Caflou úloh:** Caflou úlohy nemajú štruktúrovaný odhad trvania/alokácie per fáza — len priradenie + termín. Aktuálnu záťaž (čo tím robí PRÁVE TERAZ) treba na začiatku ručne zapísať do `harmonogram` (rovnako ako čakajúce projekty), inak by algoritmus považoval každého za voľného od dneška.
+
+**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), skutočné napojenie na Supabase (zatiaľ len in-memory funkcie), prepojenie `caflou_task_id` (vytváranie/synchronizácia úloh v Caflou), prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje), jednorazové ručné zadanie aktuálnej záťaže tímu pred prvým použitím.
 
 ### ponuky.html
 
