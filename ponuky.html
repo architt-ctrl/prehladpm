@@ -255,6 +255,13 @@
     <div class="frow"><label>Telefón</label><input class="finput" id="mSPhone" placeholder="+421 900 000 000"></div>
     <div class="frow"><label>Reg. číslo oprávnenia</label><input class="finput" id="mSReg" placeholder="XXXX AA"></div>
   </div>
+  <div class="frow" style="position:relative">
+    <label>Caflou firma (pre výdavky)</label>
+    <input class="finput" id="mSCaflouSearch" placeholder="Hľadaj firmu v Caflou..." autocomplete="off"
+      oninput="searchCaflouCompanies(this.value)">
+    <input type="hidden" id="mSCaflouCompanyId">
+    <div id="mSCaflouSuggest"></div>
+  </div>
   <div class="frow"><label>Poznámka</label><textarea class="finput" id="mSNotes" rows="2"></textarea></div>
   <div id="mSMsg"></div>
   <div class="btn-row">
@@ -388,7 +395,7 @@ async function loadAll() {
     const [rRes, sRes, iRes, qRes] = await Promise.race([
       Promise.all([
         sb.from('requests').select('*').order('created_at', { ascending: false }),
-        sb.from('specialists').select('id,name,company,email,profession,phone,portal_token,notes').order('name'),
+        sb.from('specialists').select('id,name,company,email,profession,phone,portal_token,notes,reg,caflou_company_id').order('name'),
         sb.from('invitations').select('id,request_id,specialist_id,token,status'),
         sb.from('quotes').select('id,invitation_id,prices,notes,submitted_at,deadline'),
       ]),
@@ -1166,19 +1173,59 @@ function openSpecModal(id) {
   document.getElementById('mSReg').value     = s?.reg        || '';
   document.getElementById('mSNotes').value   = s?.notes      || '';
   document.getElementById('mSMsg').innerHTML = '';
+  document.getElementById('mSCaflouCompanyId').value = s?.caflou_company_id || '';
+  document.getElementById('mSCaflouSearch').value = '';
+  document.getElementById('mSCaflouSuggest').innerHTML = '';
+  if (s?.caflou_company_id) {
+    document.getElementById('mSCaflouSearch').value = 'Načítavam...';
+    fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/companies/${s.caflou_company_id}`, {
+      headers: { 'Authorization': `Bearer ${cfg.caflou_key}` }
+    }).then(r => r.json()).then(c => {
+      document.getElementById('mSCaflouSearch').value = c?.name || '';
+    }).catch(() => { document.getElementById('mSCaflouSearch').value = ''; });
+  }
   document.getElementById('modalSpec').classList.remove('hidden');
+}
+
+let _caflouCompanySearchT = null;
+function searchCaflouCompanies(q) {
+  document.getElementById('mSCaflouCompanyId').value = '';
+  clearTimeout(_caflouCompanySearchT);
+  const box = document.getElementById('mSCaflouSuggest');
+  if (!q.trim() || !cfg.caflou_key) { box.innerHTML = ''; return; }
+  _caflouCompanySearchT = setTimeout(async () => {
+    try {
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/companies?filter%5Bsearch%5D=${encodeURIComponent(q)}&per=8`, {
+        headers: { 'Authorization': `Bearer ${cfg.caflou_key}` }
+      });
+      const d = await r.json();
+      const matches = d.results || [];
+      if (!matches.length) { box.innerHTML = '<div class="suggest-box"><div class="suggest-item" style="color:var(--text3)">Nenašlo sa nič</div></div>'; return; }
+      box.innerHTML = '<div class="suggest-box">' +
+        matches.map(c => `<div class="suggest-item" onclick="selectCaflouCompany(${c.id},'${(c.name||'').replace(/'/g,"\\'")}')">${c.name || ''}</div>`).join('') +
+        '</div>';
+    } catch(e) { box.innerHTML = ''; }
+  }, 300);
+}
+
+function selectCaflouCompany(id, name) {
+  document.getElementById('mSCaflouCompanyId').value = id;
+  document.getElementById('mSCaflouSearch').value = name;
+  document.getElementById('mSCaflouSuggest').innerHTML = '';
 }
 
 async function saveSpec() {
   const name  = document.getElementById('mSName').value.trim();
   const email = document.getElementById('mSEmail').value.trim();
   if (!name || !email) { document.getElementById('mSMsg').innerHTML = '<div class="alert alert-err">Meno a e-mail sú povinné.</div>'; return; }
+  const caflouCompanyIdRaw = document.getElementById('mSCaflouCompanyId').value.trim();
   const data = { name, email,
     company:    document.getElementById('mSCompany').value.trim(),
     profession: document.getElementById('mSProf').value.trim(),
     phone:      document.getElementById('mSPhone').value.trim(),
     reg:        document.getElementById('mSReg').value.trim(),
     notes:      document.getElementById('mSNotes').value.trim(),
+    caflou_company_id: caflouCompanyIdRaw ? parseInt(caflouCompanyIdRaw) : null,
   };
   const btn = document.querySelector('#modalSpec .btn-p');
   if (btn) { btn.disabled = true; btn.textContent = 'Ukladám...'; }

@@ -541,10 +541,48 @@ Contains `CAFLOU_API_KEY` and `CAFLOU_ACCOUNT_ID`. Never commit this file.
 - Zaznamenať: URL endpoint, štruktúru payloadu (project_id, task_id, amount, company_id, ...)
 - Caflou firmy/dodávatelia = existujúce záznamy; treba zistiť aj endpoint pre ich zoznam (napr. `/contacts`, `/companies`)
 
-**Krok 2 — Sparovanie externistu s Caflou firmou**
-- Pridať stĺpec `caflou_company_id` (bigint, nullable) do `specialists` tabuľky v Supabase
-- V záložke Profesisti v `ponuky.html` pridať pole na nastavenie Caflou firmy (raz ručne per profesionist)
-- Dropdown načítaný z Caflou kontaktov/firiem API; ak API neexistuje → manuálne zadanie ID
+**Krok 1 — VYRIEŠENÉ (2026-07-03):**
+
+Caflou nazýva výdavky **"transfers"**. Interný web formulár (`https://app.caflou.cz/tornyos/projects/{id}/transfers`, `POST /tornyos/transfers`, param namespace `transfer[...]`) je viazaný na session+CSRF a **nepoužíva sa** — namiesto neho existuje riadny JSON REST resource v tej istej `/api/v1/...` API ako zvyšok integrácie:
+
+- **`GET https://app.caflou.com/api/v1/{account_id}/transfers?project_id={id}&per=N`** — overené, funguje s `Authorization: Bearer {api_key}`, vracia štandardnú stránkovanú štruktúru (`results: [...]`)
+- Polia záznamu: `id, kind ("expense"), date (YYYY-MM-DD), payment_date, name, value, vat_value, real_value, currency ("EUR"), exchange_rate, user_id, invoiced, done, inactive, description, reference_number, company_id, project_id, task_id, source_id, category_id, repeatable, tags, trash, created_at, url, api_url`
+- `company_id` aj `task_id` môžu byť `null` (voliteľné)
+**POST (vytvorenie) OTESTOVANÉ 2026-07-03 — funguje, testovací záznam bol hneď zmazaný:**
+
+```javascript
+fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ transfer: {
+    kind: 'expense',
+    project_id: 533235,
+    task_id: null,          // voliteľné
+    company_id: 1375565,    // POVINNÉ zadať explicitne, inak Caflou defaultne priradí KLIENTA projektu (zlé!)
+    category_id: null,      // voliteľné, zoznam kategórií zatiaľ nezistený
+    name: '...',
+    value: 123.45,
+    currency: 'EUR',
+    date: '2026-07-03',     // POVINNÉ (YYYY-MM-DD) — bez neho 422 "Datum splatnosti je povinná položka"
+    description: '...'
+  }})
+})
+```
+
+- Telo je **nested pod `transfer:`**, presne ako `{ task: {...} }` pri task PATCH — potvrdzuje vzor zvyšku appky
+- Jediné povinné pole pri POST je `date`; všetko ostatné je voliteľné
+- **Kritické:** ak sa nepošle `company_id`, Caflou ho automaticky doplní na **klienta projektu**, nie na dodávateľa — treba ho VŽDY explicitne nastaviť na Caflou company_id externistu
+- Mazanie: `DELETE /api/v1/{account_id}/transfers/{id}` → `200 {"id": ...}`, overené že záznam potom vracia 404
+- `category_id` — zoznam kategórií nákladov zatiaľ nezistený (asi `GET /api/v1/{account}/elements?type=...`, analogicky k `elements?type=ProjectStatus` z network logu). Nie je povinné, netreba pre MVP.
+
+**Krok 2 — HOTOVO (2026-07-03):**
+- Caflou firmy = `GET /api/v1/{account}/companies` (336 záznamov), podporuje `filter[search]=` pre live search (rovnaký vzor ako project search)
+- SQL migrácia `supabase/caflou-company-setup.sql` — `alter table specialists add column if not exists caflou_company_id bigint;` — **treba spustiť ručne v Supabase SQL Editore**
+- `ponuky.html`: v modali profesistu (`#modalSpec`) pribudlo pole "Caflou firma (pre výdavky)" s live-search dropdownom (`searchCaflouCompanies`, `selectCaflouCompany`, debounce 300ms) — rovnaký `.suggest-box` vzor ako pri Caflou projekte
+- `openSpecModal` pri edite dotiahne názov firmy cez `GET /api/v1/{account}/companies/{id}` (id je uložené, meno sa nezrkadlí v Supabase)
+- `saveSpec()` ukladá `caflou_company_id` (parseInt alebo null)
+- Mimochodom opravené: `specialists` select v `loadAll()` nemal `reg` ani teraz pridaný `caflou_company_id` v zozname stĺpcov — bez toho by sa pri opätovnom otvorení edit modálu vždy zobrazovalo prázdne pole reg. čísla
+- **Ešte netestované v prehliadači** — treba po spustení SQL migrácie overiť uloženie/načítanie na reálnom profesistovi
 
 **Krok 3 — Suma výdavku**
 - Zdroj: `quotes.prices` (JSONB `{faza: suma}`) pre vybraného špecialistu
@@ -556,3 +594,49 @@ Contains `CAFLOU_API_KEY` and `CAFLOU_ACCOUNT_ID`. Never commit this file.
 - Fire-and-forget s `.then(null, () => {})` (rovnaký vzor ako ostatné Supabase/Caflou calls)
 
 **Stav:** Čaká na Krok 1 (network inspect od Jozefa)
+
+---
+
+## ROZPRACOVANÉ: Nová štruktúra projektového priečinka
+
+**Kontext:** Súčasná štruktúra v `H:\Spoločné disky\1_PROJEKTY\YYYY-NNN-Nazov\` má fázu ako základ a profesie vnútri (`3-PS/ASR`, `3-PS/statika`...). To fragmentuje prácu jednej profesie naprieč fázami (DUR→PS→RP) a mieša "naše" a "zdieľané s profesistom" súbory v jednom priečinku (starý `profesistom` priečinok). Rieši sa od základu, nie len doladenie.
+
+**Finálny koncept** (zatiaľ len návrh — **nič sa v existujúcich priečinkoch nemenilo**, žiadna migrácia neprebehla):
+
+```
+YYYY-NNN-Nazov/
+├── 0-PODKLADY/                    spoločné vstupy (klient, geodet) — pred rozdelením na profesie
+│   └── geo/ foto/ inz-siete/
+├── PROFESIE/                      základ = profesia (aj architekt), fáza vnútri — platí od Štúdie po koniec
+│   ├── ARCHITEKT/
+│   │   ├── 1-STUDIA/              aktuálny súbor bez dátumu v názve + voliteľný ARCHIV/
+│   │   ├── 2-DUR/
+│   │   ├── 3-PS/
+│   │   ├── 4-RP/
+│   │   ├── 7-INZINIERING/
+│   │   └── 8-PREZENTACIA/
+│   ├── ASR/
+│   │   ├── 3-PS/
+│   │   │   ├── A-PODKLADY-NACENENIE/     zdieľané s profesistom, link = requests.folder_url
+│   │   │   ├── B-PODKLADY-VYPRACOVANIE/  zdieľané, link = folder_url_work (aj ich odovzdaný výsledok sem)
+│   │   │   └── C-INTERNE/                NEzdieľané — naša revízia/poznámky
+│   │   ├── 4-RP/          rovnaká trojica A/B/C
+│   │   └── 7-INZINIERING/ (ak profesia rieši pripomienky)
+│   ├── STATIKA/  ZTI/  UK/  ELI/  EHB/  PBS/   rovnaká logika — vytvára sa len fáza, kde reálne pracujú
+├── 5-ODOSLANE/                    prierezový výstup — čo odišlo klientovi/úradu, kombinuje viac profesií
+├── 6-FINAL-PDF/                   finálny kombinovaný PDF balík danej fázy
+└── 9-ARCHIV/                      celý projekt uzavretý
+```
+
+Top-level mimo `PROFESIE/` ostáva len to, čo nepatrí jednej disciplíne: `0-PODKLADY` (vstup), `5-ODOSLANE`/`6-FINAL-PDF` (prierezový výstup), `9-ARCHIV` (uzavretie).
+
+**Verzovanie:** namiesto ručných dátumovaných kópií (`2026-07-01-Projekt-1.skp`, `-2.skp`...) sa má spoliehať na natívnu históriu verzií v Shared Drive (pravý klik → Spravovať verzie). Manuálny `ARCHIV/` podpriečinok len pri vedomom odložení starej verzie bokom.
+
+**Zdieľanie s profesistami:** priečinky `A-PODKLADY-NACENENIE` a `B-PODKLADY-VYPRACOVANIE` sú presne tie dva Drive linky, ktoré `ponuky.html` ukladá do `requests.folder_url` / `folder_url_work`. To je jediné, čo profesista vidí — žiadne miešanie s internými súbormi (`C-INTERNE`).
+
+**Otvorené body:**
+- `suhrn.html` balík na odoslanie (`buildFolderTree`) dnes očakáva jeden fyzický priečinok stupňa — pri profesijnej štruktúre to neplatí. Zatiaľ sa neriešime (Jozef: "aj tak to nepoužívame, lebo to nefunguje").
+- Nápad do budúcna: aplikácia/skript s AI na automatické vytváranie odkazov (shortcuts) na priečinky s PDF pri poskladaní balíka na odoslanie — nerozpracované.
+- Migrácia existujúcich ~55 projektov na novú štruktúru sa zatiaľ nerieši.
+
+**Stav:** Koncept uzavretý, čaká na rozhodnutie o migrácii a reálne nasadenie.
