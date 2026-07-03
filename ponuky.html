@@ -899,7 +899,11 @@ async function selectWinner(e, invId, reqId) {
     if (amount > 0) {
       if (spec.caflou_company_id) {
         createCaflouExpense(req.caflou_task_id, spec.caflou_company_id, amount, `${spec.name} – ${req.profession || ''}`)
-          .then(ok => { if (ok) showToast(`Výdavok ${amount.toFixed(2)} € zapísaný do Caflou`, 'ok'); });
+          .then(transferId => {
+            if (!transferId) return;
+            showToast(`Výdavok ${amount.toFixed(2)} € zapísaný do Caflou`, 'ok');
+            if (qt) { sb.from('quotes').update({ caflou_transfer_id: transferId }).eq('id', qt.id).then(null, () => {}); }
+          });
       } else {
         showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v záložke Profesisti', 'err');
       }
@@ -909,13 +913,13 @@ async function selectWinner(e, invId, reqId) {
 }
 
 async function createCaflouExpense(taskId, companyId, amount, description) {
-  if (!cfg.caflou_key || !taskId || !companyId || !amount) return false;
+  if (!cfg.caflou_key || !taskId || !companyId || !amount) return null;
   try {
     const taskR = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${taskId}`, {
       headers: { Authorization: `Bearer ${cfg.caflou_key}` }
     });
     const task = await taskR.json();
-    if (!task?.project_id) return false;
+    if (!task?.project_id) return null;
     const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
@@ -930,8 +934,10 @@ async function createCaflouExpense(taskId, companyId, amount, description) {
         date: new Date().toISOString().slice(0, 10),
       }})
     });
-    return r.ok;
-  } catch(e) { return false; }
+    if (!r.ok) return null;
+    const created = await r.json();
+    return created?.id || null;
+  } catch(e) { return null; }
 }
 
 async function cancelWinner(e, invId, reqId) {

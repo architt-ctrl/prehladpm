@@ -592,7 +592,7 @@ fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
 - `createCaflouExpense(taskId, companyId, amount, description)` v `ponuky.html` — najprv `GET /tasks/{taskId}` na zistenie `project_id`, potom `POST /transfers` s `{transfer: {kind:'expense', project_id, task_id, company_id, name, value, currency:'EUR', date: dnes}}`
 - Volané v `selectWinner` po existujúcej task_specialists/closed logike — **nie úplne fire-and-forget ako pôvodne plánované**: beží asynchrónne bez blokovania UI, ale výsledok sa hlási cez toast (úspech aj neúspech), keďže ide o finančné dáta a tichý fail by bol zavádzajúci
 - Ak profesista nemá `caflou_company_id`, výdavok sa nevytvorí a zobrazí sa upozornenie namiesto tichého no-op
-- **Známa medzera:** `cancelWinner` transfer nezmaže — ak sa výber víťaza zruší, vytvorený výdavok ostáva v Caflou. Zatiaľ sa neukladá `transfer_id` nikam, takže by sa musel dohľadávať. Zámerne nateraz neriešené, treba sa rozhodnúť či a ako.
+- **ID výdavku sa ukladá** (2026-07-03): `createCaflouExpense` vracia `id` vytvoreného transferu, `selectWinner` ho zapíše do `quotes.caflou_transfer_id` (nový stĺpec, SQL `supabase/caflou-transfer-id-setup.sql` — treba spustiť ručne). **Zámerne sa zatiaľ nepoužíva na nič ďalšie** — `cancelWinner` transfer nezmaže, len máme ID pripravené na budúce použitie. Rozhodnuté s Jozefom: túto medzeru zatiaľ neriešiť.
 
 **Stav:** Kroky 1-4 implementované, čaká sa na živé otestovanie celého flow (výber víťaza → vznik výdavku v Caflou) od Jozefa.
 
