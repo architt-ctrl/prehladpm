@@ -71,12 +71,26 @@ function harmZoradPodlaPriority(nenaplanovane) {
 
 // Hlavná funkcia: naplánuje frontu nenaplánovaných priradení voči už existujúcim (naplánovaným) priradeniam.
 // nenaplanovane / existujuceNaplanovane: [{cislo, faza_kod, projektant, poradie, trvanie_tyzdne, alokacia_percent,
-//   prioritny, termin_klient: Date|null, created_at, start_datum: Date|null, koniec_datum: Date|null}]
-// Vracia kópiu nenaplanovane s doplnenými poľami navrhovany_start / navrhovany_koniec (Date alebo null).
+//   prioritny, termin_klient: Date|null, najskor_od: Date|null, pripravene_pokracovat: boolean, created_at,
+//   start_datum: Date|null, koniec_datum: Date|null}]
+//
+// Dva nezávislé vstupy pre naplánovanie fázy:
+// 1. Kapacita - kedy má daný projektant voľno (rieši harmJeKapacitaVolna/harmNajdiNajskorsiStart)
+// 2. Pripravenosť projektu - či je vôbec odblokovaný na pokračovanie (klient schválil, povolenie prišlo...).
+//    Kým pripravene_pokracovat !== true, fáza sa VÔBEC neplánuje (nedostane navrhovany_start) - ostáva bokom
+//    medzi čakajúcimi, aj keby mal projektant kapacitu voľnú. Len čo ju niekto ručne označí ako pripravenú,
+//    zaradí sa do plánovania (s najskor_od dátumom, ak je známy, inak od dneška).
+//
+// Vracia kópiu nenaplanovane s doplnenými poľami navrhovany_start / navrhovany_koniec (Date alebo null pre
+// nepripravené položky).
 function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPercent) {
   dnes = dnes || new Date();
   maxPercent = maxPercent || 100;
-  const zoradene = harmZoradPodlaPriority(nenaplanovane);
+
+  const pripravene = nenaplanovane.filter(a => a.pripravene_pokracovat);
+  const nepripravene = nenaplanovane.filter(a => !a.pripravene_pokracovat);
+
+  const zoradene = harmZoradPodlaPriority(pripravene);
   const commited = existujuceNaplanovane.map(e => Object.assign({}, e));
   const vysledky = [];
 
@@ -85,8 +99,12 @@ function harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPerce
     const start = harmNajdiNajskorsiStart(commited, a.projektant, najskor, a.trvanie_tyzdne, a.alokacia_percent, maxPercent);
     const koniec = start ? harmPridajTyzdne(start, a.trvanie_tyzdne) : null;
     const vysledok = Object.assign({}, a, { navrhovany_start: start, navrhovany_koniec: koniec });
-    vysledky.push(Object.assign({}, vysledok, { start_datum: start, koniec_datum: koniec }));
+    vysledky.push(vysledok);
     commited.push({ cislo: a.cislo, poradie: a.poradie, projektant: a.projektant, start_datum: start, koniec_datum: koniec, alokacia_percent: a.alokacia_percent });
+  });
+
+  nepripravene.forEach(a => {
+    vysledky.push(Object.assign({}, a, { navrhovany_start: null, navrhovany_koniec: null }));
   });
 
   return vysledky;

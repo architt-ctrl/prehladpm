@@ -10,7 +10,8 @@ create table if not exists harmonogram (
   trvanie_tyzdne numeric not null,              -- odhad dĺžky fázy v týždňoch (zadáva Jozef/šéf ručne)
   alokacia_percent integer not null default 100 check (alokacia_percent > 0 and alokacia_percent <= 100),
   start_datum date,                             -- null = zatiaľ nenaplánované, algoritmus navrhne
-  najskor_od date,                              -- manuálny spodný limit štartu (napr. očakávaný dátum vybavenia povolenia/schválenia klientom) - jediný zdroj "čaká sa na niečo", žiadna fáza sa nereťazí automaticky od konca predchádzajúcej
+  pripravene_pokracovat boolean not null default false,  -- kým false, algoritmus túto fázu vôbec neplánuje (ostáva bokom medzi čakajúcimi, aj keby mal projektant voľnú kapacitu)
+  najskor_od date,                              -- manuálny spodný limit štartu (napr. očakávaný dátum vybavenia povolenia/schválenia klientom), relevantné až keď pripravene_pokracovat = true - žiadna fáza sa nereťazí automaticky od konca predchádzajúcej
   prioritny boolean not null default false,     -- záväzný termín s klientom
   termin_klient date,                           -- pevný termín, relevantné len ak prioritny = true
   poznamka text,
