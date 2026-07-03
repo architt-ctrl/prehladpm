@@ -893,7 +893,45 @@ async function selectWinner(e, invId, reqId) {
     await sb.from('requests').update({ status: 'closed' }).eq('id', reqId);
     req.status = 'closed';
   }
+  if (req?.caflou_task_id && spec) {
+    const qt = quotes.find(q => q.invitation_id === invId);
+    const amount = qt?.prices ? Object.values(qt.prices).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+    if (amount > 0) {
+      if (spec.caflou_company_id) {
+        createCaflouExpense(req.caflou_task_id, spec.caflou_company_id, amount, `${spec.name} – ${req.profession || ''}`)
+          .then(ok => { if (ok) showToast(`Výdavok ${amount.toFixed(2)} € zapísaný do Caflou`, 'ok'); });
+      } else {
+        showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v záložke Profesisti', 'err');
+      }
+    }
+  }
   refreshReqDetail(reqId);
+}
+
+async function createCaflouExpense(taskId, companyId, amount, description) {
+  if (!cfg.caflou_key || !taskId || !companyId || !amount) return false;
+  try {
+    const taskR = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${taskId}`, {
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    const task = await taskR.json();
+    if (!task?.project_id) return false;
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer: {
+        kind: 'expense',
+        project_id: task.project_id,
+        task_id: taskId,
+        company_id: companyId,
+        name: description,
+        value: amount,
+        currency: 'EUR',
+        date: new Date().toISOString().slice(0, 10),
+      }})
+    });
+    return r.ok;
+  } catch(e) { return false; }
 }
 
 async function cancelWinner(e, invId, reqId) {

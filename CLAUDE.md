@@ -582,18 +582,19 @@ fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
 - `openSpecModal` pri edite dotiahne názov firmy cez `GET /api/v1/{account}/companies/{id}` (id je uložené, meno sa nezrkadlí v Supabase)
 - `saveSpec()` ukladá `caflou_company_id` (parseInt alebo null)
 - Mimochodom opravené: `specialists` select v `loadAll()` nemal `reg` ani teraz pridaný `caflou_company_id` v zozname stĺpcov — bez toho by sa pri opätovnom otvorení edit modálu vždy zobrazovalo prázdne pole reg. čísla
-- **Ešte netestované v prehliadači** — treba po spustení SQL migrácie overiť uloženie/načítanie na reálnom profesistovi
+- Pole v UI funguje (potvrdené Jozefom); manuálna zhoda cez `ponuky.html` funguje
+- **Hromadné priradenie (2026-07-03):** skúšal som to najprv dorobiť externým Node skriptom cez Supabase REST s anon key — skript nahlásil úspech, ale nič sa reálne neuložilo (RLS na `specialists` očividne blokuje zápis mimo prihlásenej session, anon key na čítanie stačí, na zápis nie). Namiesto toho pribudlo tlačidlo **"🔗 Auto-priradiť Caflou firmy"** v záložke Profesisti (`autoAssignCaflouCompanies`, `normCompanyName`, `fetchAllCaflou` v `ponuky.html`) — beží v prihlásenom prehliadači, takže zápis prejde cez RLS. Zhoda v poradí: e-mail profesistu ↔ Caflou kontakt → jeho `company_id`; presná zhoda normalizovaného názvu firmy; meno profesistu ↔ Caflou kontakt (meno) → `company_id`. Pri teste na 60 profesistoch: 41 cez e-mail, 1 cez meno, 16 bez zhody (firmy v Caflou vôbec neexistujú — overené live-search)
 
-**Krok 3 — Suma výdavku**
-- Zdroj: `quotes.prices` (JSONB `{faza: suma}`) pre vybraného špecialistu
-- Jedna ponuka = jeden stupeň = jedna suma → zobrať hodnotu z `prices` (súčet ak viac fáz)
+**Krok 3 — HOTOVO (2026-07-03):**
+- Suma = `Object.values(qt.prices).reduce((a,b) => a + (Number(b)||0), 0)` — súčet všetkých fáz v `quotes.prices` pre víťaznú invitation
 
-**Krok 4 — Implementácia v `selectWinner`**
-- Po existujúcej logike (selected/rejected + task_specialists zápis) zavolať novú funkciu
-- `createCaflouExpense(taskId, projectCaflouId, companyId, amount, description)`
-- Fire-and-forget s `.then(null, () => {})` (rovnaký vzor ako ostatné Supabase/Caflou calls)
+**Krok 4 — HOTOVO (2026-07-03):**
+- `createCaflouExpense(taskId, companyId, amount, description)` v `ponuky.html` — najprv `GET /tasks/{taskId}` na zistenie `project_id`, potom `POST /transfers` s `{transfer: {kind:'expense', project_id, task_id, company_id, name, value, currency:'EUR', date: dnes}}`
+- Volané v `selectWinner` po existujúcej task_specialists/closed logike — **nie úplne fire-and-forget ako pôvodne plánované**: beží asynchrónne bez blokovania UI, ale výsledok sa hlási cez toast (úspech aj neúspech), keďže ide o finančné dáta a tichý fail by bol zavádzajúci
+- Ak profesista nemá `caflou_company_id`, výdavok sa nevytvorí a zobrazí sa upozornenie namiesto tichého no-op
+- **Známa medzera:** `cancelWinner` transfer nezmaže — ak sa výber víťaza zruší, vytvorený výdavok ostáva v Caflou. Zatiaľ sa neukladá `transfer_id` nikam, takže by sa musel dohľadávať. Zámerne nateraz neriešené, treba sa rozhodnúť či a ako.
 
-**Stav:** Čaká na Krok 1 (network inspect od Jozefa)
+**Stav:** Kroky 1-4 implementované, čaká sa na živé otestovanie celého flow (výber víťaza → vznik výdavku v Caflou) od Jozefa.
 
 ---
 
