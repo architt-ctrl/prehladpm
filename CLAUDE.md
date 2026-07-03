@@ -302,6 +302,32 @@ Dva tlačidlá v headeri:
 
 ## Other files
 
+### harmonogram-logic.js (ROZPRACOVANÉ — len logika, žiadne UI)
+
+Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci projekt", keď neviem koho a kedy naň priradiť. Zámerne postavené najprv ako čistá, samostatne testovateľná logika bez DOM/UI (Jozef: "najprv to vyriešme aby to správne fungovalo, potom budeme riešiť zobrazenie") — UI zatiaľ neexistuje, treba doriešiť v ďalšej session.
+
+**Rozsah:** len interný tím (architekti/projektanti), nie externí profesisti — tí majú vlastnú kapacitu/firmu, riešia sa cez `ponuky.html`. Prepojenie na externistov je len cez `podklady_datum` (pozri nižšie).
+
+**Dátový model (`supabase/harmonogram-setup.sql`, tabuľka `harmonogram`, treba spustiť ručne):**
+```
+{ cislo, faza_kod (SZ|DSP/PS|RP|UP|Studia|Inziniering — rovnaký kód ako ponuky.html requests.phases),
+  projektant, poradie (poradie fázy v rámci projektu, vynucuje sekvenciu),
+  trvanie_tyzdne (zadáva Jozef/šéf ručne), alokacia_percent (default 100, umožňuje čiastočný úväzok na viacero projektov naraz),
+  start_datum (null = nenaplánované), prioritny (záväzný termín s klientom), termin_klient, poznamka }
+```
+
+**Algoritmus (`harmonogram-logic.js`, exportuje cez `module.exports` aj pre `<script>` global):**
+- `harmJeKapacitaVolna` — pre daného projektanta a interval kontroluje, či súčet `alokacia_percent` prekrývajúcich sa priradení + nová alokácia nepresiahne 100 %
+- `harmNajdiNajskorsiStart` — posúva kandidátsky dátum po dňoch (strop 2 roky dopredu), kým nenájde voľné okno na celú dobu trvania
+- `harmNajskorMoznyStart` — vynucuje poradie fáz v rámci projektu (fáza s `poradie=N` nesmie začať skôr než skončí `poradie=N-1` toho istého `cislo`)
+- `harmZoradPodlaPriority` — `prioritny` projekty prv (podľa `termin_klient` ASC), inak podľa `created_at`
+- `harmNaplanujFrontu(nenaplanovane, existujuceNaplanovane, dnes, maxPercent)` — hlavná funkcia, spracuje frontu v poradí priority, každé naplánované priradenie sa hneď "commitne" do kontextu pre ďalšie v poradí (greedy, nie globálne optimálne, ale zodpovedá tomu, ako by to robil človek ručne)
+- `harmNajdiNavrhyPreDopyty(harmonogramZaznamy, requests)` — prepojenie na `ponuky.html`: keď sa naplánuje interná fáza, navrhne `podklady_datum` (MVP predpoklad: podklady sú hotové hneď na začiatku fázy, nie na konci — treba overiť v praxi, môže byť potrebný offset) pre dopyty rovnakého `cislo`+`faza_kod`, **nikdy neprepíše už ručne zadaný `podklady_datum`**
+
+**Overené testom** (`scratchpad/test-harmonogram.js`, nekomitnuté, len na overenie): 3 projektanti, prekrývajúce sa čiastočné alokácie, poradie fáz v rámci projektu, priorita, aj prepojenie na `ponuky.html` — všetky kontroly OK vrátane exhaustívnej kontroly, že nikto nikdy nepresiahne 100 % v žiadnom dni.
+
+**Nedorobené / ďalší krok:** UI (nový modul vs. rozšírenie `index.html`/`ponuky.html` — nerozhodnuté), skutočné napojenie na Supabase (zatiaľ len in-memory funkcie), rozhodnúť o offsete pre `podklady_datum`, prepis existujúcich `requests.podklady_datum` návrhom (zatiaľ len navrhuje, nezapisuje).
+
 ### ponuky.html
 
 Profession quotes management module. Accessible at `ponuky.html` (linked from `index.html` via `module-nav`).
