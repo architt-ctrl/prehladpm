@@ -10,6 +10,8 @@ Live URL: `https://architt-ctrl.github.io/prehladpm/`
 
 To deploy changes: `git add index.html && git commit -m "..." && git push origin main`, then hard-refresh the browser (Ctrl+Shift+R).
 
+**Pages deploy občas zlyháva (2026-07-03: 5× za deň):** krok „Deploy to GitHub Pages" padá bez udanej príčiny aj keď build prejde (githubstatus.com hlási všetko OK — pravdepodobne tichý limit/flakiness). Kontrola: `curl -s "https://api.github.com/repos/architt-ctrl/prehladpm/actions/runs?per_page=5"` (verejné API, netreba auth). **Ak po zlyhanom builde nenasleduje úspešný, zmena NIE JE na webe** — retrigger: `git commit --allow-empty -m "Retrigger Pages deploy" && git push`. Overenie nasadenia: `curl` živej URL s `?v=timestamp` a grep na novú zmenu. Git na tomto počítači potreboval nastaviť identitu lokálne (`git config user.name/user.email` podľa predchádzajúcich komitov — jozefperichta-ctrl / jozef.perichta@architt.sk); `git gc` na sieťovom disku I: presahuje 2-min timeout, používať `git -c gc.auto=0`.
+
 ## Architecture
 
 Everything lives in `index.html`. Structure:
@@ -295,6 +297,7 @@ Dva tlačidlá v headeri:
 - **Interaktívny modal** — mení status (`intTimSetStatus`) a ukončuje (`intTimFinishTask`) priamo v modáli bez zatvorenia
 - Raw data v `_intTimData = {tasks, projects}`, HTML generuje `buildIntTimHtml(data)` pri každej zmene
 - `_intTimData = null` v `syncData()` → vynutí refetch pri ďalšom otvorení
+- **Úlohy v karte člena zoskupené podľa projektu (2026-07-03, Jozef):** hlavička skupiny = číslo (sivé) + názov projektu (tučný) raz, úlohy pod ňou odsadené bez opakovania čísla; skupiny zoradené podľa čísla projektu
 
 ### Vyhľadávanie projektov
 
@@ -348,7 +351,9 @@ Studia a Inžiniering podpodfázy nemajú (`podpodfaza = null`).
 - Návrhy `podklady_datum` sa LEN vracajú, do `requests` sa nezapisujú (rozhodnuté — čaká na UI so schvaľovaním)
 - Overené živým testom proti Supabase (insert → plánovanie → kontrola zápisu → cleanup); PostgREST bulk insert vyžaduje rovnaké kľúče vo všetkých objektoch
 
-**UI (`harmonogram.html`, HOTOVO 2026-07-03):** samostatný modul (rozhodnuté — nie rozšírenie index.html), rovnaký vzor ako `ponuky.html`: DM Sans CSS, `module-nav` (linky doplnené do index/ponuky/suhrn), optimistic auth + magic link, Caflou project autocomplete cez `cfg` (`pmCfg3`), `showToast`. Načítava `harmonogram-logic.js` + `harmonogram-data.js` ako `<script>` (v tomto poradí — data vrstva očakáva funkcie logiky na `window`).
+**UI (`harmonogram.html`, HOTOVO 2026-07-03):** samostatný modul (rozhodnuté — nie rozšírenie index.html), rovnaký vzor ako `ponuky.html`: DM Sans CSS, `module-nav` (linky doplnené do index/ponuky/suhrn), optimistic auth + magic link, Caflou project autocomplete cez `cfg` (`pmCfg3`), `showToast`. Načítava `harmonogram-logic.js` + `harmonogram-data.js` ako `<script>` (v tomto poradí — data vrstva očakáva funkcie logiky na `window`). V `index.html` je okrem module-nav aj **tlačidlo 📅 Harmonogram v hlavičke** vedľa „Ponuky" — Jozef navigáciu hľadá v ikonových tlačidlách vpravo hore, nie v tmavej module-nav lište.
+
+**Supabase Auth URL Configuration (gotcha, vyriešené 2026-07-03):** magic link presmeruje len na adresy v allow-liste — `emailRedirectTo` mimo zoznamu potichu spadne na **Site URL** (bola defaultná `http://localhost:3000` → „Web localhost zamietol pripojenie"). Nastavené v Supabase Dashboard → Authentication → URL Configuration: Site URL = `https://architt-ctrl.github.io/prehladpm/`, Redirect URLs = `https://architt-ctrl.github.io/prehladpm/*` (wildcard pokrýva aj budúce moduly — nový modul teda netreba pridávať). Súvisiace poznatky: cieľ presmerovania sa do linku zapeká pri odoslaní (staré e-maily ostávajú rozbité aj po oprave konfigurácie); vstavaný SMTP má tvrdý rate limit (~pár mailov/hod → „email rate limit exceeded"); session sa zdieľa medzi modulmi cez localStorage (prihlásenie v ponuky.html platí aj pre harmonogram.html); ak link skončí na localhost s `#access_token=...` v URL, session sa dá zachrániť prepísaním origin časti adresy na správnu doménu so zachovaním hashu.
 - **Vyťaženie tímu** — týždenná mapa 26 týždňov: bunka = projektant × týždeň, farba podľa súčtu alokácií (0 / <50 / <100 / 100 / >100 červená), tooltip s rozpisom fáz. `HARM_PROJEKTANTI` — hardcoded mená z `CAFLOU_USERS`
 - **Naplánované fázy** — zoskupené per projektant, s "voľná plná kapacita od" (max koniec), ✎ edit / ↺ zrušiť naplánovanie (`start_datum = null`) / ✕ vymazať
 - **Čakajúce fázy** — dve skupiny: pripravené (zoradené `harmZoradPodlaPriority`) a nepripravené (`harmZoradPodlaOzvani`); tlačidlo ▶/⏸ prepína `pripravene_pokracovat`
