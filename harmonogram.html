@@ -302,7 +302,6 @@ const POD_SKRATKA = { 'príprava pre profesie':'príprava', 'koordinácia s prof
 let rows = [];          // logic-tvar riadky (Date objekty, koniec_datum dopočítaný) z harmRowToLogic
 let rawById = {};       // id -> surový DB riadok (pre edit formulár)
 let simById = {};       // id -> {realny_koniec, spomalene} zo simulácie reálneho priebehu (prekryvy nad 100 %)
-let _ganttInitialScrollDone = false; // len pri prvom vykreslení grafu nastaví scroll tak, aby bol dnešok cca v 1. tretine
 let caflouProjects = [];
 let caflouNames = {};   // cislo -> názov projektu (len na zobrazenie)
 let editFazaId = null;
@@ -413,6 +412,11 @@ const DW = 28; // px na deň
 
 function renderTimeline() {
   const el = document.getElementById('timeline');
+  // renderTimeline() sa volá opakovane (po syncData, po každej akcii...) a innerHTML sa vždy
+  // celý nahradí -> vznikne nový #ganttScrollCol so scrollLeft 0. Ak už predtým existoval, jeho
+  // pozíciu si zapamätáme a po prekreslení obnovíme - inak by graf pri každom refreshi skočil na začiatok.
+  const prevScrollCol = document.getElementById('ganttScrollCol');
+  const prevScrollLeft = prevScrollCol ? prevScrollCol.scrollLeft : null;
   const planned = rows.filter(r => r.start_datum);
   if (!planned.length) { el.innerHTML = '<div class="empty">Zatiaľ nič naplánované</div>'; return; }
 
@@ -516,11 +520,13 @@ function renderTimeline() {
     <div class="gantt-legend"><span><i style="background:var(--red)"></i>dnes</span><span><i style="background:rgba(44,40,37,.15)"></i>víkend</span><span>farba pruhu = projekt · šrafovanie = spomalené súbehom prác</span></div>
   `;
 
-  // pri prvom otvorení grafu odscrolluj tak, aby bol dnešok cca v 1. tretine CELEJ viditeľnej
-  // plochy grafu (vrátane fixného 150px stĺpca s menami, ktorý sa neposúva)
   const scrollCol = document.getElementById('ganttScrollCol');
-  if (!_ganttInitialScrollDone) {
-    _ganttInitialScrollDone = true;
+  if (prevScrollLeft !== null) {
+    // re-render (nie prvé otvorenie) - zachovaj tam, kde bol používateľ odscrollovaný
+    scrollCol.scrollLeft = prevScrollLeft;
+  } else {
+    // prvé otvorenie grafu - odscrolluj tak, aby bol dnešok cca v 1. tretine CELEJ viditeľnej
+    // plochy grafu (vrátane fixného 150px stĺpca s menami, ktorý sa neposúva)
     const namesW = document.querySelector('.gantt-names-col').getBoundingClientRect().width;
     const totalVisible = namesW + scrollCol.clientWidth;
     const target = todayLeft + namesW - totalVisible / 3;
