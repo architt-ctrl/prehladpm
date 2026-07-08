@@ -62,21 +62,23 @@
 
     .proj-hdr{padding:9px 14px;font-size:13px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
 
-    /* Gantt */
-    .gantt-wrap{overflow-x:auto;overflow-y:hidden}
-    .gantt-head{display:flex;position:sticky;top:0;z-index:3;background:var(--bg2);border-bottom:1px solid var(--border)}
-    .gantt-head-name{width:150px;min-width:150px;position:sticky;left:0;z-index:4;background:var(--bg2);border-right:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+    /* Gantt — stĺpec s menami je mimo scrollovanej oblasti (nie sticky), takže je vidno vždy bez ohľadu na scroll */
+    .gantt-wrap{}
+    .gantt-flex{display:flex;align-items:flex-start}
+    .gantt-names-col{flex:0 0 150px;width:150px;background:var(--bg2);border-right:1px solid var(--border)}
+    .gantt-names-head{height:39px;display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.02em;border-bottom:1px solid var(--border);box-sizing:border-box}
+    .gantt-name-cell{display:flex;align-items:center;padding:0 12px;font-weight:600;font-size:13px;border-bottom:1px solid var(--border);box-sizing:border-box}
+    .gantt-name-cell:last-child{border-bottom:none}
+    .gantt-scroll-col{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
     .gantt-head-days{display:flex;flex-direction:column}
     .gantt-months{display:flex;height:22px}
     .gantt-month{font-size:12px;font-weight:600;color:var(--text2);border-left:1px solid var(--border);padding-left:5px;line-height:22px;white-space:nowrap;overflow:hidden;text-transform:capitalize}
-    .gantt-days{display:flex;height:17px;border-top:1px solid var(--border)}
+    .gantt-days{display:flex;height:17px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
     .gantt-day{font-size:9px;color:var(--text3);text-align:center;line-height:17px}
     .gantt-day.we{background:rgba(44,40,37,.045);color:var(--text3)}
     .gantt-body{display:flex;flex-direction:column}
-    .gantt-row{display:flex;border-bottom:1px solid var(--border)}
-    .gantt-row:last-child{border-bottom:none}
-    .gantt-row-name{width:150px;min-width:150px;position:sticky;left:0;z-index:2;background:var(--bg2);border-right:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-weight:600;font-size:13px}
-    .gantt-row-track{position:relative}
+    .gantt-row-track{position:relative;border-bottom:1px solid var(--border);box-sizing:border-box}
+    .gantt-row-track:last-child{border-bottom:none}
     .gantt-bar{position:absolute;height:24px;border-radius:5px;display:flex;align-items:center;padding:0 7px;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.18);transition:filter .1s}
     .gantt-bar:hover{filter:brightness(1.08)}
     .gantt-bar-lbl{color:#fff;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 1px rgba(0,0,0,.25)}
@@ -492,30 +494,34 @@ function renderTimeline() {
       </div>`;
     }).join('');
     const todayLine = (todayLeft >= 0 && todayLeft <= totalDays * DW) ? `<div class="gantt-today" style="left:${todayLeft}px"></div>` : '';
-    return `<div class="gantt-row" style="height:${laneCount * ROWH}px">
-      <div class="gantt-row-name">${esc(m)}</div>
-      <div class="gantt-row-track" style="width:${totalDays * DW}px;${trackBg}">${todayLine}${barsHtml}</div>
-    </div>`;
+    return `<div class="gantt-row-track" style="height:${laneCount * ROWH}px;width:${totalDays * DW}px;${trackBg}">${todayLine}${barsHtml}</div>`;
   }).join('');
 
+  const namesHtml = mena.map(m => `<div class="gantt-name-cell" style="height:${personLanes[m].laneCount * ROWH}px">${esc(m)}</div>`).join('');
+
   el.innerHTML = `
-    <div class="gantt-head">
-      <div class="gantt-head-name">Projektant</div>
-      <div class="gantt-head-days">
-        <div class="gantt-months">${monthCells}</div>
-        <div class="gantt-days">${dayCells}</div>
+    <div class="gantt-flex">
+      <div class="gantt-names-col">
+        <div class="gantt-names-head">Projektant</div>
+        ${namesHtml}
+      </div>
+      <div class="gantt-scroll-col" id="ganttScrollCol">
+        <div class="gantt-head-days">
+          <div class="gantt-months">${monthCells}</div>
+          <div class="gantt-days">${dayCells}</div>
+        </div>
+        <div class="gantt-body">${rowsHtml}</div>
       </div>
     </div>
-    <div class="gantt-body">${rowsHtml}</div>
     <div class="gantt-legend"><span><i style="background:var(--red)"></i>dnes</span><span><i style="background:rgba(44,40,37,.15)"></i>víkend</span><span>farba pruhu = projekt · šrafovanie = spomalené súbehom prác</span></div>
   `;
 
   // pri prvom otvorení grafu odscrolluj tak, aby bol dnešok cca v 1. tretine viditeľnej plochy
-  // (meno projektanta má fixnú šírku 150px, tá zo scrollu vždy "ukrajuje" naľavo)
+  const scrollCol = document.getElementById('ganttScrollCol');
   if (!_ganttInitialScrollDone) {
     _ganttInitialScrollDone = true;
-    const target = 150 + todayLeft - el.clientWidth / 3;
-    el.scrollLeft = Math.max(0, Math.min(target, el.scrollWidth - el.clientWidth));
+    const target = todayLeft - scrollCol.clientWidth / 3;
+    scrollCol.scrollLeft = Math.max(0, Math.min(target, scrollCol.scrollWidth - scrollCol.clientWidth));
   }
 }
 
