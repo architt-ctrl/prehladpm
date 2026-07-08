@@ -62,17 +62,29 @@
 
     .proj-hdr{padding:9px 14px;font-size:13px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
 
-    /* Timeline */
-    .tl-wrap{overflow-x:auto;padding:8px 14px 14px}
-    .tl-table{border-collapse:collapse}
-    .tl-table td,.tl-table th{padding:0}
-    .tl-name{font-size:12px;font-weight:500;padding-right:10px!important;white-space:nowrap;text-align:left}
-    .tl-cell{width:20px;height:20px;min-width:20px;border:1px solid var(--bg2);border-radius:3px;background:var(--bg3)}
-    .tl-cell.l1{background:#cde9d8}
-    .tl-cell.l2{background:#63b98a}
-    .tl-cell.l3{background:var(--green)}
-    .tl-cell.over{background:var(--red)}
-    .tl-mon{font-size:10px;color:var(--text3);text-align:left;font-weight:500;padding-bottom:3px!important;white-space:nowrap}
+    /* Gantt */
+    .gantt-wrap{overflow-x:auto;overflow-y:hidden}
+    .gantt-head{display:flex;position:sticky;top:0;z-index:3;background:var(--bg2);border-bottom:1px solid var(--border)}
+    .gantt-head-name{width:150px;min-width:150px;position:sticky;left:0;z-index:4;background:var(--bg2);border-right:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+    .gantt-head-days{display:flex;flex-direction:column}
+    .gantt-months{display:flex;height:22px}
+    .gantt-month{font-size:12px;font-weight:600;color:var(--text2);border-left:1px solid var(--border);padding-left:5px;line-height:22px;white-space:nowrap;overflow:hidden;text-transform:capitalize}
+    .gantt-days{display:flex;height:17px;border-top:1px solid var(--border)}
+    .gantt-day{font-size:9px;color:var(--text3);text-align:center;line-height:17px}
+    .gantt-day.we{background:rgba(44,40,37,.045);color:var(--text3)}
+    .gantt-body{display:flex;flex-direction:column}
+    .gantt-row{display:flex;border-bottom:1px solid var(--border)}
+    .gantt-row:last-child{border-bottom:none}
+    .gantt-row-name{width:150px;min-width:150px;position:sticky;left:0;z-index:2;background:var(--bg2);border-right:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-weight:600;font-size:13px}
+    .gantt-row-track{position:relative}
+    .gantt-bar{position:absolute;height:24px;border-radius:5px;display:flex;align-items:center;padding:0 7px;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,.18);transition:filter .1s}
+    .gantt-bar:hover{filter:brightness(1.08)}
+    .gantt-bar-lbl{color:#fff;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 1px rgba(0,0,0,.25)}
+    .gantt-bar-extra{position:absolute;top:0;bottom:0;right:0;background-image:repeating-linear-gradient(45deg, rgba(255,255,255,.4) 0 4px, rgba(255,255,255,.12) 4px 8px);border-radius:0 5px 5px 0}
+    .gantt-today{position:absolute;top:0;bottom:0;width:2px;background:var(--red);z-index:2;pointer-events:none}
+    .gantt-legend{display:flex;align-items:center;gap:14px;padding:8px 14px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);flex-wrap:wrap}
+    .gantt-legend span{display:inline-flex;align-items:center;gap:5px}
+    .gantt-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
 
     .frow{margin-bottom:14px}
     .frow label{display:block;font-size:12px;color:var(--text2);font-weight:500;margin-bottom:5px}
@@ -152,8 +164,8 @@
       <button class="btn btn-grn btn-sm" id="btnPlan" onclick="naplanovat()">⚡ Naplánovať čakajúce</button>
     </div>
 
-    <div class="sec-title">Vyťaženie tímu (najbližších 26 týždňov)</div>
-    <div class="card"><div class="tl-wrap" id="timeline"><div class="empty">Načítavam…</div></div></div>
+    <div class="sec-title">Harmonogram tímu</div>
+    <div class="card"><div class="gantt-wrap" id="timeline"><div class="empty">Načítavam…</div></div></div>
 
     <div class="sec-title">Naplánované fázy</div>
     <div class="card" id="planList"><div class="empty">Načítavam…</div></div>
@@ -385,49 +397,117 @@ function fazaBadges(r) {
   return h;
 }
 
+function diffDays(a, b) { return Math.round((b - a) / 86400000); }
+
+function projColor(cislo) {
+  let h = 0;
+  const s = String(cislo || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360},52%,42%)`;
+}
+
+const DW = 28; // px na deň
+
 function renderTimeline() {
   const el = document.getElementById('timeline');
   const planned = rows.filter(r => r.start_datum);
   if (!planned.length) { el.innerHTML = '<div class="empty">Zatiaľ nič naplánované</div>'; return; }
 
-  // pondelok aktuálneho týždňa
-  const dnes = new Date(); dnes.setHours(0,0,0,0);
-  const monday = new Date(dnes.getTime() - ((dnes.getDay() + 6) % 7) * 86400000);
-  const WEEKS = 26;
+  const realEndOf = r => (simById[r.id] && simById[r.id].realny_koniec) || r.koniec_datum;
+  const dnes = new Date(); dnes.setHours(0, 0, 0, 0);
+
+  // rozsah grafu: od pondelka týždňa najskoršieho štartu (aj v minulosti, ak už niečo beží)
+  // po najneskorší reálny koniec + rezerva, zhora orezané na max. cca 18 mesiacov
+  const earliestStart = planned.reduce((m, r) => r.start_datum < m ? r.start_datum : m, dnes);
+  const rangeStart = new Date(earliestStart.getTime() - ((earliestStart.getDay() + 6) % 7) * 86400000);
+  const latestEnd = planned.reduce((m, r) => { const e = realEndOf(r); return e > m ? e : m; }, dnes);
+  const rangeEndPad = new Date(latestEnd.getTime() + 14 * 86400000);
+  const totalDays = Math.min(Math.max(diffDays(rangeStart, rangeEndPad), 60), 560);
 
   const mena = HARM_PROJEKTANTI.filter(m => planned.some(r => r.projektant === m))
     .concat([...new Set(planned.map(r => r.projektant))].filter(m => !HARM_PROJEKTANTI.includes(m)));
 
-  // hlavička s mesiacmi
-  let monRow = '<tr><th></th>';
-  let lastMon = -1;
-  for (let w = 0; w < WEEKS; w++) {
-    const ws = new Date(monday.getTime() + w * 7 * 86400000);
-    if (ws.getMonth() !== lastMon) {
-      lastMon = ws.getMonth();
-      monRow += `<th class="tl-mon">${ws.toLocaleDateString('sk', {month:'short'})}</th>`;
-    } else monRow += '<th></th>';
-  }
-  monRow += '</tr>';
+  // lanes: v rámci projektanta sa prekrývajúce sa pruhy uložia do samostatných riadkov (lane)
+  const personLanes = {};
+  mena.forEach(m => {
+    const bars = planned.filter(r => r.projektant === m)
+      .map(r => ({ r, start: r.start_datum, end: realEndOf(r) }))
+      .sort((a, b) => a.start - b.start);
+    const laneEnds = [];
+    const withLane = bars.map(b => {
+      let lane = laneEnds.findIndex(e => e <= b.start);
+      if (lane === -1) { lane = laneEnds.length; laneEnds.push(b.end); }
+      else laneEnds[lane] = b.end;
+      return { r: b.r, lane };
+    });
+    personLanes[m] = { laneCount: Math.max(1, laneEnds.length), bars: withLane };
+  });
 
-  const body = mena.map(m => {
-    let cells = '';
-    for (let w = 0; w < WEEKS; w++) {
-      const ws = new Date(monday.getTime() + w * 7 * 86400000);
-      const we = new Date(ws.getTime() + 7 * 86400000);
-      const hits = planned.filter(r => {
-        const kon = (simById[r.id] && simById[r.id].realny_koniec) || r.koniec_datum;
-        return r.projektant === m && r.start_datum < we && ws < kon;
-      });
-      const load = hits.reduce((s, r) => s + r.alokacia_percent, 0);
-      const cls = load > 100 ? 'over' : load >= 100 ? 'l3' : load >= 50 ? 'l2' : load > 0 ? 'l1' : '';
-      const tip = hits.length ? `${fmtD(ws)} • ${Math.min(load, 100)}%${load > 100 ? ' — kapacita plná, časť prác postupuje pomalšie' : ''}\n` + hits.map(r => `${r.cislo} ${r.faza_kod}${r.podpodfaza ? ' ('+POD_SKRATKA[r.podpodfaza]+')' : ''} ${r.alokacia_percent}%`).join('\n') : '';
-      cells += `<td><div class="tl-cell ${cls}" title="${esc(tip)}"></div></td>`;
-    }
-    return `<tr><td class="tl-name">${esc(m)}</td>${cells}</tr>`;
+  const ROWH = 30; // px na lane
+
+  // hlavička: mesiace + dni
+  let monthCells = '', lastKey = null, span = 0, spanStartIdx = 0;
+  const monthChunks = [];
+  for (let d = 0; d < totalDays; d++) {
+    const dt = new Date(rangeStart.getTime() + d * 86400000);
+    const key = dt.getFullYear() + '-' + dt.getMonth();
+    if (key !== lastKey) {
+      if (lastKey !== null) monthChunks.push({ span, idx: spanStartIdx });
+      lastKey = key; span = 1; spanStartIdx = d;
+    } else span++;
+  }
+  monthChunks.push({ span, idx: spanStartIdx });
+  monthCells = monthChunks.map(c => {
+    const dt = new Date(rangeStart.getTime() + c.idx * 86400000);
+    return `<div class="gantt-month" style="width:${c.span * DW}px">${dt.toLocaleDateString('sk', { month: 'long', year: 'numeric' })}</div>`;
   }).join('');
 
-  el.innerHTML = `<table class="tl-table">${monRow}${body}</table>`;
+  let dayCells = '';
+  for (let d = 0; d < totalDays; d++) {
+    const dt = new Date(rangeStart.getTime() + d * 86400000);
+    const we = dt.getDay() === 0 || dt.getDay() === 6;
+    dayCells += `<div class="gantt-day${we ? ' we' : ''}" style="width:${DW}px">${dt.getDate()}</div>`;
+  }
+
+  const todayLeft = diffDays(rangeStart, dnes) * DW;
+  const trackBg = `background-image:
+      repeating-linear-gradient(to right, var(--border) 0, var(--border) 1px, transparent 1px, transparent ${DW}px),
+      repeating-linear-gradient(to right, transparent 0, transparent ${5 * DW}px, rgba(44,40,37,.045) ${5 * DW}px, rgba(44,40,37,.045) ${7 * DW}px)`;
+
+  const rowsHtml = mena.map(m => {
+    const { laneCount, bars } = personLanes[m];
+    const barsHtml = bars.map(({ r, lane }) => {
+      const left = diffDays(rangeStart, r.start_datum) * DW;
+      const realEnd = realEndOf(r);
+      const nominalW = Math.max(diffDays(r.start_datum, r.koniec_datum) * DW, 8);
+      const totalW = Math.max(diffDays(r.start_datum, realEnd) * DW, 8);
+      const spomalene = simById[r.id] && simById[r.id].spomalene && totalW > nominalW;
+      const color = projColor(r.cislo);
+      const label = `${r.cislo} ${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' · ' + (POD_SKRATKA[r.podpodfaza] || '') : ''}`;
+      const tip = `${projLabel(r.cislo)}\n${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' – ' + r.podpodfaza : ''}\n${fmtD(r.start_datum)} – ${fmtD(r.koniec_datum)}${spomalene ? ` (reálne do ${fmtD(realEnd)})` : ''}\n${r.alokacia_percent}% kapacity${r.poznamka ? '\n' + r.poznamka : ''}`;
+      const extra = spomalene ? `<div class="gantt-bar-extra" style="width:${totalW - nominalW}px"></div>` : '';
+      return `<div class="gantt-bar" style="left:${left}px;width:${totalW}px;top:${lane * ROWH + 3}px;background:${color}" title="${esc(tip)}" onclick="openFazaModal('${r.id}')">
+        <span class="gantt-bar-lbl">${esc(label)}</span>${extra}
+      </div>`;
+    }).join('');
+    const todayLine = (todayLeft >= 0 && todayLeft <= totalDays * DW) ? `<div class="gantt-today" style="left:${todayLeft}px"></div>` : '';
+    return `<div class="gantt-row" style="height:${laneCount * ROWH}px">
+      <div class="gantt-row-name">${esc(m)}</div>
+      <div class="gantt-row-track" style="width:${totalDays * DW}px;${trackBg}">${todayLine}${barsHtml}</div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="gantt-head">
+      <div class="gantt-head-name">Projektant</div>
+      <div class="gantt-head-days">
+        <div class="gantt-months">${monthCells}</div>
+        <div class="gantt-days">${dayCells}</div>
+      </div>
+    </div>
+    <div class="gantt-body">${rowsHtml}</div>
+    <div class="gantt-legend"><span><i style="background:var(--red)"></i>dnes</span><span><i style="background:rgba(44,40,37,.15)"></i>víkend</span><span>farba pruhu = projekt · šrafovanie = spomalené súbehom prác</span></div>
+  `;
 }
 
 function rowActions(r) {
