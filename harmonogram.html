@@ -426,12 +426,13 @@ function renderTimeline() {
   const dnes = new Date(); dnes.setHours(0, 0, 0, 0);
 
   // rozsah grafu: od pondelka týždňa najskoršieho štartu (aj v minulosti, ak už niečo beží)
-  // po najneskorší reálny koniec + rezerva, zhora orezané na max. cca 18 mesiacov
+  // po najneskorší reálny koniec + rezerva. Horný strop je len poistka proti chybným dátam
+  // (napr. rok 9999) - reálne projekty musia vždy dostať celú svoju dĺžku, horizontálny scroll to unesie.
   const earliestStart = planned.reduce((m, r) => r.start_datum < m ? r.start_datum : m, dnes);
   const rangeStart = new Date(earliestStart.getTime() - ((earliestStart.getDay() + 6) % 7) * 86400000);
   const latestEnd = planned.reduce((m, r) => { const e = realEndOf(r); return e > m ? e : m; }, dnes);
   const rangeEndPad = new Date(latestEnd.getTime() + 14 * 86400000);
-  const totalDays = Math.min(Math.max(diffDays(rangeStart, rangeEndPad), 60), 560);
+  const totalDays = Math.min(Math.max(diffDays(rangeStart, rangeEndPad), 60), 3650);
 
   const mena = HARM_PROJEKTANTI.filter(m => planned.some(r => r.projektant === m))
     .concat([...new Set(planned.map(r => r.projektant))].filter(m => !HARM_PROJEKTANTI.includes(m)));
