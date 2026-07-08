@@ -300,6 +300,7 @@ const POD_SKRATKA = { 'príprava pre profesie':'príprava', 'koordinácia s prof
 let rows = [];          // logic-tvar riadky (Date objekty, koniec_datum dopočítaný) z harmRowToLogic
 let rawById = {};       // id -> surový DB riadok (pre edit formulár)
 let simById = {};       // id -> {realny_koniec, spomalene} zo simulácie reálneho priebehu (prekryvy nad 100 %)
+let _ganttInitialScrollDone = false; // len pri prvom vykreslení grafu nastaví scroll tak, aby bol dnešok cca v 1. tretine
 let caflouProjects = [];
 let caflouNames = {};   // cislo -> názov projektu (len na zobrazenie)
 let editFazaId = null;
@@ -508,6 +509,14 @@ function renderTimeline() {
     <div class="gantt-body">${rowsHtml}</div>
     <div class="gantt-legend"><span><i style="background:var(--red)"></i>dnes</span><span><i style="background:rgba(44,40,37,.15)"></i>víkend</span><span>farba pruhu = projekt · šrafovanie = spomalené súbehom prác</span></div>
   `;
+
+  // pri prvom otvorení grafu odscrolluj tak, aby bol dnešok cca v 1. tretine viditeľnej plochy
+  // (meno projektanta má fixnú šírku 150px, tá zo scrollu vždy "ukrajuje" naľavo)
+  if (!_ganttInitialScrollDone) {
+    _ganttInitialScrollDone = true;
+    const target = 150 + todayLeft - el.clientWidth / 3;
+    el.scrollLeft = Math.max(0, Math.min(target, el.scrollWidth - el.clientWidth));
+  }
 }
 
 function rowActions(r) {
