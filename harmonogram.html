@@ -484,7 +484,7 @@ function renderTimeline() {
       const totalW = Math.max(diffDays(r.start_datum, realEnd) * DW, 8);
       const spomalene = simById[r.id] && simById[r.id].spomalene && totalW > nominalW;
       const color = projColor(r.cislo);
-      const label = `${r.cislo} ${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' · ' + (POD_SKRATKA[r.podpodfaza] || '') : ''}`;
+      const label = `${projLabel(r.cislo)} · ${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' · ' + (POD_SKRATKA[r.podpodfaza] || '') : ''}`;
       const tip = `${projLabel(r.cislo)}\n${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' – ' + r.podpodfaza : ''}\n${fmtD(r.start_datum)} – ${fmtD(r.koniec_datum)}${spomalene ? ` (reálne do ${fmtD(realEnd)})` : ''}\n${r.alokacia_percent}% kapacity${r.poznamka ? '\n' + r.poznamka : ''}`;
       const extra = spomalene ? `<div class="gantt-bar-extra" style="width:${totalW - nominalW}px"></div>` : '';
       return `<div class="gantt-bar" style="left:${left}px;width:${totalW}px;top:${lane * ROWH + 3}px;background:${color}" title="${esc(tip)}" onclick="openFazaModal('${r.id}')">
