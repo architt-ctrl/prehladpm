@@ -516,11 +516,14 @@ function renderTimeline() {
     <div class="gantt-legend"><span><i style="background:var(--red)"></i>dnes</span><span><i style="background:rgba(44,40,37,.15)"></i>víkend</span><span>farba pruhu = projekt · šrafovanie = spomalené súbehom prác</span></div>
   `;
 
-  // pri prvom otvorení grafu odscrolluj tak, aby bol dnešok cca v 1. tretine viditeľnej plochy
+  // pri prvom otvorení grafu odscrolluj tak, aby bol dnešok cca v 1. tretine CELEJ viditeľnej
+  // plochy grafu (vrátane fixného 150px stĺpca s menami, ktorý sa neposúva)
   const scrollCol = document.getElementById('ganttScrollCol');
   if (!_ganttInitialScrollDone) {
     _ganttInitialScrollDone = true;
-    const target = todayLeft - scrollCol.clientWidth / 3;
+    const namesW = document.querySelector('.gantt-names-col').getBoundingClientRect().width;
+    const totalVisible = namesW + scrollCol.clientWidth;
+    const target = todayLeft + namesW - totalVisible / 3;
     scrollCol.scrollLeft = Math.max(0, Math.min(target, scrollCol.scrollWidth - scrollCol.clientWidth));
   }
 }
