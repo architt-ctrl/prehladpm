@@ -41,6 +41,8 @@
 
     .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
     .card+.card{margin-top:12px}
+    /* Gantt graf pretiahnutý cez celú šírku okna (nie len max-width .main) - potrebuje čo najviac miesta na dni */
+    .card-wide{width:calc(100vw - 32px);max-width:calc(100vw - 32px);margin-left:calc(50% - 50vw + 16px)}
     .sec-title{font-size:14px;font-weight:600;margin:20px 0 8px}
     .sec-title:first-child{margin-top:0}
 
@@ -167,7 +169,7 @@
     </div>
 
     <div class="sec-title">Harmonogram tímu</div>
-    <div class="card"><div class="gantt-wrap" id="timeline"><div class="empty">Načítavam…</div></div></div>
+    <div class="card card-wide"><div class="gantt-wrap" id="timeline"><div class="empty">Načítavam…</div></div></div>
 
     <div class="sec-title">Naplánované fázy</div>
     <div class="card" id="planList"><div class="empty">Načítavam…</div></div>
