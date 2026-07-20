@@ -1313,6 +1313,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 // ── STATE ─────────────────────────────────────────────────────────────────
+const DEFAULT_TITLE = document.title;
 let projects  = [];
 let ponuky    = JSON.parse(localStorage.getItem('pmPonuky3') || '[]');
 let budgets   = JSON.parse(localStorage.getItem('pmBudgets') || '{}');
@@ -2097,6 +2098,11 @@ function emptyHtml(msg) {
   return `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>${msg}</div>`;
 }
 
+function folderSearchLink(cislo) {
+  const loc = 'H:\\Spoločné disky\\1_PROJEKTY';
+  return `search-ms:query=${encodeURIComponent(cislo)}&crumb=location:${encodeURIComponent(loc)}`;
+}
+
 function projRowHtml(p) {
   const gem = geminiMap[p.cislo] || '';
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
@@ -2116,6 +2122,10 @@ function projRowHtml(p) {
         ${gem ? `<div class="prow-gemini" id="gem-row-${p.cislo}">${gem}</div>` : `<div class="prow-gemini" id="gem-row-${p.cislo}" style="display:none"></div>`}
       </div>
       <div id="pd-deadline-row-${p.cislo}" class="prow-days ${dlCls}" title="${p.deadline ? 'Termín ukončenia: '+p.deadline.getDate()+'.'+(p.deadline.getMonth()+1)+'.'+p.deadline.getFullYear() : ''}">${dlStr}</div>
+      <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
+        style="background:none;border:1px solid var(--border);border-radius:5px;
+        width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
+        display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -3555,6 +3565,7 @@ function toggleProjDetail(cislo, e) {
   el.classList.toggle('open');
   if (!wasOpen) {
     const p = projects.find(x => x.cislo === cislo);
+    document.title = p?.nazov || DEFAULT_TITLE;
     caflouTaskFazaFilter[cislo] = CAFLOU_STATUS_TO_FAZA_TAG[p?.caflou_status] || null;
     if (p?.caflou_id && !caflouTasksCache[cislo]) loadCaflouTasks(cislo, p.caflou_id);
     else if (caflouTasksCache[cislo]) refreshUlohy(cislo);
@@ -3572,6 +3583,13 @@ function toggleProjDetail(cislo, e) {
     caflouTaskSelected[cislo] = new Set();
     const tasks = caflouTasksCache[cislo] || [];
     tasks.forEach(t => { taskNotesOpen.delete(t.id); delete taskNotesCache[t.id]; });
+    const otherOpen = document.querySelector('.proj-detail.open');
+    if (otherOpen) {
+      const op = projects.find(x => x.cislo === otherOpen.id.replace('detail-', ''));
+      document.title = op?.nazov || DEFAULT_TITLE;
+    } else {
+      document.title = DEFAULT_TITLE;
+    }
   }
 }
 
