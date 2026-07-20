@@ -2033,6 +2033,10 @@ function renderProjects() {
                 <div class="prow-podfaza">${fazaBadge}${p.podfaza ? ' · ' + p.podfaza : ''}</div>
                 ${gem ? `<div class="prow-gemini">${gem}</div>` : ''}
               </div>
+              <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
+                style="background:none;border:1px solid var(--border);border-radius:5px;
+                width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
+                display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -2055,6 +2059,10 @@ function renderProjects() {
             <div class="prow-name">${p.nazov}</div>
             ${p.projektant?`<div class="prow-podfaza">${p.projektant}</div>`:''}
           </div>
+          <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
+            style="background:none;border:1px solid var(--border);border-radius:5px;
+            width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
+            display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
           <div style="font-size:16px;color:var(--text3)">✓</div>
         </div>
         <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>`).join('')
