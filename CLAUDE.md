@@ -77,8 +77,9 @@ Same Supabase project as `ponuky.html` (`cfjkomqxzqflotrqxfyl.supabase.co`, anon
   - Prvý beh trigeru len inicializuje kurzor (nezáplavuje denník starými záznamami — tie už doniesol `recover-dennik.ps1`)
   - `maxPages = 15` (per=100) bezpečnostný strop na beh — pri vysokom objeme "bot" aktivity (automatické systémové komentáre pri každej zmene statusu/výdavku/úlohy) môže byť treba zvýšiť alebo skrátiť interval triggeru, inak sa časť starších komentárov medzi behmi preskočí
   - **Vyžaduje nastavenie triggeru ručne** v Apps Script editore (Triggers → Add Trigger → `sledujKomentare` → Time-driven), rovnako ako `sledujMaily`
-  - **Vyžaduje doplniť `CAFLOU_ACCOUNT_ID`** v `Code.gs` (zatiaľ placeholder `YOUR_CAFLOU_ACCOUNT_ID`) priamo v Apps Script editore
+  - **Vyžaduje doplniť `CAFLOU_ACCOUNT_ID`** v `Code.gs` (zatiaľ placeholder `YOUR_CAFLOU_ACCOUNT_ID`) priamo v Apps Script editore — reálna hodnota je v `caflou.env` (gitignored), do repo zálohy sa **nekomituje** (rovnako ako `CAFLOU_API_KEY`/`GEMINI_API_KEY` — repo je verejné cez GitHub Pages)
   - Predpoklad `CAFLOU_OWN_USER_ID = 50310` (Caflou user, pod ktorým beží API kľúč) — overené pri testovaní Caflou výdavkov (transfer vytvorený cez API mal `user_id: 50310`); ak by sa objavili duplicitné záznamy v denníku, over toto ID
+  - **Gotcha (2026-07-06):** Apps Script editor sa ľahko rozíde s repo zálohou (`ReferenceError: CAFLOU_ACCOUNT_ID is not defined`, potom `ReferenceError: CAFLOU_OWN_USER_ID is not defined` — editor mal starší kód bez týchto premenných). Pri akejkoľvek nezhode je najspoľahlivejšie **nahradiť celý obsah editora** aktuálnym `appscript/Code.gs` (Ctrl+A → paste), nie dopĺňať jednotlivé riadky. Pre time-driven trigger funkcie **netreba nové Deploy** po uložení — beží vždy z aktuálne uloženého kódu; Deploy je nutný len pri zmene web-app endpointu (`doPost`, ktorý volajú `index.html`/`ponuky.html`/`suhrn.html`).
 
 ### Caflou status → fáza mapping (`CAFLOU_STATUS_MAP`)
 
@@ -187,6 +188,32 @@ CAFLOU_USERS             // user_id → meno
 - `bulkSetDeadline(cislo, date)` — nastaví `end_time` na všetkých označených úlohách (formát `YYYY-MM-DDT17:00:00+02:00`)
 
 **Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `unfinishCaflouTask`, `toggleFinishedTasks`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`
+
+### Fáza-tag na úlohách (`TASK_FAZA_TAGS`) — nezávislé od projektovej fázy
+
+Každá Caflou úloha môže mať v `tags` jeden z `TASK_FAZA_TAGS = ['AŠ','SZ','DSP','PS','RP','INŽ']` (farby `TASK_FAZA_COLOR`, labely `TASK_FAZA_LABEL`) — označuje, ku ktorej fáze projektu sa úloha vzťahuje. Toto je **nezávislé** od `stavMap`/`CAFLOU_STATUS_MAP` (celkový stav projektu) — jedna úloha má svoj vlastný fáza-tag bez ohľadu na to, v akej fáze je práve projekt ako celok (napr. RP úloha môže existovať aj keď je projekt ešte v Projekcii).
+
+- `getTaskFazaTag(t)` — vytiahne fáza-tag z `t.tags`
+- `caflouTaskFazaFilter[cislo]` — per-projekt filter, `setTaskFazaFilter(cislo, tag)` prepína (klik na už aktívny filter ho zruší)
+- Netagované úlohy sú viditeľné vždy, bez ohľadu na aktívny filter (aj v bulk-select cez `bulkSelectAll`)
+
+### Šablóny úloh (`task_templates`)
+
+Supabase tabuľka `task_templates (id uuid, name text, tasks jsonb, created_at timestamptz)` — `tasks` je pole `{name, faza, ext}` (faza = jeden z `TASK_FAZA_TAGS` alebo `null`, ext = bool).
+
+- `taskTemplates` — cachované v pamäti (`null` = nenačítané), `loadTaskTemplates()` fetchne raz zo Supabase
+- **Správa šablón:** `openTmplMgr()` → `#tmplMgrModal`, zoznam (`renderTmplMgrList`) + editor jednej šablóny (`openTmplEdit`/`renderTmplEditForm`) — riadky úloh s názvom, fáza-selectom a Interné/Externé prepínačom (`toggleTmplTaskExt`), `saveTmplEdit`/`deleteTmpl`
+- **Aplikovanie na projekt:** tlačidlo **"📋 Šablóna"** v detaile projektu → `openTmplPicker(cislo)` → vyber šablónu → `renderTmplPicker` ukáže checkboxy jej úloh (predvolene všetky zaškrtnuté) → `applyTmplTasks(cislo)` vytvorí v Caflou reálnu úlohu pre každú zaškrtnutú (`POST /tasks`, `tags: [ext?'ext':null, faza].filter(Boolean)`), doplní `p.caflou_task_ids`, invaliduje cache a znovu načíta úlohy projektu
+
+**Prepojenie na harmonogram (ROZPRACOVANÉ, len návrh z konverzácie 2026-07-08, nič ešte neimplementované):**
+
+Jozef: interná úloha (projekčná práca) a riadok v harmonograme sú "jedna a tá istá vec" videná z dvoch strán — úloha má dátumy rovnako ako harmonogram riadok. Nie každá interná úloha ale patrí do harmonogramu (napr. "vystavenie faktúry" nie je projekčná práca) — treba samostatný príznak.
+
+Navrhovaný mechanizmus (obe cesty vedú k tomu istému: nenaplánovanému `harmonogram` riadku s už vyplneným `caflou_task_id`, čaká len na doplnenie projektanta/trvania/alokácie):
+1. **Zo šablóny** — úloha v šablóne by dostala ďalší príznak "patrí do harmonogramu" (+ pri SZ/DSP-PS/RP výber podpodfázy: príprava/koordinácia/dopracovanie). `applyTmplTasks` by pre takto otagované úlohy rovno vytvorila aj `harmonogram` riadok.
+2. **Manuálne, kedykoľvek dodatočne** — rovnaký príznak (fáza + podpodfáza) dostupný aj v bežnom edit formulári úlohy (`toggleTaskEdit`/`saveCaflouTaskEdit`, vedľa Interné/Externé prepínača) — dôležité najmä pre **Štúdiu**, ktorá nemá trojblokovú štruktúru a jej úlohy Jozef zakladá úplne manuálne (nie zo šablóny).
+
+Dôvod, prečo toto vzniklo: diskusia o tom, že súčasná harmonogram-simulácia (`harmSimulujRealne`) je čisto predikcia dopredu bez spätnej väzby z reality — Caflou už má reálne odpracované hodiny (projektanti si vykazujú na úlohy), len sa z nich "nie sme múdri". Zámer do budúcna: časť grafu pred dneškom prestať simulovať a ukazovať z reálne vykázaného času (koľko z alokácie sa minulo/ostáva — viditeľné len Jozefovi/šéfovi, nie projektantovi), časť po dnešku ostáva plán/predikcia ako doteraz. Toto si ale vyžaduje spoľahlivé 1:1 prepojenie `harmonogram` riadku (podfázy) na konkrétnu Caflou úlohu, na ktorú sa vykazuje — u nových podfáz bude 1 úloha = 1 podfáza, u starších existuje aj prípad jednej úlohy zdieľanej naprieč všetkými tromi podfázami (tam by porovnanie malo byť len na úrovni celej fázy, nie podfázy). Vizuálne pre "zaostáva/predbieha plán" bude treba tretí kanál nezávislý od farby (tá už nesie identitu projektu) a šrafovania (to už nesie simulované zdržanie) — napr. orámovanie pruhu.
 
 ### Zápisky (chronologický prehľad)
 
@@ -302,6 +329,16 @@ Dva tlačidlá v headeri:
 ### Vyhľadávanie projektov
 
 `searchQuery` — globálna premenná. Search input v `phase-bar`. Keď je neprázdny, `renderProjects()` zobrazí všetky zodpovedajúce projekty naprieč všetkými fázami s farebnými fáza badges. Plné project rows s detail divmi — projekt možno rozkliknúť priamo vo výsledkoch.
+
+### Názov projektu v title karty prehliadača (2026-07-20)
+
+Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlíšiteľné (všetky "Prehľad"). `toggleProjDetail(cislo)` preto pri otvorení detailu nastaví `document.title = p.nazov`; pri zatvorení sa vráti na `DEFAULT_TITLE` (pôvodný `<title>`, zachytený raz pri načítaní skriptu) — alebo na názov iného projektu, ak ostal otvorený iný `.proj-detail.open`.
+
+### Odkaz na projektový priečinok (📁, 2026-07-20)
+
+Tlačidlo 📁 pri každom projekte otvára priečinok projektu v reálnom Windows Prieskumníku. `folderSearchLink(cislo)` vracia `search-ms:` URI (`query=<cislo>&crumb=location:H:\Spoločné disky\1_PROJEKTY`), nie priamy `file://` odkaz — presný názov priečinka na disku sa môže líšiť od Caflou (rovnaký dôvod, prečo `sync-fazy.ps1` hľadá priečinky prefix-regexom, nie presnou zhodou), a `file://` linky z `https://` stránky navyše prehliadač spoľahlivo neotvára v Exploreri. `search-ms` funguje len ak má Windows Search zaindexovaný daný H: disk (Indexing Options).
+
+**Šablóna riadku projektu existuje na 3 miestach** (`projRowHtml`, výsledky vyhľadávania a Archív v `renderProjects()`) — akúkoľvek zmenu tlačidiel v riadku (📁, ✎...) treba spraviť na všetkých troch, inak zmizne len v niektorých pohľadoch (stalo sa pri prvom pridaní 📁 — chýbalo vo vyhľadávaní aj Archíve).
 
 ## Other files
 
@@ -616,7 +653,7 @@ Contains `CAFLOU_API_KEY` and `CAFLOU_ACCOUNT_ID`. Never commit this file.
 
 Caflou nazýva výdavky **"transfers"**. Interný web formulár (`https://app.caflou.cz/tornyos/projects/{id}/transfers`, `POST /tornyos/transfers`, param namespace `transfer[...]`) je viazaný na session+CSRF a **nepoužíva sa** — namiesto neho existuje riadny JSON REST resource v tej istej `/api/v1/...` API ako zvyšok integrácie:
 
-- **`GET https://app.caflou.com/api/v1/{account_id}/transfers?project_id={id}&per=N`** — overené, funguje s `Authorization: Bearer {api_key}`, vracia štandardnú stránkovanú štruktúru (`results: [...]`)
+- **`GET https://app.caflou.com/api/v1/{account_id}/transfers?project_id={id}&per=N`** — vracia štandardnú stránkovanú štruktúru (`results: [...]`), ale **`project_id` filter sa (rovnako ako pri `/tasks` a `/comments`) ignoruje server-side** (2026-07-14 overené: rôzne `project_id` hodnoty vrátili identický prvý záznam aj identické `total_results`) — treba fetchnúť všetky stránky (`per=100`, cca 15 strán pri ~1500 transferoch) a filtrovať `project_id` klientsky, rovnaký vzor ako `caflou_task_ids` pri taskoch. Pôvodná poznámka „overené, funguje" sa týkala len POST, nie GET filtra.
 - Polia záznamu: `id, kind ("expense"), date (YYYY-MM-DD), payment_date, name, value, vat_value, real_value, currency ("EUR"), exchange_rate, user_id, invoiced, done, inactive, description, reference_number, company_id, project_id, task_id, source_id, category_id, repeatable, tags, trash, created_at, url, api_url`
 - `company_id` aj `task_id` môžu byť `null` (voliteľné)
 **POST (vytvorenie) OTESTOVANÉ 2026-07-03 — funguje, testovací záznam bol hneď zmazaný:**
@@ -713,3 +750,80 @@ Top-level mimo `PROFESIE/` ostáva len to, čo nepatrí jednej disciplíne: `0-P
 - Migrácia existujúcich ~55 projektov na novú štruktúru sa zatiaľ nerieši.
 
 **Stav:** Koncept uzavretý, čaká na rozhodnutie o migrácii a reálne nasadenie.
+
+---
+
+## ROZPRACOVANÉ: Nacenovanie projektov (cenové ponuky, CP)
+
+**Kontext:** Jozef chce vedieť robiť konkrétne cenové ponuky pre nové projekty na základe podkladov od klienta, zmluvných vzorov a histórie v Caflou. Zatiaľ žiadny nástroj v dashboarde, len postup + jeden rozpracovaný draft ako príklad (`podklady k CP/Navrh_CP_REVIVA.md`, gitignored priečinok — obsahuje citlivé cenové/klientske dáta).
+
+### Zdroj historických CP v Caflou
+
+Cenové ponuky (slovensky "CP", nie subdodávateľské dopyty z `ponuky.html`) sú v Caflou vlastný typ dokladu, nie kombinácia transfers/tasks:
+
+- **`GET /api/v1/{account}/invoices?kind=offer&per=100`** — vráti všetky vystavené CP (2026-07-14: 83 záznamov), číslované `CP-YY-NNN`
+- Štruktúra záznamu (rovnaká ako `invoices`, len `kind`/`global_kind` = `"offer"`): `text_before` (voľný HTML text — oslovenie, rozpis rozsahu prác po fázach, spôsob/termín dodania), `text_after` (platobné podmienky, poznámky, podpis), `total_cache`/`vat_cache`/`total_vat_cache`, `invoice_items` (skoro vždy prázdne — cena nie je rozpísaná po položkách, len jedna celková suma za fázu/CP), `project_id`, `to_company_id/name`
+- Typický vzor platobných podmienok pri malých/stredných CP (rodinné domy, interiéry): **"50 % pred začatím fázy / 50 % po odovzdaní"**, opakuje sa per fáza
+- Pri väčších/komplexnejších CP (napr. `CP-26-016`/`CP-26-015` VITA PARK, 340-350k€) je vzor prepracovanejší: bullet-list "V cene je zahrnuté" per fáza, platba **35 %/35 %/30 %** (pred začatím / po ASR / po odovzdaní), poznámky o vylúčeniach (inžinierska činnosť, geodet, IG/HG prieskum...), explicitná väzba ceny na rozsah AŠ ("ceny platia pri zachovaní rozsahu..."), podpis "Spracoval: Ing. arch. Tomáš Tornyos". **Toto je najbližší štýl. vzor pre väčšie/komplexnejšie CP.**
+
+### Zmluvný rámec — Master_ZoD_architt_2026.docx
+
+`podklady k CP/zmluvy o dielo/Master_ZoD_architt_2026.docx` — univerzálny vzor Zmluvy o dielo pre architektonický ateliér (verzia 2026.1, docx, treba unzipovať a čítať `word/document.xml` — Read tool neotvára `.docx` priamo). Kľúčové pre nacenovanie:
+
+- Čl. VI: **Dielo sa realizuje v etapách**, každá etapa sa samostatne odovzdáva, schvaľuje (čl. XI, 10 prac. dní na pripomienky, inak fikcia akceptácie) aj **fakturuje** (čl. VIII) — Príloha č. 1 definuje rozsah/etapy, Príloha č. 2 cenu a platobné podmienky per etapa
+- Čl. VIII: cena je pevná per etapa (pokiaľ nie je dohodnutá hodinovka), **záloha 20–30 %** pred začatím etapy, čiastková fakturácia po odovzdaní/míľnikoch, **splatnosť faktúr 14 dní**, indexácia ceny ak medzi podpisom a fakturáciou etapy uplynie >12 mesiacov
+- Čl. IX: zmeny rozsahu = "Dodatočné služby", cena/rozsah/termín sa dohodne osobitne (Change Request); limit kumulatívnych zmien 30 % pôvodnej ceny
+- Čl. III 3.2: bežné etapy Diela — AŠ, DÚK/ZON (DÚR), DSP/PSP, RP/DRS, tendrová dokumentácia, AD, DSVS, inžinierska činnosť, BIM — odkaz na **Sadzobník UNIKA** ako referenčný honorárový základ (3.3)
+
+**Praktický dopad na CP:** táto zmluva už počíta s postupným zazmluvňovaním etapa po etape (Príloha č. 1 sa dá na začiatku obmedziť len na prvú etapu, ďalšie sa doplnia dodatkom) — postupné oceňovanie projektu (nižšie) nie je odchýlka od vzoru, len sa využíva táto vlastnosť zmluvy naplno.
+
+### Honorárový benchmark — honorar.sk
+
+`podklady k CP/orientacny vypocet so stranky honorar.pdf` (per-projekt, treba prerobiť na www.honorar.sk pre každý nový projekt) — oficiálna kalkulačka slovenského "Honorárového poriadku": vstup = **započítateľné náklady stavby** (odhad) + **honorárová zóna** (I.–V. podľa náročnosti, investor si ju spravidla určuje sám) + prípadné prirážky (modernizácia +10 %, rekonštrukcia +20 %, kultúrna pamiatka +30 %). Výstup = % z nákladov rozpísané po fázach (Prípravná 1+1 %, Návrhová 13 %, Územné konanie 15+2 %, Stavebné konanie 23+2 %, Výber zhotoviteľa 5+1 %, Realizačná-RP 28+1 %, Realizačná-spolupráca výber 1 %, Realizačná-spolupráca výstavba 6+1 %; prvé číslo = základné/projektové výkony, druhé = manažérske služby). Tento honorár pokrýva **celý multiprofesijný honorár** (architekt + subdodávané profesie dokopy, nie len architektonickú časť — čl. 3.3 Master ZoD naň odkazuje ako na "honorár za projektové práce a inžinierske činnosti").
+
+### Rozdelenie honoráru medzi profesie (per-item cenník)
+
+Keď treba CP rozpísať po jednotlivých profesiách (nie jedna lump suma za fázu ako VITA PARK, ale itemizovaný výkaz ako `PR 04 ORIENTACNY VYKAZ VYMER.xlsx` pri type projektu REVIVA), nemáme (zatiaľ) spoľahlivý zdroj reálnych historických cien per profesia:
+
+- **Caflou `transfers` (výdavky) nie sú dobrý zdroj naprieč projektmi** — `project_id` filter na `GET /transfers` sa ignoruje server-side (viď oprava vyššie), treba fetchnúť všetkých ~1500 záznamov a filtrovať klientsky; navyše nové/rozbehnuté projekty (napr. VITA PARK, `project_id=576860`) môžu mať v Caflou **nula** transferov, ak sa CP ešte len rieši a subdodávatelia neboli zazmluvnení/fakturovaní
+- **`ponuky.html` Supabase `quotes.prices`** (jsonb `{fáza: suma}` od skutočných profesistov) je principiálne najlepší zdroj skutočných trhových cien per profesia+fáza, ale zatiaľ nebolo preverené naprieč historickými dopytmi pri veľkom projekte podobnom REVIVA — treba doriešiť v ďalšej session, ak bude treba presnejšie čísla než hrubý odhad
+- **Dočasné riešenie (draft REVIVA, 2026-07-14):** honorár.sk % súčet per fáza sa rozdelí medzi položky podľa **typických odborových pomerov** (architektúra ~38 %, statika ~14 %, TZB profesie spolu ~26 %, PO ~9 %, ostatné ~13 %) — toto sú všeobecné znalosti, **nie** dáta z Caflou/Supabase tejto firmy, treba označiť ako hrubý odhad a nechať Jozefa poopraviť podľa reálnych cien od jeho subdodávateľov
+
+### Filozofia postupného oceňovania (Jozef, 2026-07-14, kľúčová spätná väzba)
+
+Neoceňovať a nezazmluvňovať veľký viacfázový projekt (DÚR+DSP a ďalej) naraz vopred — pri projektoch typu nadstavba/rekonštrukcia existujúcej budovy (napr. REVIVA: nadstavba +3 podlažia = 2× pôvodné zaťaženie na existujúci skelet) reálne hrozí, že sa **prieskumy ukážu, že zámer vôbec nedáva zmysel** (doprava lokalitu nezvládne, existujúci skelet/základy neunesú nadstavbu) — vtedy je zbytočné mať vopred spočítanú a ponúknutú cenu na DÚR/DSP za stovky tisíc eur.
+
+**Namiesto toho — postupné zadávanie po etapách, cena sa rieši len pre najbližšiu etapu:**
+1. **Zásadné/vylučovacie prieskumy** — tie, ktorých negatívny výsledok môže projekt úplne zastaviť (pri REVIVA: diagnostika nosných konštrukcií, dopravno-kapacitné posúdenie). Cenia a zazmluvňujú sa **prvé, samostatne**.
+2. **Ostatné prípravné práce** — potrebné pre DÚR/DSP, ale ich výsledok projekt zásadne neohrozí (pri REVIVA: svetlotechnika, hluková štúdia, IGP prieskum). Cenia sa tiež hneď, ale **štartujú až po vyhodnotení bodu 1**.
+3. **DÚR** — cení sa (podľa honorár.sk princípov v danom čase) až po vyhodnotení 1+2, keď je jasné že zámer je realizovateľný.
+4. **DSP** — cení sa až po DÚR.
+
+Súčty za DÚR/DSP sa do CP môžu uviesť len ako **orientačný rozsah pre klienta** (aby vedel rádovo o akých číslach sa bavíme), nie ako záväzná/ponúkaná cena, kým sa k danej etape reálne nedôjde.
+
+**Korekcia (2026-07-16):** v praxi sa Jozef pri REVIVA napokon rozhodol pre **jednu súhrnnú % cenu voči klientovi** (3 % z celkových investičných nákladov, zahŕňa predprojektovú prípravu + DÚR + DSP naraz — pozri nižšie), nie postupné oceňovanie len najbližšej etapy. **Poradie prác (zásadné prieskumy prvé) ostáva zachované operačne/pri fakturácii** (odporúčanie: fakturovať postupne v tomto poradí, aj keď je cena navonok jedno číslo) — mení sa len to, že klient dostane rovno celkový rámec, nie čakanie na cenu po každej etape. T.j. postupné oceňovanie z predchádzajúceho odseku bol pôvodný návrh/default, reálne rozhodnutie na konkrétnom projekte môže byť iné (bundled % namiesto stage-by-stage) — netreba to brať ako rigidné pravidlo, len ako jednu z možností na zváženie per projekt.
+
+### Stanovenie predbežného investičného nákladu (vstup pre honorár.sk)
+
+Bežné metódy na úrovni architektonickej štúdie (keď ešte nie je výkaz výmer/rozpočet):
+1. **€/m³ obostavaného priestoru (OP)** — klasický rozpočtový ukazovateľ podľa typu/štandardu stavby (ÚRS/RTS tabuľky, treba aktualizovať o index cien stavebných prác)
+2. **€/m² hrubej podlažnej plochy (HPP)** — dnes bežnejšie než m³; orientačne (SR, 2026): RD štandard 1 200–1 600, RD vyšší štandard 1 800–2 500+, bytový dom 1 400–2 000, polyfunkcia/administratíva 1 600–2 500+, priemyselná hala 500–900 €/m². Presnejšie sú vlastné realizované referencie firmy než všeobecné tabuľky.
+3. **Porovnávacia (analogická) metóda** — z 1-2 nedávnych porovnateľných realizácií, prepočítané o index a rozdiely v štandarde/lokalite; vhodné pri netypických stavbách, kde tabuľky nesedia (napr. nadstavba nad existujúcim objektom).
+4. **Objektová skladba** — pri väčších/komplexnejších stavbách rozdeliť na SO (hlavný objekt, spevnené plochy, prípojky, oporné múry...) a každý oceniť vlastným ukazovateľom, súčet = celkový náklad. Presnejšie než jedno číslo na celú stavbu.
+
+**Pri rekonštrukcii/nadstavbe** (ako REVIVA): búracie práce sa oceňujú samostatne; nadstavba/vstavba do existujúceho objektu má spravidla **vyššiu** jednotkovú cenu než novostavba rovnakého typu (komplikovanejšia logistika, napojenie na existujúci skelet) — bežne +15–30 %.
+
+**Presnosť podľa stupňa dokumentácie** (dobré komunikovať aj klientovi): architektonická štúdia ±25–35 %, DÚR ±20–25 %, DSP ±15 %, RP+rozpočet ±5–10 %. Toto je hlavný dôvod, prečo nemá zmysel záväzne oceňovať DÚR/DSP na základe čísla so štúdiovou presnosťou.
+
+**Dôležitá nuansa — čo NIE JE v €/m² ceny budovy:** jednotkový ukazovateľ (m²/m³) pokrýva len samotný hlavný objekt. **Parkoviská/spevnené plochy a oporné múry sú samostatné SO**, treba ich oceniť vlastným ukazovateľom (spevnené plochy: €/m² podľa typu povrchu a dopravného zaťaženia, orientačne 60–220 €/m² pri parkovisku/obslužnej komunikácii; oporné múry: €/m² pohľadovej plochy, prudko rastie s výškou, pri múre okolo 5 m orientačne 700–1200+ €/m² kvôli hrubšiemu prierezu/väčšej pätke/prípadnému kotveniu — závisí od geológie z IGP) a **pripočítať ich zvlášť k cene budovy**. Do honorárového základu ("započítateľné náklady") ale napriek tomu patria, ak sú v rozsahu architektovej zákazky — definícia honorár.sk explicitne hovorí "...vrátane exteriérov".
+
+**REVIVA konkrétne čísla (2026-07-16):** budova + parkoviská/obslužná komunikácia (~4 713 m²) + hlavný oporný múr (55×5 m) → **celkový investičný náklad prepočítaný na 16,3 mil. €** (pôvodný honorár.sk PDF bol robený pri 10 mil., treba prerobiť). Na tomto základe dohodnuté **3 % = 491 000 €** za predprojektovú prípravu + DÚR + DSP spolu, rozpísané do `PR 04 ORIENTACNY VYKAZ VYMER - vyplnene.xlsx` (17 000 € prieskumy + 474 000 € DÚR/DSP profesie, pomer profesií = rovnaký hrubý odhad ako v predchádzajúcom odseku).
+
+### Technická poznámka — úprava .xlsx bez knižníc
+
+Toto prostredie nemá Python ani žiadny `xlsx`/zip balík pre Node, a Bash má len `unzip` (nie `zip`). Postup na vyplnenie `PR 04...xlsx`:
+1. `unzip` súboru → nájsť `xl/worksheets/sheet1.xml`, cieľové bunky sú self-closing (`<c r="C5" s="8"/>`) → nahradiť za `<c r="C5" s="8"><v>5500</v></c>`; ak stĺpec má súčtový `<f>SUM(...)</f><v>0</v>`, aktualizovať aj cachovanú `<v>` hodnotu (Excel ju pri otvorení prepočíta, ale je dobré mať konzistentné aj bez prepočtu)
+2. **Nepoužívať PowerShell `Compress-Archive`** na spätné zabalenie — vytvára cesty so spätnými lomkami (`docProps\app.xml`), OOXML/Excel vyžaduje `/`, hrozí "repair" chyba pri otvorení
+3. Vlastný minimalistický ZIP writer v Node (`store`/bez kompresie, `zlib.crc32()` je v Node 24 zabudované) — funguje spoľahlivo, overené round-trip testom (rozbaliť späť a skontrolovať hodnoty/SUM vzorce)
+
+**Stav:** Postup zdokumentovaný, jeden rozpracovaný príklad (REVIVA) v `podklady k CP/Navrh_CP_REVIVA.md` + vyplnený `PR 04...vyplnene.xlsx`. Žiadny nástroj v dashboarde zatiaľ nevzniká — zatiaľ manuálny proces (Claude pripraví draft na základe podkladov, Jozef doladí a ručne vloží do Caflou ako `offer`). Nedorobené: presnejší zdroj per-profesijných cien (`ponuky.html` quotes.prices?), honorár.sk PDF prerobiť na 16,3 mil. €, rozhodnutie či/ako toto zautomatizovať v dashboarde (pozri skorší koncept "nástroj na tvorbu CP" v histórii konverzácie — Caflou historické CP ako referencia + Gemini draft).
