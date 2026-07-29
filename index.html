@@ -670,6 +670,8 @@ nav {
 .dennik-text { color: var(--text2); flex: 1; }
 .dennik-check { cursor: pointer; flex-shrink: 0; font-size: 13px; line-height: 1.3; color: var(--text3); user-select: none; }
 .dennik-entry.done .dennik-datum, .dennik-entry.done .dennik-text { text-decoration: line-through; opacity: .55; }
+.dennik-pin { cursor: pointer; flex-shrink: 0; font-size: 12px; opacity: .3; user-select: none; }
+.dennik-pin.on { opacity: 1; }
 .dennik-add { display: flex; gap: 6px; margin-top: 6px; }
 .dennik-input {
   flex: 1; background: var(--bg2); border: 1px solid var(--border);
@@ -1248,11 +1250,15 @@ nav {
 <div class="overlay hidden" id="chronoModal">
   <div class="modal" style="max-width:640px">
     <h3>Zápisky</h3>
-    <div style="display:flex;gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
-      <select id="chronoAddCislo" class="pd-sel" style="flex:1;font-size:12px;min-width:0">
-        <option value="">— projekt —</option>
-      </select>
-      <input id="chronoAddText" class="dennik-input" placeholder="Nový zápis…" style="flex:2;min-width:0"
+    <div style="display:flex;gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+      <div class="proj-search-wrap" style="flex:1;min-width:140px">
+        <input type="text" id="chronoProjQ" class="dennik-input" placeholder="Projekt (filter + cieľ zápisu)…" autocomplete="off"
+          oninput="onChronoProjQ()" style="width:100%;box-sizing:border-box">
+        <div class="proj-dropdown" id="chronoProjDrop"></div>
+      </div>
+      <input type="hidden" id="chronoProjVal">
+      <button class="btn-ghost" id="chronoProjClear" onclick="clearChronoProj()" style="display:none;padding:0 10px;font-size:12px" title="Zrušiť filter">✕</button>
+      <input id="chronoAddText" class="dennik-input" placeholder="Nový zápis…" style="flex:2;min-width:140px"
         onkeydown="if(event.key==='Enter')chronoAddDennik()">
       <button class="btn-add-zaz" onclick="chronoAddDennik()">Pridať</button>
     </div>
@@ -1749,7 +1755,7 @@ async function syncData() {
         const newDennik = {};
         rows.forEach(r => {
           if (!newDennik[r.cislo]) newDennik[r.cislo] = [];
-          newDennik[r.cislo].push({ id: r.id, datum: r.datum, text: r.text, created_at: r.created_at, done: !!r.done });
+          newDennik[r.cislo].push({ id: r.id, datum: r.datum, text: r.text, created_at: r.created_at, done: !!r.done, today: !!r.today });
         });
         dennikMap = newDennik;
         localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
@@ -2322,20 +2328,91 @@ async function pridajDennik(cislo) {
 // ── ZÁPISKY (chronologický log) ────────────────────────────────────────────
 function openChronoModal() {
   document.getElementById('chronoModal').classList.remove('hidden');
-  const sel = document.getElementById('chronoAddCislo');
-  const activeProjs = projects.filter(p => p.faza !== 'Archív')
-    .sort((a, b) => a.cislo.localeCompare(b.cislo));
-  sel.innerHTML = '<option value="">— projekt —</option>' +
-    activeProjs.map(p => `<option value="${p.cislo}">${p.cislo} – ${p.nazov}</option>`).join('');
   buildChronoContent();
 }
 
+function onChronoProjQ() {
+  const q  = document.getElementById('chronoProjQ').value.toLowerCase().trim();
+  const el = document.getElementById('chronoProjDrop');
+  if (!q) {
+    document.getElementById('chronoProjVal').value = '';
+    document.getElementById('chronoProjClear').style.display = 'none';
+    el.style.display = 'none';
+    buildChronoContent();
+    return;
+  }
+  const hits = projects.filter(p => p.faza !== 'Archív' &&
+    (p.cislo.toLowerCase().includes(q) || (p.nazov||'').toLowerCase().includes(q))
+  ).slice(0, 8);
+  if (!hits.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = hits.map(p =>
+    `<div class="proj-dropdown-item" onclick="selectChronoProj('${p.cislo}','${(p.nazov||'').replace(/'/g,"&#39;")}')">
+      <span style="color:var(--text3);margin-right:6px">${p.cislo}</span>${p.nazov||''}
+    </div>`
+  ).join('');
+}
+
+function selectChronoProj(cislo, nazov) {
+  document.getElementById('chronoProjVal').value = cislo;
+  document.getElementById('chronoProjQ').value = cislo + ' – ' + nazov;
+  document.getElementById('chronoProjDrop').style.display = 'none';
+  document.getElementById('chronoProjClear').style.display = 'inline-block';
+  buildChronoContent();
+}
+
+function clearChronoProj() {
+  document.getElementById('chronoProjVal').value = '';
+  document.getElementById('chronoProjQ').value = '';
+  document.getElementById('chronoProjDrop').style.display = 'none';
+  document.getElementById('chronoProjClear').style.display = 'none';
+  buildChronoContent();
+}
+
+async function toggleDennikToday(cislo, id) {
+  if (!id) return;
+  const entries = dennikMap[cislo] || [];
+  const entry = entries.find(e => String(e.id) === String(id));
+  if (!entry) return;
+  entry.today = !entry.today;
+  localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+  buildChronoContent();
+  try { sb.from('dennik').update({ today: entry.today }).eq('id', id).then(null, () => {}); } catch(e) {}
+}
+
+function renderChronoEntry(e) {
+  const badge = e.type === 'task'
+    ? `<span style="font-size:10px;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd);border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${e.taskName}">${e.taskName}</span>`
+    : '';
+  const check = e.type === 'dennik'
+    ? `<span class="dennik-check" onclick="toggleDennikDone('${e.cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>`
+    : '';
+  const pin = e.type === 'dennik'
+    ? `<span class="dennik-pin${e.today ? ' on' : ''}" onclick="toggleDennikToday('${e.cislo}','${e.id||''}')" title="${e.today ? 'Odobrať z Vybaviť dnes' : 'Pridať do Vybaviť dnes'}">📌</span>`
+    : '';
+  const strike = e.done ? ';text-decoration:line-through;opacity:.55' : '';
+  return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55;display:flex;gap:6px">
+    ${check}${pin}
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
+        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
+        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
+        <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
+        ${badge}
+      </div>
+      <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
+    </div>
+  </div>`;
+}
+
 function buildChronoContent() {
+  const filterCislo = (document.getElementById('chronoProjVal') || {}).value || '';
   const entries = [];
   Object.entries(dennikMap).forEach(([cislo, items]) => {
+    if (filterCislo && cislo !== filterCislo) return;
     const proj = projects.find(p => p.cislo === cislo);
     (items || []).forEach(e => entries.push({
-      type: 'dennik', cislo, id: e.id, done: !!e.done,
+      type: 'dennik', cislo, id: e.id, done: !!e.done, today: !!e.today,
       projName: proj ? proj.nazov : cislo,
       datum: e.datum, text: e.text,
       ts: e.created_at ? new Date(e.created_at).getTime() : 0
@@ -2349,6 +2426,7 @@ function buildChronoContent() {
       if (t) { cislo = c; taskName = t.name; break; }
     }
     if (!cislo) return;
+    if (filterCislo && cislo !== filterCislo) return;
     const proj = projects.find(p => p.cislo === cislo);
     notes.forEach(n => entries.push({
       type: 'task', cislo, taskName,
@@ -2358,37 +2436,27 @@ function buildChronoContent() {
     }));
   });
   entries.sort((a, b) => b.ts - a.ts);
+  const todayEntries = entries.filter(e => e.type === 'dennik' && e.today && !e.done);
   const top = entries.slice(0, 50);
   const el = document.getElementById('chronoContent');
   if (!top.length) {
     el.innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px">Žiadne zápisky</div>';
     return;
   }
-  el.innerHTML = top.map(e => {
-    const badge = e.type === 'task'
-      ? `<span style="font-size:10px;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd);border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${e.taskName}">${e.taskName}</span>`
-      : '';
-    const check = e.type === 'dennik'
-      ? `<span class="dennik-check" onclick="toggleDennikDone('${e.cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>`
-      : '';
-    const strike = e.done ? ';text-decoration:line-through;opacity:.55' : '';
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55;display:flex;gap:6px">
-      ${check}
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
-          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
-          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
-          <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
-          ${badge}
-        </div>
-        <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
-      </div>
-    </div>`;
-  }).join('');
+  let html = '';
+  if (todayEntries.length) {
+    html += `<div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:4px">🔥 Vybaviť ešte dnes (${todayEntries.length})</div>
+      ${todayEntries.map(renderChronoEntry).join('')}
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin:2px 0 4px">Všetky zápisky</div>`;
+  }
+  html += top.map(renderChronoEntry).join('');
+  el.innerHTML = html;
 }
 
 async function chronoAddDennik() {
-  const cislo = document.getElementById('chronoAddCislo').value;
+  const cislo = document.getElementById('chronoProjVal').value;
   const textEl = document.getElementById('chronoAddText');
   const text = textEl.value.trim();
   if (!cislo || !text) { if (!cislo) showToast('Vyber projekt', 'err'); return; }
