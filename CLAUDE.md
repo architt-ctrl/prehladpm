@@ -28,7 +28,8 @@ All mutable state is in module-level `let` variables:
 |---|---|---|
 | `projects` | — | Array loaded from Caflou API |
 | `stavMap` | `pmStav` | `{cislo: 'pripravovany'\|'aktivny'\|'pozastaveny'}` |
-| `dennikMap` | `pmDennik` | `{cislo: [{datum, text}]}` — primary storage is Supabase `dennik` table; also written to Caflou comments as backup |
+| `dennikMap` | `pmDennik` | `{cislo: [{id, datum, text, created_at, done, today, parent_id}]}` — primary storage is Supabase `dennik` table; also written to Caflou comments as backup (top-level entries only, replies are Supabase-only) |
+| `dennikThreadOpen` | — | `Set<dennik.id>` — ktoré zápisy majú rozbalené celé podvlákno odpovedí (inak sa vždy zobrazujú len posledné 3) |
 | `geminiMap` | `pmGemini` | `{cislo: 'AI summary text'}` |
 | `ulohy` | `pmUlohy` | `{cislo: [{id,profesia,stav,...}]}` |
 | `cfg` | `pmCfg3` | `{caflou_key, caflou_id, url (Gemini Apps Script)}` |
@@ -46,6 +47,7 @@ All mutable state is in module-level `let` variables:
 | `finishedTasksOpen` | — | `Set<cislo>` — ktoré projekty majú rozbalené ukončené úlohy |
 | `taskNotesCache` | — | `{taskId: [{id,datum,text}]}` — lazy-loaded komentáre Caflou úloh |
 | `taskNotesOpen` | — | `Set<task_id>` — ktoré úlohy majú rozbalené poznámky |
+| `taskEmailCache` | — | `{task_id: thread_url}` — oficiálne mailové vlákno priradené k externej úlohe (Supabase `task_email_threads`); cleared on `syncData` |
 
 ### Data flow – Caflou
 
@@ -66,11 +68,15 @@ All mutable state is in module-level `let` variables:
 
 Same Supabase project as `ponuky.html` (`cfjkomqxzqflotrqxfyl.supabase.co`, anon key in `index.html`).
 
-- `dennik` table: `(id uuid, cislo text, datum text, text text, created_at timestamptz)`
+- `dennik` table: `(id uuid, cislo text, datum text, text text, created_at timestamptz, done boolean, today boolean, parent_id uuid references dennik(id) on delete cascade)`
 - RLS enabled with open policy (`using (true) with check (true)`)
 - `syncData()` fetches all denník rows ordered by `created_at desc` → builds `dennikMap`
 - `pridajDennik()` inserts new row to Supabase + updates localStorage + writes to Caflou
-- Display: `buildDennikListHtml(cislo)` shows 3 newest entries; older ones hidden behind "Zobraziť staršie" toggle
+- Display: `buildDennikListHtml(cislo)` shows 3 newest **top-level** entries (`parent_id IS NULL`); older ones hidden behind "Zobraziť staršie" toggle
+- **Vybavené (`done`, 2026-07-29):** checkbox ☐/☑ pri každom zázname (detail projektu aj Zápisky) — `toggleDennikDone(cislo, id)` prekreslí lokálne a PATCHuje `done` do Supabase (fire-and-forget). Preškrtnutý + stlmený text keď `done=true`. SQL: `supabase/dennik-done-setup.sql`
+- **Vybaviť ešte dnes (`today`, 2026-07-29):** pin ikona 📌 pri zázname (len Zápisky) — `toggleDennikToday`. Označené nedokončené (`today && !done`) záznamy sa zobrazia v samostatnej sekcii "🔥 Vybaviť ešte dnes" nad chronologickým zoznamom v `#chronoModal`. SQL: `supabase/dennik-today-setup.sql`
+- **Podvlákno odpovedí (`parent_id`, 2026-07-29):** odpoveď je bežný `dennik` riadok s vyplneným `parent_id` (jedna úroveň, odpovede na odpovede nie sú podporované). Klik na text zápisu (nie samostatné tlačidlo) → `toggleDennikThread(cislo, id)` rozbalí/zbalí celé podvlákno + pole na pridanie ďalšej (`addDennikReply`). Keď je zbalené, posledné 3 odpovede (`dennikRepliesFor().slice(-3)`) sa zobrazujú vždy, bez klikania (`buildDennikThreadPreviewHtml`). Odpovede sa nezrkadlia do Caflou komentárov (len top-level zápisy) a nezobrazujú sa ako samostatné riadky v hlavnom chronologickom zozname Zápiskov. SQL: `supabase/dennik-thread-setup.sql`
+- **Gotcha — poradie migrácie vs. testovania:** pri každom novom boolean/stĺpec flagu (`done`, `today`, `parent_id`) treba spustiť SQL migráciu **predtým**, než sa flag začne používať v UI — `syncData()` vždy prepíše `dennikMap` čerstvými dátami zo Supabase (`dennikMap = newDennik`), takže akékoľvek predčasné prepnutie sa uloží len lokálne (Supabase update potichu zlyhá, stĺpec neexistuje) a zmizne pri najbližšom obnovení stránky
 - **Caflou comments API** cannot be used for reading history — filters are ignored server-side, returns 20 items/page across 1000+ pages of bot activity. Supabase is the only reliable cross-device store.
 - One-time history recovery: `recover-dennik.ps1` (in repo) scans all Caflou comment pages and imports `kind=human, commented_type=Project` entries to Supabase.
 - **Priebežná synchronizácia (2026-07-03):** `pridajDennik`/`recover-dennik.ps1` riešia len dashboard→Supabase a jednorazovú historickú obnovu — **kolegove komentáre napísané priamo v Caflou sa predtým do denníka ani do push notifikácií vôbec nedostali** (žiadny live sync neexistoval, nešlo o regresiu). Doplnené: Apps Script `sledujKomentare` (`appscript/Code.gs`) — time-driven trigger, sleduje globálny `GET /api/v1/{account}/comments` (zoradený od najnovšieho), zastaví sa pri už videnom ID (kurzor v `PropertiesService`), filtruje `kind='human' && commented_type='Project' && user_id !== CAFLOU_OWN_USER_ID` (vylúčenie komentárov, ktoré do Caflou zapísal sám dashboard cez `caflouAddComment` — inak by vznikli duplicity) a zapíše nájdené do Supabase `dennik` cez REST (anon key, rovnaká RLS ako pri ostatných dennik zápisoch — funguje aj mimo prihlásenej session, na rozdiel od `specialists`). Zápis do `dennik` automaticky spustí existujúci push webhook, žiadna extra logika netreba.
@@ -187,7 +193,15 @@ CAFLOU_USERS             // user_id → meno
 - Status, fáza, termín (`bulkSetDeadline`), Interné/Externé, Ukončiť, Vymazať, Dopyty
 - `bulkSetDeadline(cislo, date)` — nastaví `end_time` na všetkých označených úlohách (formát `YYYY-MM-DDT17:00:00+02:00`)
 
-**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `unfinishCaflouTask`, `toggleFinishedTasks`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`
+**Oficiálne mailové vlákno k externej úlohe (2026-07-29):**
+- Supabase `task_email_threads (task_id bigint primary key, thread_url text, updated_at timestamptz)` — SQL: `supabase/task-email-thread-setup.sql`
+- `taskEmailCache` — `{task_id: thread_url}`, načíta sa v `loadCaflouTasks` (`in('task_id', taskIds)`), cleared on `syncData`
+- V riadku úlohy (len ext): ikona ✉️ — modrá/plná = `<a>` priamo na `thread_url` (nová karta); sivá/prázdna = `onclick` spúšťa buď `toggleTaskMailForm` (compose panel) alebo (ak URL už bolo zadané ručne) nič zvláštne
+- **Ručné priradenie:** v edit forme externej úlohy (`tspec-section-{editKey}`) input `temail-{editKey}` (Gmail URL) vedľa výberu špecialistu; `saveCaflouTaskEdit` ho upsertne/zmaže v `task_email_threads`
+- **Automatické — "Spustiť komunikáciu" (2026-07-29):** klik na neprideleného ✉️ → `toggleTaskMailForm(editKey)` otvorí `#tmail-{editKey}` panel (adresát predvyplnený z `specialistsList` emailu priradeného špecialistu, predmet `SKRATKA_PROFESIE ČÍSLO - NÁZOV`, textarea na text) → `sendOfficialMail(cislo, task_id, editKey)` zavolá Apps Script akciu `sendOfficialMail` (`GmailApp.sendEmail` + dohľadanie vzniknutého vlákna), výsledný `permalink` sa hneď uloží do `taskEmailCache` + `task_email_threads` bez ručného kopírovania URL
+- **Vyžaduje redeploy Apps Scriptu** (zmena `doPost`) — pozri "Apps Script gotchas"
+
+**Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `unfinishCaflouTask`, `toggleFinishedTasks`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`, `toggleTaskMailForm`, `sendOfficialMail`
 
 ### Fáza-tag na úlohách (`TASK_FAZA_TAGS`) — nezávislé od projektovej fázy
 
@@ -219,10 +233,16 @@ Dôvod, prečo toto vzniklo: diskusia o tom, že súčasná harmonogram-simulác
 
 Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 
-- `buildChronoContent()` — zbiera záznamy z `dennikMap` (všetky projekty) + `taskNotesCache` (len lazy-loaded úlohy), zoradí podľa `created_at` desc, zobrazí posledných 50
+- `buildChronoContent()` — zbiera **top-level** záznamy (`!parent_id`) z `dennikMap` (všetky projekty, alebo len filtrovaný projekt) + `taskNotesCache` (len lazy-loaded úlohy), zoradí podľa `created_at` desc, zobrazí posledných 50
 - Záznamy z denníka: cislo sivé/malé, názov projektu tučný/tmavý; záznamy z úloh: názov úlohy
-- `chronoAddDennik(cislo)` — pridá nový záznam do denníka priamo z modálu, volá `buildChronoContent()` bez zavretia modálu
+- `chronoAddDennik()` — pridá nový záznam do denníka priamo z modálu (cieľový projekt = `#chronoProjVal`), volá `buildChronoContent()` bez zavretia modálu
 - **Poznámka:** task notes sa zobrazia len ak boli v tejto session lazy-loaded (user otvoril projekt)
+
+**Výber/filter projektu (2026-07-29):** `#chronoAddCislo` dropdown nahradený autocomplete inputom (`#chronoProjQ` + hidden `#chronoProjVal` + `#chronoProjDrop`, rovnaký `.proj-search-wrap`/`.proj-dropdown` vzor ako `fPonukyQ` v ponuky-filtri) — `onChronoProjQ()` našepkáva podľa písania (vynecháva Archív), `selectChronoProj()` naplní `chronoProjVal` a **zároveň** prefiltruje `buildChronoContent()` na daný projekt (jeden ovládací prvok = cieľ nového zápisu aj filter zobrazenia), `clearChronoProj()`/✕ tlačidlo zruší filter. Prázdny input = žiadny filter (všetky projekty).
+
+**Vybaviť ešte dnes:** ak existujú `today && !done` top-level záznamy (po aplikovaní filtra), zobrazia sa v sekcii "🔥 Vybaviť ešte dnes (N)" nad hlavným zoznamom "Všetky zápisky".
+
+**Podvlákno v Zápiskoch:** rovnaké správanie ako v detaile projektu (klik na text zápisu rozbaľuje/zbaľuje, posledné 3 odpovede vždy viditeľné) — zdieľa `dennikThreadOpen` Set aj `buildDennikThreadPreviewHtml`/`buildDennikRepliesHtml` s `buildDennikListHtml`, keďže obe miesta čítajú ten istý `dennikMap`.
 
 ### Gemini integration
 
@@ -240,6 +260,7 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 - `generateZoznam` — vygeneruje „A – Zoznam dokumentácie" ako GDoc (kópia `VZOR_ZOZNAM_ID` šablóny), zapíše do Drive priečinka projektu
 - `generateSuhrn` — vygeneruje „B – Súhrnná správa" (kópia `VZOR_SUHRN_ID`), obsah generuje Gemini z textu tech správ
 - `createDocInFolder(title, text, parentFolderId, templateId)` — `makeCopy()` šablóny → zapíše obsah s Arial štýlom
+- `sendOfficialMail` (2026-07-29) — `{to, subject, body}` → `GmailApp.sendEmail()`, počká 2s, `GmailApp.search('in:sent to:"..." subject:"..."')` nájde vzniknuté vlákno, vráti `{ok, threadId, permalink}` (`#all/{threadId}` formát, funguje bez ohľadu na label). Volané z `sendOfficialMail()` v `index.html` — pozri "Oficiálne mailové vlákno" nižšie
 
 **Apps Script gotchas:**
 - Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
