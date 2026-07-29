@@ -1396,6 +1396,7 @@ let activeStav = 'pripravovany';
 let searchQuery = '';
 const caflouTaskEditSet = new Set();
 const extSpecCache = {}; // {cislo: {taskName: specialistName}}
+const taskEmailCache = {}; // {task_id: thread_url} — oficiálne mailové vlákno priradené k externej úlohe
 const extSpecOverride = JSON.parse(localStorage.getItem('pmExtSpecOverride') || '{}'); // {task_id: specialistName}
 let specialistsList = null;
 let caflouContactsCache = null; // {email_lower: company_id}
@@ -1730,6 +1731,7 @@ async function syncData() {
       .filter(p => !p.trash && !p.template)
       .map(parseCaflouProject);
     caflouTasksCache = {};
+    Object.keys(taskEmailCache).forEach(k => delete taskEmailCache[k]);
     _vytazenieCache = null;
     _intTimData = null;
     projects.forEach(p => {
@@ -2809,6 +2811,13 @@ async function loadCaflouTasks(cislo, caflou_id) {
       (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
       if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
     } catch(e) {}
+    try {
+      const taskIds = all.map(t => t.id).filter(Boolean);
+      if (taskIds.length) {
+        const { data: emails } = await sb.from('task_email_threads').select('task_id,thread_url').in('task_id', taskIds);
+        (emails||[]).forEach(row => { taskEmailCache[String(row.task_id)] = row.thread_url; });
+      }
+    } catch(e) {}
     // Aktualizuj taskPonukySet pre tieto úlohy (čerstvé dáta)
     try {
       const taskIds = all.map(t => t.id).filter(Boolean);
@@ -3090,6 +3099,10 @@ function buildCaflouTasksHtml(cislo) {
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
+        ${isExt ? (taskEmailCache[String(t.id)]
+          ? `<a href="${taskEmailCache[String(t.id)]}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Otvoriť mailové vlákno" style="flex-shrink:0;text-decoration:none;font-size:12px;color:var(--blue)">✉️</a>`
+          : `<span onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})" title="Priradiť mailové vlákno" style="flex-shrink:0;font-size:12px;opacity:.3;cursor:pointer">✉️</span>`
+          ) : ''}
         ${lastNote ? `<span onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">${lastNote.datum}: ${lastNote.text}</span>` : `<span style="flex:1"></span>`}
         <button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>
       </div>
@@ -3116,9 +3129,13 @@ function buildCaflouTasksHtml(cislo) {
           const filteredSpecs = curSpecProf ? (specialistsList||[]).filter(s=>splitProfs(s).includes(curSpecProf)) : (specialistsList||[]);
           const specOpts = `<option value="">— bez špecialistu —</option>` +
             filteredSpecs.map(s=>`<option value="${s.name}"${specName===s.name?' selected':''}>${s.name}</option>`).join('');
-          return `<div id="tspec-section-${editKey}" style="display:${isExt?'flex':'none'};gap:6px">
-            <select id="tsprof-${editKey}" class="pd-sel" style="flex:1;font-size:12px" onchange="filterSpecDropdown('${editKey}')">${profOpts}</select>
-            <select id="tspec-${editKey}" class="pd-sel" style="flex:1;font-size:12px">${specOpts}</select>
+          const curEmailUrl = (taskEmailCache[String(t.id)] || '').replace(/"/g, '&quot;');
+          return `<div id="tspec-section-${editKey}" style="display:${isExt?'flex':'none'};flex-direction:column;gap:6px">
+            <div style="display:flex;gap:6px">
+              <select id="tsprof-${editKey}" class="pd-sel" style="flex:1;font-size:12px" onchange="filterSpecDropdown('${editKey}')">${profOpts}</select>
+              <select id="tspec-${editKey}" class="pd-sel" style="flex:1;font-size:12px">${specOpts}</select>
+            </div>
+            <input id="temail-${editKey}" type="url" value="${curEmailUrl}" placeholder="Odkaz na oficiálne mailové vlákno (Gmail)…" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
           </div>`;
         })()}
       </div>
@@ -3289,6 +3306,17 @@ async function saveCaflouTaskEdit(cislo, task_id) {
       sb.from('task_specialists').delete().eq('task_id', task_id).then(null, () => {});
     }
     if (newExt && specEl.value) linkSpecialistToProject(cislo, specEl.value).catch(() => {});
+  }
+  const emailEl = document.getElementById('temail-' + key);
+  if (emailEl) {
+    const emailUrl = emailEl.value.trim();
+    if (emailUrl) {
+      taskEmailCache[String(task_id)] = emailUrl;
+      sb.from('task_email_threads').upsert({ task_id, thread_url: emailUrl, updated_at: new Date().toISOString() }).then(null, () => {});
+    } else {
+      delete taskEmailCache[String(task_id)];
+      sb.from('task_email_threads').delete().eq('task_id', task_id).then(null, () => {});
+    }
   }
   if (name) t.name = name;
   t.target_user_id = uid ? parseInt(uid) : null;
