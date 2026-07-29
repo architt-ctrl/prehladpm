@@ -672,7 +672,6 @@ nav {
 .dennik-entry.done .dennik-datum, .dennik-entry.done .dennik-text { text-decoration: line-through; opacity: .55; }
 .dennik-pin { cursor: pointer; flex-shrink: 0; font-size: 12px; opacity: .3; user-select: none; }
 .dennik-pin.on { opacity: 1; }
-.dennik-thread-btn { font-size: 11px; color: var(--blue); cursor: pointer; margin-top: 3px; user-select: none; }
 .dennik-thread { margin-top: 6px; padding-left: 14px; border-left: 2px solid var(--border); }
 .dennik-reply .dennik-datum, .dennik-reply .dennik-text { font-size: 11px; }
 .dennik-reply-add { display: flex; gap: 6px; margin-top: 6px; }
@@ -2265,22 +2264,31 @@ function toggleStat() {}
 function closeStat() {}
 
 // ── DENNÍK ────────────────────────────────────────────────────────────────
-function dennikReplyCount(cislo, id) {
-  return (dennikMap[cislo] || []).filter(e => String(e.parent_id||'') === String(id)).length;
+function dennikRepliesFor(cislo, id) {
+  return (dennikMap[cislo] || []).filter(e => String(e.parent_id||'') === String(id))
+    .sort((a, b) => (a.created_at||'').localeCompare(b.created_at||''));
+}
+
+function renderDennikReplyRow(cislo, r) {
+  return `<div class="dennik-entry dennik-reply${r.done ? ' done' : ''}">
+    <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${r.id||''}')" title="${r.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${r.done ? '☑' : '☐'}</span>
+    <div class="dennik-datum">${r.datum}</div><div class="dennik-text">${r.text}</div></div>`;
 }
 
 function buildDennikRepliesHtml(cislo, parentId) {
-  const entries = dennikMap[cislo] || [];
-  const replies = entries.filter(e => String(e.parent_id||'') === String(parentId))
-    .sort((a, b) => (a.created_at||'').localeCompare(b.created_at||''));
-  const replyRow = r => `<div class="dennik-entry dennik-reply${r.done ? ' done' : ''}">
-    <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${r.id||''}')" title="${r.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${r.done ? '☑' : '☐'}</span>
-    <div class="dennik-datum">${r.datum}</div><div class="dennik-text">${r.text}</div></div>`;
-  return `${replies.map(replyRow).join('')}
+  const replies = dennikRepliesFor(cislo, parentId);
+  return `${replies.map(r => renderDennikReplyRow(cislo, r)).join('')}
     <div class="dennik-reply-add">
       <input class="dennik-input" id="ri-${parentId}" placeholder="Odpovedať…" onkeydown="if(event.key==='Enter')addDennikReply('${cislo}','${parentId}')">
       <button class="btn-add-zaz" onclick="addDennikReply('${cislo}','${parentId}')">Pridať</button>
     </div>`;
+}
+
+function buildDennikThreadPreviewHtml(cislo, id, open) {
+  if (open) return `<div class="dennik-thread">${buildDennikRepliesHtml(cislo, id)}</div>`;
+  const preview = dennikRepliesFor(cislo, id).slice(-3);
+  if (!preview.length) return '';
+  return `<div class="dennik-thread">${preview.map(r => renderDennikReplyRow(cislo, r)).join('')}</div>`;
 }
 
 function toggleDennikThread(cislo, id) {
@@ -2326,15 +2334,13 @@ function buildDennikListHtml(cislo) {
   if (!top.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0;">Žiadne záznamy</div>';
   const entryHtml = e => {
     const open = e.id && dennikThreadOpen.has(String(e.id));
-    const rCount = e.id ? dennikReplyCount(cislo, e.id) : 0;
     return `<div class="dennik-entry${e.done ? ' done' : ''}">
     <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>
     <div style="flex:1;min-width:0">
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px${e.id ? ';cursor:pointer' : ''}"${e.id ? ` onclick="toggleDennikThread('${cislo}','${e.id}')"` : ''}>
         <div class="dennik-datum">${e.datum}</div><div class="dennik-text">${e.text}</div>
       </div>
-      ${e.id ? `<div class="dennik-thread-btn" onclick="toggleDennikThread('${cislo}','${e.id}')">💬 ${rCount ? rCount + ' odpovedí' : 'Odpovedať'}</div>` : ''}
-      ${open ? `<div class="dennik-thread">${buildDennikRepliesHtml(cislo, e.id)}</div>` : ''}
+      ${e.id ? buildDennikThreadPreviewHtml(cislo, e.id, open) : ''}
     </div></div>`;
   };
   const recent = top.slice(0, 3);
@@ -2466,22 +2472,20 @@ function renderChronoEntry(e) {
     : '';
   const strike = e.done ? ';text-decoration:line-through;opacity:.55' : '';
   const isOpen = e.type === 'dennik' && e.id && dennikThreadOpen.has(String(e.id));
-  const rCount = e.type === 'dennik' && e.id ? dennikReplyCount(e.cislo, e.id) : 0;
-  const threadBtn = e.type === 'dennik' && e.id
-    ? `<div class="dennik-thread-btn" onclick="toggleDennikThread('${e.cislo}','${e.id}')">💬 ${rCount ? rCount + ' odpovedí' : 'Odpovedať'}</div>`
-    : '';
-  const threadHtml = isOpen ? `<div class="dennik-thread">${buildDennikRepliesHtml(e.cislo, e.id)}</div>` : '';
+  const threadHtml = e.type === 'dennik' && e.id ? buildDennikThreadPreviewHtml(e.cislo, e.id, isOpen) : '';
+  const clickAttr = e.type === 'dennik' && e.id ? ` onclick="toggleDennikThread('${e.cislo}','${e.id}')" style="cursor:pointer"` : '';
   return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55;display:flex;gap:6px">
     ${check}${pin}
     <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
-        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
-        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
-        <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
-        ${badge}
+      <div${clickAttr}>
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
+          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
+          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
+          ${badge}
+        </div>
+        <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
       </div>
-      <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
-      ${threadBtn}
       ${threadHtml}
     </div>
   </div>`;
