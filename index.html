@@ -672,6 +672,10 @@ nav {
 .dennik-entry.done .dennik-datum, .dennik-entry.done .dennik-text { text-decoration: line-through; opacity: .55; }
 .dennik-pin { cursor: pointer; flex-shrink: 0; font-size: 12px; opacity: .3; user-select: none; }
 .dennik-pin.on { opacity: 1; }
+.dennik-thread-btn { font-size: 11px; color: var(--blue); cursor: pointer; margin-top: 3px; user-select: none; }
+.dennik-thread { margin-top: 6px; padding-left: 14px; border-left: 2px solid var(--border); }
+.dennik-reply .dennik-datum, .dennik-reply .dennik-text { font-size: 11px; }
+.dennik-reply-add { display: flex; gap: 6px; margin-top: 6px; }
 .dennik-add { display: flex; gap: 6px; margin-top: 6px; }
 .dennik-input {
   flex: 1; background: var(--bg2); border: 1px solid var(--border);
@@ -1382,6 +1386,7 @@ let _tmplEditTasks = [];
 let activeStat = null;
 let stavMap   = JSON.parse(localStorage.getItem('pmStav')   || '{}');  // {cislo: 'pripravovany'|'aktivny'|'pozastaveny'}
 let dennikMap = JSON.parse(localStorage.getItem('pmDennik') || '{}');  // {cislo: [{datum, text, created_at}]}
+let dennikThreadOpen = new Set(); // id-čka zápisov, ktorých podvlákno odpovedí je rozbalené
 let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo: ISO_timestamp} — kedy user naposledy otvoril projekt
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
@@ -1755,7 +1760,7 @@ async function syncData() {
         const newDennik = {};
         rows.forEach(r => {
           if (!newDennik[r.cislo]) newDennik[r.cislo] = [];
-          newDennik[r.cislo].push({ id: r.id, datum: r.datum, text: r.text, created_at: r.created_at, done: !!r.done, today: !!r.today });
+          newDennik[r.cislo].push({ id: r.id, datum: r.datum, text: r.text, created_at: r.created_at, done: !!r.done, today: !!r.today, parent_id: r.parent_id || null });
         });
         dennikMap = newDennik;
         localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
@@ -2258,14 +2263,80 @@ function toggleStat() {}
 function closeStat() {}
 
 // ── DENNÍK ────────────────────────────────────────────────────────────────
+function dennikReplyCount(cislo, id) {
+  return (dennikMap[cislo] || []).filter(e => String(e.parent_id||'') === String(id)).length;
+}
+
+function buildDennikRepliesHtml(cislo, parentId) {
+  const entries = dennikMap[cislo] || [];
+  const replies = entries.filter(e => String(e.parent_id||'') === String(parentId))
+    .sort((a, b) => (a.created_at||'').localeCompare(b.created_at||''));
+  const replyRow = r => `<div class="dennik-entry dennik-reply${r.done ? ' done' : ''}">
+    <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${r.id||''}')" title="${r.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${r.done ? '☑' : '☐'}</span>
+    <div class="dennik-datum">${r.datum}</div><div class="dennik-text">${r.text}</div></div>`;
+  return `${replies.map(replyRow).join('')}
+    <div class="dennik-reply-add">
+      <input class="dennik-input" id="ri-${parentId}" placeholder="Odpovedať…" onkeydown="if(event.key==='Enter')addDennikReply('${cislo}','${parentId}')">
+      <button class="btn-add-zaz" onclick="addDennikReply('${cislo}','${parentId}')">Pridať</button>
+    </div>`;
+}
+
+function toggleDennikThread(cislo, id) {
+  if (!id) return;
+  const key = String(id);
+  if (dennikThreadOpen.has(key)) dennikThreadOpen.delete(key); else dennikThreadOpen.add(key);
+  const el = document.getElementById('dlist-' + cislo);
+  if (el) el.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+  buildChronoContent();
+}
+
+async function addDennikReply(cislo, parentId) {
+  const inp = document.getElementById('ri-' + parentId);
+  if (!inp) return;
+  const text = inp.value.trim();
+  if (!text) return;
+  if (!dennikMap[cislo]) dennikMap[cislo] = [];
+  const now = new Date();
+  const datum = `${now.getDate()}.${now.getMonth()+1}.${now.getFullYear()}`;
+  const entry = { datum, text, created_at: now.toISOString(), done: false, parent_id: parentId };
+  dennikMap[cislo].push(entry);
+  dennikThreadOpen.add(String(parentId));
+  localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+  const el = document.getElementById('dlist-' + cislo);
+  if (el) el.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+  buildChronoContent();
+  try {
+    const { data } = await sb.from('dennik').insert({ cislo, datum, text, parent_id: parentId }).select('id').single();
+    if (data?.id) {
+      entry.id = data.id;
+      localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+      const el2 = document.getElementById('dlist-' + cislo);
+      if (el2) el2.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+      buildChronoContent();
+    }
+  } catch(e) {}
+  showToast('Odpoveď pridaná ✓', 'ok');
+}
+
 function buildDennikListHtml(cislo) {
   const entries = dennikMap[cislo] || [];
-  if (!entries.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0;">Žiadne záznamy</div>';
-  const entryHtml = e => `<div class="dennik-entry${e.done ? ' done' : ''}">
+  const top = entries.filter(e => !e.parent_id);
+  if (!top.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0;">Žiadne záznamy</div>';
+  const entryHtml = e => {
+    const open = e.id && dennikThreadOpen.has(String(e.id));
+    const rCount = e.id ? dennikReplyCount(cislo, e.id) : 0;
+    return `<div class="dennik-entry${e.done ? ' done' : ''}">
     <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>
-    <div class="dennik-datum">${e.datum}</div><div class="dennik-text">${e.text}</div></div>`;
-  const recent = entries.slice(0, 3);
-  const older  = entries.slice(3);
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;gap:8px">
+        <div class="dennik-datum">${e.datum}</div><div class="dennik-text">${e.text}</div>
+      </div>
+      ${e.id ? `<div class="dennik-thread-btn" onclick="toggleDennikThread('${cislo}','${e.id}')">💬 ${rCount ? rCount + ' odpovedí' : 'Odpovedať'}</div>` : ''}
+      ${open ? `<div class="dennik-thread">${buildDennikRepliesHtml(cislo, e.id)}</div>` : ''}
+    </div></div>`;
+  };
+  const recent = top.slice(0, 3);
+  const older  = top.slice(3);
   return `
     ${older.length ? `<div id="dlist-older-${cislo}" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--border);margin-bottom:4px">${older.map(entryHtml).join('')}</div>
     <div id="dlist-toggle-${cislo}" onclick="toggleDennikOlder('${cislo}')" style="font-size:11px;color:var(--blue);cursor:pointer;padding:2px 0 6px">▸ Zobraziť staršie (${older.length})</div>` : ''}
@@ -2290,7 +2361,8 @@ function toggleDennikOlder(cislo) {
   const btn = document.getElementById('dlist-toggle-' + cislo);
   const open = el.style.display !== 'none';
   el.style.display = open ? 'none' : 'block';
-  btn.textContent = open ? `▸ Zobraziť staršie (${(dennikMap[cislo]||[]).length - 3})` : '▴ Skryť staršie';
+  const topCount = (dennikMap[cislo]||[]).filter(e => !e.parent_id).length;
+  btn.textContent = open ? `▸ Zobraziť staršie (${topCount - 3})` : '▴ Skryť staršie';
 }
 
 
@@ -2391,6 +2463,12 @@ function renderChronoEntry(e) {
     ? `<span class="dennik-pin${e.today ? ' on' : ''}" onclick="toggleDennikToday('${e.cislo}','${e.id||''}')" title="${e.today ? 'Odobrať z Vybaviť dnes' : 'Pridať do Vybaviť dnes'}">📌</span>`
     : '';
   const strike = e.done ? ';text-decoration:line-through;opacity:.55' : '';
+  const isOpen = e.type === 'dennik' && e.id && dennikThreadOpen.has(String(e.id));
+  const rCount = e.type === 'dennik' && e.id ? dennikReplyCount(e.cislo, e.id) : 0;
+  const threadBtn = e.type === 'dennik' && e.id
+    ? `<div class="dennik-thread-btn" onclick="toggleDennikThread('${e.cislo}','${e.id}')">💬 ${rCount ? rCount + ' odpovedí' : 'Odpovedať'}</div>`
+    : '';
+  const threadHtml = isOpen ? `<div class="dennik-thread">${buildDennikRepliesHtml(e.cislo, e.id)}</div>` : '';
   return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55;display:flex;gap:6px">
     ${check}${pin}
     <div style="flex:1;min-width:0">
@@ -2401,6 +2479,8 @@ function renderChronoEntry(e) {
         ${badge}
       </div>
       <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
+      ${threadBtn}
+      ${threadHtml}
     </div>
   </div>`;
 }
@@ -2411,12 +2491,15 @@ function buildChronoContent() {
   Object.entries(dennikMap).forEach(([cislo, items]) => {
     if (filterCislo && cislo !== filterCislo) return;
     const proj = projects.find(p => p.cislo === cislo);
-    (items || []).forEach(e => entries.push({
-      type: 'dennik', cislo, id: e.id, done: !!e.done, today: !!e.today,
-      projName: proj ? proj.nazov : cislo,
-      datum: e.datum, text: e.text,
-      ts: e.created_at ? new Date(e.created_at).getTime() : 0
-    }));
+    (items || []).forEach(e => {
+      if (e.parent_id) return; // odpovede sa zobrazujú vnorené pod rodičom, nie ako samostatný riadok
+      entries.push({
+        type: 'dennik', cislo, id: e.id, done: !!e.done, today: !!e.today,
+        projName: proj ? proj.nazov : cislo,
+        datum: e.datum, text: e.text,
+        ts: e.created_at ? new Date(e.created_at).getTime() : 0
+      });
+    });
   });
   Object.entries(taskNotesCache).forEach(([taskId, notes]) => {
     if (!Array.isArray(notes)) return;
