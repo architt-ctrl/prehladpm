@@ -668,6 +668,8 @@ nav {
 .dennik-entry:last-child { border-bottom: none; }
 .dennik-datum { color: var(--text3); flex-shrink: 0; min-width: 90px; font-size: 11px; padding-top: 1px; }
 .dennik-text { color: var(--text2); flex: 1; }
+.dennik-check { cursor: pointer; flex-shrink: 0; font-size: 13px; line-height: 1.3; color: var(--text3); user-select: none; }
+.dennik-entry.done .dennik-datum, .dennik-entry.done .dennik-text { text-decoration: line-through; opacity: .55; }
 .dennik-add { display: flex; gap: 6px; margin-top: 6px; }
 .dennik-input {
   flex: 1; background: var(--bg2); border: 1px solid var(--border);
@@ -1747,7 +1749,7 @@ async function syncData() {
         const newDennik = {};
         rows.forEach(r => {
           if (!newDennik[r.cislo]) newDennik[r.cislo] = [];
-          newDennik[r.cislo].push({ datum: r.datum, text: r.text, created_at: r.created_at });
+          newDennik[r.cislo].push({ id: r.id, datum: r.datum, text: r.text, created_at: r.created_at, done: !!r.done });
         });
         dennikMap = newDennik;
         localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
@@ -2253,13 +2255,28 @@ function closeStat() {}
 function buildDennikListHtml(cislo) {
   const entries = dennikMap[cislo] || [];
   if (!entries.length) return '<div style="font-size:11px;color:var(--text3);padding:4px 0;">Žiadne záznamy</div>';
-  const entryHtml = e => `<div class="dennik-entry"><div class="dennik-datum">${e.datum}</div><div class="dennik-text">${e.text}</div></div>`;
+  const entryHtml = e => `<div class="dennik-entry${e.done ? ' done' : ''}">
+    <span class="dennik-check" onclick="toggleDennikDone('${cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>
+    <div class="dennik-datum">${e.datum}</div><div class="dennik-text">${e.text}</div></div>`;
   const recent = entries.slice(0, 3);
   const older  = entries.slice(3);
   return `
     ${older.length ? `<div id="dlist-older-${cislo}" style="display:none;max-height:200px;overflow-y:auto;border-bottom:1px solid var(--border);margin-bottom:4px">${older.map(entryHtml).join('')}</div>
     <div id="dlist-toggle-${cislo}" onclick="toggleDennikOlder('${cislo}')" style="font-size:11px;color:var(--blue);cursor:pointer;padding:2px 0 6px">▸ Zobraziť staršie (${older.length})</div>` : ''}
     ${recent.map(entryHtml).join('')}`;
+}
+
+async function toggleDennikDone(cislo, id) {
+  if (!id) return;
+  const entries = dennikMap[cislo] || [];
+  const entry = entries.find(e => String(e.id) === String(id));
+  if (!entry) return;
+  entry.done = !entry.done;
+  localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+  const el = document.getElementById('dlist-' + cislo);
+  if (el) el.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+  buildChronoContent();
+  try { sb.from('dennik').update({ done: entry.done }).eq('id', id).then(null, () => {}); } catch(e) {}
 }
 
 function toggleDennikOlder(cislo) {
@@ -2278,13 +2295,22 @@ async function pridajDennik(cislo) {
   if (!dennikMap[cislo]) dennikMap[cislo] = [];
   const now = new Date();
   const datum = `${now.getDate()}.${now.getMonth()+1}.${now.getFullYear()}`;
-  dennikMap[cislo].unshift({ datum, text });
+  const entry = { datum, text, created_at: now.toISOString(), done: false };
+  dennikMap[cislo].unshift(entry);
   localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
   inp.value = '';
   const el = document.getElementById('dlist-' + cislo);
   if (el) el.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
   // Ulož do Supabase
-  try { await sb.from('dennik').insert({ cislo, datum, text }); } catch(e) {}
+  try {
+    const { data } = await sb.from('dennik').insert({ cislo, datum, text }).select('id').single();
+    if (data?.id) {
+      entry.id = data.id;
+      localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+      const el2 = document.getElementById('dlist-' + cislo);
+      if (el2) el2.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+    }
+  } catch(e) {}
   // Ulož aj do Caflou
   const p = projects.find(x => x.cislo === cislo);
   if (p?.caflou_id) {
@@ -2309,7 +2335,7 @@ function buildChronoContent() {
   Object.entries(dennikMap).forEach(([cislo, items]) => {
     const proj = projects.find(p => p.cislo === cislo);
     (items || []).forEach(e => entries.push({
-      type: 'dennik', cislo,
+      type: 'dennik', cislo, id: e.id, done: !!e.done,
       projName: proj ? proj.nazov : cislo,
       datum: e.datum, text: e.text,
       ts: e.created_at ? new Date(e.created_at).getTime() : 0
@@ -2342,14 +2368,21 @@ function buildChronoContent() {
     const badge = e.type === 'task'
       ? `<span style="font-size:10px;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd);border-radius:4px;padding:1px 5px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px" title="${e.taskName}">${e.taskName}</span>`
       : '';
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55">
-      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
-        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
-        <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
-        <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${e.projName}</span>
-        ${badge}
+    const check = e.type === 'dennik'
+      ? `<span class="dennik-check" onclick="toggleDennikDone('${e.cislo}','${e.id||''}')" title="${e.done ? 'Označiť ako nevybavené' : 'Označiť ako vybavené'}">${e.done ? '☑' : '☐'}</span>`
+      : '';
+    const strike = e.done ? ';text-decoration:line-through;opacity:.55' : '';
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border)55;display:flex;gap:6px">
+      ${check}
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
+          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
+          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
+          <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
+          ${badge}
+        </div>
+        <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
       </div>
-      <div style="font-size:12px;color:var(--text);line-height:1.4">${e.text}</div>
     </div>`;
   }).join('');
 }
@@ -2362,14 +2395,23 @@ async function chronoAddDennik() {
   if (!dennikMap[cislo]) dennikMap[cislo] = [];
   const now = new Date();
   const datum = `${now.getDate()}.${now.getMonth()+1}.${now.getFullYear()}`;
-  const entry = { datum, text, created_at: now.toISOString() };
+  const entry = { datum, text, created_at: now.toISOString(), done: false };
   dennikMap[cislo].unshift(entry);
   localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
   textEl.value = '';
   buildChronoContent();
   const listEl = document.getElementById('dlist-' + cislo);
   if (listEl) listEl.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
-  try { await sb.from('dennik').insert({ cislo, datum, text }); } catch(e) {}
+  try {
+    const { data } = await sb.from('dennik').insert({ cislo, datum, text }).select('id').single();
+    if (data?.id) {
+      entry.id = data.id;
+      localStorage.setItem('pmDennik', JSON.stringify(dennikMap));
+      buildChronoContent();
+      const listEl2 = document.getElementById('dlist-' + cislo);
+      if (listEl2) listEl2.outerHTML = `<div class="dennik-list" id="dlist-${cislo}">${buildDennikListHtml(cislo)}</div>`;
+    }
+  } catch(e) {}
   const p = projects.find(x => x.cislo === cislo);
   if (p?.caflou_id) { try { await caflouAddComment(p.caflou_id, text); } catch(e) {} }
   showToast('Zapísané ✓', 'ok');
