@@ -3058,6 +3058,11 @@ function buildCaflouTasksHtml(cislo) {
     const safeName = t.name.replace(/"/g, '&quot;');
     const specName = extSpecOverride[String(t.id)] || (extSpecCache[cislo]||{})[t.name] || '';
     const isExt = (t.tags||[]).includes('ext');
+    const specRowForMail = specName ? (specialistsList||[]).find(s => s.name === specName) : null;
+    const mailToEsc = (specRowForMail?.email || '').replace(/"/g, '&quot;');
+    const mailProf = specRowForMail ? (specRowForMail.profession||'').split(',')[0].trim() : '';
+    const mailProjName = (projects.find(pp => pp.cislo === cislo) || {}).nazov || '';
+    const mailSubjectEsc = `${mailProf ? mailProf + ' ' : ''}${cislo}${mailProjName ? ' - ' + mailProjName : ''}`.replace(/"/g, '&quot;');
     const fazaTag = getTaskFazaTag(t);
     const personName = isExt ? specName : assignee;
     const personColor = specName ? 'var(--green)' : 'var(--text3)';
@@ -3101,11 +3106,22 @@ function buildCaflouTasksHtml(cislo) {
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
         ${isExt ? (taskEmailCache[String(t.id)]
           ? `<a href="${taskEmailCache[String(t.id)]}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Otvoriť mailové vlákno" style="flex-shrink:0;text-decoration:none;font-size:12px;color:var(--blue)">✉️</a>`
-          : `<span onclick="event.stopPropagation();toggleTaskEdit('${cislo}',${t.id})" title="Priradiť mailové vlákno" style="flex-shrink:0;font-size:12px;opacity:.3;cursor:pointer">✉️</span>`
+          : `<span onclick="event.stopPropagation();toggleTaskMailForm('${editKey}')" title="Spustiť oficiálnu mailovú komunikáciu" style="flex-shrink:0;font-size:12px;opacity:.3;cursor:pointer">✉️</span>`
           ) : ''}
         ${lastNote ? `<span onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">${lastNote.datum}: ${lastNote.text}</span>` : `<span style="flex:1"></span>`}
         <button onclick="event.stopPropagation();toggleTaskNotes('${cislo}',${t.id})" title="Zápisky" style="background:none;border:none;font-size:11px;color:var(--text3);cursor:pointer;padding:0 0 0 4px;flex-shrink:0">${notesOpen?'▲':'📝'}</button>
       </div>
+      ${isExt ? `<div id="tmail-${editKey}" style="display:none;flex-direction:column;gap:6px;padding:2px 0 8px 0" onclick="event.stopPropagation()">
+        <input id="tmailto-${editKey}" class="pd-sel" style="font-size:12px" value="${mailToEsc}" placeholder="Komu (email špecialistu)…">
+        <input id="tmailsubj-${editKey}" class="pd-sel" style="font-size:12px" value="${mailSubjectEsc}" placeholder="Predmet">
+        <textarea id="tmailbody-${editKey}" class="dennik-input" style="font-size:12px;min-height:60px;resize:vertical" placeholder="Text správy…"></textarea>
+        <div style="display:flex;gap:6px">
+          <button onclick="event.stopPropagation();sendOfficialMail('${cislo}',${t.id},'${editKey}')"
+            style="flex:1;background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:600">Odoslať a priradiť vlákno</button>
+          <button onclick="event.stopPropagation();toggleTaskMailForm('${editKey}')"
+            style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer">Zrušiť</button>
+        </div>
+      </div>` : ''}
       ${notesOpen ? `<div onclick="event.stopPropagation()" style="padding:0 0 5px 0">${buildTaskNotesHtml(cislo, t.id)}</div>` : ''}
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
         <input id="tn-${editKey}" value="${safeName}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
@@ -3272,6 +3288,33 @@ async function unfinishCaflouTask(cislo, task_id) {
       body: JSON.stringify({ task: { finished: false, task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'] } })
     });
   } catch(e) {}
+}
+
+function toggleTaskMailForm(editKey) {
+  const el = document.getElementById('tmail-' + editKey); if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+
+async function sendOfficialMail(cislo, task_id, editKey) {
+  const to      = document.getElementById('tmailto-' + editKey)?.value.trim();
+  const subject = document.getElementById('tmailsubj-' + editKey)?.value.trim();
+  const body    = document.getElementById('tmailbody-' + editKey)?.value.trim() || '';
+  if (!to || !subject) { showToast('Vyplň adresáta a predmet', 'err'); return; }
+  if (!cfg.url) { showToast('Chýba Apps Script URL v nastaveniach', 'err'); return; }
+  showToast('Odosielam…', 'ok');
+  try {
+    const res = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'sendOfficialMail', to, subject, body }) });
+    const d = await res.json();
+    if (!d.ok) { showToast('Chyba: ' + (d.error || 'neznáma'), 'err'); return; }
+    if (d.permalink) {
+      taskEmailCache[String(task_id)] = d.permalink;
+      sb.from('task_email_threads').upsert({ task_id, thread_url: d.permalink, updated_at: new Date().toISOString() }).then(null, () => {});
+      refreshUlohy(cislo);
+      showToast('Odoslané, vlákno priradené ✓', 'ok');
+    } else {
+      showToast('Odoslané, ale vlákno sa nenašlo — prilož odkaz ručne cez ✎', 'err');
+    }
+  } catch(e) { showToast('Chyba odoslania: ' + e.message, 'err'); }
 }
 
 function toggleTaskEdit(cislo, task_id) {

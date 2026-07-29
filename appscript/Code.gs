@@ -281,6 +281,7 @@ function doPost(e) {
     else if (req.action === 'generateZoznam')     resp = akcia_generateZoznam(req);
     else if (req.action === 'generateSuhrn')      resp = akcia_generateSuhrn(req);
     else if (req.action === 'extractMetadata')    resp = akcia_extractMetadata(req);
+    else if (req.action === 'sendOfficialMail')   resp = akcia_sendOfficialMail(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -288,6 +289,21 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify({ ok: false, error: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ── OFICIÁLNA MAILOVÁ KOMUNIKÁCIA (odošle a nájde vlastné vlákno) ─────────
+function akcia_sendOfficialMail(req) {
+  var to = (req.to || '').trim();
+  var subject = (req.subject || '').trim();
+  var body = req.body || '';
+  if (!to || !subject) return { ok: false, error: 'Chýba príjemca alebo predmet' };
+  GmailApp.sendEmail(to, subject, body);
+  Utilities.sleep(2000);
+  var threads = GmailApp.search('in:sent to:"' + to + '" subject:"' + subject + '"', 0, 1);
+  if (!threads.length) return { ok: true, threadId: null, permalink: null };
+  var threadId = threads[0].getId();
+  var permalink = 'https://mail.google.com/mail/u/0/#all/' + threadId;
+  return { ok: true, threadId: threadId, permalink: permalink };
 }
 
 function akcia_zhrniProjekt(req) {
