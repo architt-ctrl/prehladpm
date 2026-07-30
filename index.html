@@ -767,6 +767,13 @@ nav {
     </svg>
     <span class="hbtn-lbl">Int tím</span>
   </button>
+  <button class="hbtn" onclick="openFinancieModal()" title="Príjmy a výdavky projektov">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <line x1="12" y1="1" x2="12" y2="23"></line>
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+    </svg>
+    <span class="hbtn-lbl">Financie</span>
+  </button>
   <button class="hbtn" onclick="toggleCfg()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="12" r="3"></circle>
@@ -1235,6 +1242,16 @@ nav {
     <div id="intTimContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
     <div class="mactions">
       <button class="btn-ghost" onclick="document.getElementById('intTimModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="financieModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Príjmy a výdavky projektov</h3>
+    <div id="financieContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('financieModal').classList.add('hidden')">Zavrieť</button>
     </div>
   </div>
 </div>
@@ -1708,6 +1725,123 @@ async function openIntTimModal() {
   }
 }
 
+// ── FINANCIE (príjmy/výdavky projektov, Caflou transfers) ──────────────────
+let _financieData = null; // [{id, kind, project_id, value, name, date}] — invalidovaný pri syncData
+let financieOpenSet = new Set(); // ktoré cislo majú rozbalený zoznam položiek
+
+function financieByProject(data) {
+  const byId = {};
+  (projects||[]).forEach(p => { if (p.caflou_id) byId[p.caflou_id] = p; });
+  const groups = {};
+  data.forEach(t => {
+    const p = byId[t.project_id]; if (!p) return;
+    if (p.caflou_type === 'Interná réžia') return;
+    if (!groups[p.cislo]) groups[p.cislo] = { cislo: p.cislo, nazov: p.nazov, prijmy: 0, vydavky: 0, items: [] };
+    const g = groups[p.cislo];
+    if (t.kind === 'income') g.prijmy += t.value; else g.vydavky += t.value;
+    g.items.push(t);
+  });
+  return groups;
+}
+
+function buildFinancieHtml() {
+  if (!_financieData) return '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  const groups = financieByProject(_financieData);
+  const list = Object.values(groups).sort((a, b) => a.cislo.localeCompare(b.cislo));
+  if (!list.length) return '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne príjmy ani výdavky</div>';
+  return list.map(g => {
+    const bilancia = g.prijmy - g.vydavky;
+    const bilCol = bilancia >= 0 ? 'var(--green)' : 'var(--red)';
+    const isOpen = financieOpenSet.has(g.cislo);
+    const itemRows = isOpen ? [...g.items].sort((a, b) => (b.date||'').localeCompare(a.date||'')).map(t => {
+      const col = t.kind === 'income' ? 'var(--green)' : 'var(--red)';
+      const sign = t.kind === 'income' ? '+' : '−';
+      return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px">
+        <span style="color:var(--text3);flex-shrink:0;font-size:10px">${t.date || ''}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)">${(t.name||'').replace(/</g,'&lt;')}</span>
+        <span style="color:${col};font-weight:600;flex-shrink:0">${sign}${Math.abs(t.value).toFixed(2)} €</span>
+      </div>`;
+    }).join('') : '';
+    const addForm = isOpen ? `
+      <div style="display:flex;gap:6px;margin-top:8px" onclick="event.stopPropagation()">
+        <input id="fin-name-${g.cislo}" class="pd-sel" placeholder="Názov" style="flex:1;font-size:12px">
+        <input id="fin-amt-${g.cislo}" type="number" step="0.01" placeholder="Suma €" class="pd-sel" style="width:90px;font-size:12px">
+        <input id="fin-date-${g.cislo}" type="date" value="${new Date().toISOString().substring(0,10)}" class="pd-sel" style="font-size:12px">
+      </div>
+      <div style="display:flex;gap:6px;margin-top:6px" onclick="event.stopPropagation()">
+        <button onclick="saveFinancieEntry('${g.cislo}','income')" style="flex:1;background:var(--green);color:#fff;border:none;border-radius:7px;padding:5px;font-size:12px;cursor:pointer;font-weight:600">+ Príjem</button>
+        <button onclick="saveFinancieEntry('${g.cislo}','expense')" style="flex:1;background:var(--red);color:#fff;border:none;border-radius:7px;padding:5px;font-size:12px;cursor:pointer;font-weight:600">+ Výdavok</button>
+      </div>` : '';
+    return `<div style="margin-bottom:6px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);cursor:pointer" onclick="toggleFinancieRow('${g.cislo}')">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:var(--text3);font-size:11px;flex-shrink:0">${g.cislo}</span>
+        <span style="font-weight:600;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.nazov}</span>
+        <span style="font-size:11px;color:var(--green);flex-shrink:0">+${g.prijmy.toFixed(0)} €</span>
+        <span style="font-size:11px;color:var(--red);flex-shrink:0">−${g.vydavky.toFixed(0)} €</span>
+        <span style="font-size:12px;font-weight:700;color:${bilCol};flex-shrink:0">${bilancia >= 0 ? '+' : ''}${bilancia.toFixed(0)} €</span>
+      </div>
+      ${itemRows}${addForm}
+    </div>`;
+  }).join('');
+}
+
+function toggleFinancieRow(cislo) {
+  if (financieOpenSet.has(cislo)) financieOpenSet.delete(cislo); else financieOpenSet.add(cislo);
+  const el = document.getElementById('financieContent');
+  if (el) el.innerHTML = buildFinancieHtml();
+}
+
+async function openFinancieModal() {
+  document.getElementById('financieModal').classList.remove('hidden');
+  const el = document.getElementById('financieContent');
+  if (_financieData) { el.innerHTML = buildFinancieHtml(); return; }
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  try {
+    let all = [], page = 1, totalPages = 1;
+    while (page <= totalPages) {
+      el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam stranu ${page}…</div>`;
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers?per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      all = all.concat((d.results || []).filter(t => !t.trash && (t.kind === 'income' || t.kind === 'expense')));
+      totalPages = d.total_pages || 1;
+      page++;
+    }
+    _financieData = all.map(t => ({ id: t.id, kind: t.kind, project_id: t.project_id, value: t.value || 0, name: t.name, date: t.date }));
+    el.innerHTML = buildFinancieHtml();
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
+  }
+}
+
+async function saveFinancieEntry(cislo, kind) {
+  const nameEl = document.getElementById('fin-name-' + cislo);
+  const amtEl  = document.getElementById('fin-amt-' + cislo);
+  const dateEl = document.getElementById('fin-date-' + cislo);
+  const name   = nameEl?.value.trim();
+  const amount = parseFloat(amtEl?.value);
+  const date   = dateEl?.value;
+  if (!name || !amount || !date) { showToast('Vyplň názov, sumu a dátum', 'err'); return; }
+  const p = projects.find(pp => pp.cislo === cislo);
+  if (!p?.caflou_id) { showToast('Projekt nemá Caflou ID', 'err'); return; }
+  showToast('Ukladám…', 'ok');
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer: { kind, project_id: p.caflou_id, name, value: amount, currency: 'EUR', date } })
+    });
+    const d = await r.json();
+    if (!d.id) { showToast('Chyba pri ukladaní', 'err'); return; }
+    if (_financieData) _financieData.push({ id: d.id, kind, project_id: p.caflou_id, value: amount, name, date });
+    nameEl.value = ''; amtEl.value = '';
+    const el = document.getElementById('financieContent');
+    if (el) el.innerHTML = buildFinancieHtml();
+    showToast('Uložené ✓', 'ok');
+  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
 // ── SYNC ──────────────────────────────────────────────────────────────────
 async function syncData() {
   if (!cfg.caflou_key || !cfg.caflou_id) { loadDemo(); return; }
@@ -1733,6 +1867,8 @@ async function syncData() {
     Object.keys(taskEmailCache).forEach(k => delete taskEmailCache[k]);
     _vytazenieCache = null;
     _intTimData = null;
+    _financieData = null;
+    financieOpenSet = new Set();
     projects.forEach(p => {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
     });
