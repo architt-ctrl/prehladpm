@@ -347,6 +347,18 @@ Dva tlačidlá v headeri:
 - `_intTimData = null` v `syncData()` → vynutí refetch pri ďalšom otvorení
 - **Úlohy v karte člena zoskupené podľa projektu (2026-07-03, Jozef):** hlavička skupiny = číslo (sivé) + názov projektu (tučný) raz, úlohy pod ňou odsadené bez opakovania čísla; skupiny zoradené podľa čísla projektu
 
+### Financie (príjmy/výdavky projektov, 2026-07-30)
+
+Tlačidlo **„💰 Financie"** v headeri → `openFinancieModal()` → `#financieModal`.
+
+- Zdroj dát: Caflou **`transfers`** (rovnaký resource ako existujúce `createCaflouExpense` v `ponuky.html`) — `kind` môže byť `"income"` (príjem) aj `"expense"` (výdavok), obe naviazané na `project_id`. Na rozdiel od `project_id` filtra (ignorovaný server-side, rovnaký problém ako pri `/tasks`/`/comments`) **`kind` filter funguje server-side** (overené: `expense` 1305 + `income` 180 = presne 1485 = total bez filtra) — napriek tomu sa fetchuje bez `kind` filtra a delí sa klientsky, aby stačil jeden prechod stránok
+- `GET /transfers?per=100&page=N` — paginated (~15 strán pri súčasnom objeme ~1500 záznamov), filtruje sa `!t.trash`; každý transfer už obsahuje `project_id` priamo, netreba extra lookup
+- `financieByProject(data)` spáruje `t.project_id` s dashboard projektom cez `p.caflou_id` (rovnaké `p.caflou_id = p.id` ako v `suhrn.html`), vynechá `Interná réžia`, sčíta `prijmy`/`vydavky` per `cislo`
+- Cache: `_financieData` (plochý zoznam `{id,kind,project_id,value,name,date}`), invalidovaný v `syncData()` spolu s `financieOpenSet = new Set()`
+- **Modal** — zoznam projektov (súčty príjmy zelené/výdavky červené/bilancia tučná farebná podľa znamienka), klik na riadok rozbalí (`toggleFinancieRow`) jednotlivé položky (dátum, názov, suma) zoradené podľa dátumu zostupne
+- **Manuálne pridanie** (`saveFinancieEntry(cislo, kind)`) — v rozbalenom riadku formulár Názov + Suma + Dátum (bez poľa na firmu, zámerne — pozri gotcha nižšie), tlačidlá **+ Príjem** / **+ Výdavok** → `POST /transfers` s `{transfer:{kind, project_id: p.caflou_id, name, value, currency:'EUR', date}}`, po úspechu sa záznam pridá do `_financieData` a modal sa prekreslí bez nového fetchu
+- **Gotcha — company_id pri manuálnom výdavku:** rovnaká Caflou vlastnosť ako pri `createCaflouExpense` v `ponuky.html` — ak sa nepošle `company_id`, Caflou ho automaticky priradí ku **klientovi projektu**, nie k dodávateľovi. Vedomé rozhodnutie (Jozef, 2026-07-30): formulár pole na firmu nemá (jednoduchosť), takto vzniknuté zle priradenie sa opraví ručne priamo v Caflou keď treba — netreba to considerovať za bug
+
 ### Vyhľadávanie projektov
 
 `searchQuery` — globálna premenná. Search input v `phase-bar`. Keď je neprázdny, `renderProjects()` zobrazí všetky zodpovedajúce projekty naprieč všetkými fázami s farebnými fáza badges. Plné project rows s detail divmi — projekt možno rozkliknúť priamo vo výsledkoch.
