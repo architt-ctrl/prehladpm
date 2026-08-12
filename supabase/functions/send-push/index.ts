@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
       payload = {
         title: 'Nová cenová ponuka',
         body: `${proj}${r?.profession ? ' · ' + r.profession : ''}`,
-        url: 'https://jozefperichta-ctrl.github.io/prehladpm/ponuky.html',
+        url: 'https://architt-ctrl.github.io/prehladpm/ponuky.html',
         tag: `ponuka-${record.request_id}`,
       };
     }
@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       payload = {
         title: 'Nový zápis v denníku',
         body: `${record.cislo}: ${(record.text || '').substring(0, 100)}`,
-        url: 'https://jozefperichta-ctrl.github.io/prehladpm/index.html',
+        url: 'https://architt-ctrl.github.io/prehladpm/index.html',
         tag: `dennik-${record.cislo}`,
       };
     }

@@ -333,6 +333,8 @@ taskPonukySet  = new Set(reqs.map(r => r.caflou_task_id).filter(Boolean));
 
 **`registerPush()`** — v `index.html` aj `ponuky.html`; konštanta `VAPID_PUBLIC` + helper `urlBase64ToUint8Array()`; auto-init IIFE po načítaní stránky (tiché — bez promptu).
 
+**Gotcha — nasadenie edge function je manuálne (2026-08-12):** `supabase/functions/send-push/index.ts` v repe je len záloha, **git push ju nenasadí** — po každej zmene treba ísť do Supabase Dashboard → Edge Functions → `send-push` → Deploy a vložiť aktuálny obsah súboru (rovnaký postup ako Apps Script `Code.gs`). Zachytené 2026-08-12: `url` v payloadoch (`ponuky.html`/`index.html` cesty) mala natvrdo starú GitHub adresu `jozefperichta-ctrl.github.io` (namiesto aktuálnej `architt-ctrl.github.io`, overené 404 vs 200) — klik na notifikáciu preto skončil na 404 mieste nasadenia na správnu stránku. Opravené v repe, **treba manuálne redeploy** cez Dashboard, inak beží ďalej stará (rozbitá) verzia.
+
 ### Vyťaženie tímu
 
 Dva tlačidlá v headeri:
