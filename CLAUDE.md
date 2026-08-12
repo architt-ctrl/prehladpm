@@ -181,13 +181,17 @@ CAFLOU_USERS             // user_id → meno
 - ✕ tlačidlo → `deleteCaflouTask(cislo, task_id)` — confirm → DELETE na Caflou API → remove from cache → refreshUlohy
 - **Supabase fire-and-forget:** `.catch()` na Supabase query builderoch nefunguje — vždy použiť `.then(null, () => {})`
 
-**Poznámky k externým úlohám (task notes):**
-- `taskNotesCache = {taskId: [{id,datum,text}]}` — `undefined` = nenačítané, `null` = načítava sa, `[]` = prázdne
+**Poznámky k externým úlohám (task notes, prepísané na Supabase 2026-08-12):**
+- Primárne úložisko je Supabase `task_notes (id uuid, task_id bigint, cislo text, text text, created_at timestamptz)` — SQL: `supabase/task-notes-setup.sql`
+- **Dôvod prepisu z Caflou comments API:** `GET /comments?commented_type=Task&commented_id=...` ignoruje filter server-side (overené priamym testom — dve rôzne `commented_id` hodnoty vrátili identické výsledky), rovnaký problém ako pri denníku projektov. Keďže sa fetchovala len 1. stránka (`per=100`), poznámka sa reálne stratila pod bot-komentármi (každá zmena statusu/výdavku/úlohy generuje jeden) hneď ako pribudlo dosť aktivity na účte — bola viditeľná hneď po pridaní (lokálny `unshift`), ale zmizla po opätovnom otvorení/reloade (nový fetch ju medzi bot-komentármi nenašiel)
+- `taskNotesCache = {taskId: [{id,datum,text,created_at}]}` — `undefined` = nenačítané, `null` = načítava sa, `[]` = prázdne. Bulk-loadované v `loadCaflouTasks` (rovnaké miesto ako `task_email_threads`) — `sb.from('task_notes').select(...).in('task_id', taskIds)` pre všetky úlohy projektu naraz, žiadny per-task lazy fetch
+- `preloadTaskNotes(cislo, taskId)` — fallback pre jednotlivú úlohu (Supabase `eq('task_id', taskId)`), použije sa len ak bulk-load cache pre daný task nepokryl (cache je `undefined`)
 - `taskNotesOpen = new Set()` — ktoré úlohy majú rozbalený zoznam poznámok
-- `preloadTaskNotes(cislo, taskId)` — načíta komentáre z Caflou API pre danú úlohu, volá `refreshUlohy` po dokončení
 - Posledná poznámka sa zobrazuje inline v riadku úlohy (skrátená); kliknutím sa rozbalia všetky
-- Po uložení poznámky (`addTaskNote`) sa zoznam automaticky zavrie (`taskNotesOpen.delete(taskId)`)
-- Komentáre sa filtrujú podľa `commented_id === taskId` — inak API vracia náhodné komentáre
+- `addTaskNote` — INSERT do Supabase (primárne), po úspechu **write-through backup** do Caflou comments (`caflou_task_id`, `.then(null, () => {})` fire-and-forget — Supabase fire-and-forget gotcha platí rovnako ako inde v repo). Po uložení sa zoznam automaticky zavrie (`taskNotesOpen.delete(taskId)`)
+- `taskNotesCache` sa čistí pri `syncData()` (rovnako ako `taskEmailCache`) — nové dáta sa dotiahnu pri ďalšom `loadCaflouTasks`
+- **Gotcha:** SQL migrácia (`task-notes-setup.sql`) musí bežať v Supabase **pred** používaním — inak insert zlyhá ticho (fire-and-forget backup zamaskuje chybu, ale primárny insert cez `addTaskNote` hodí toast s chybou, keďže tam je try/catch so `showToast`)
+- Poznámky napísané pred týmto prepisom (cez starý Caflou-comments flow) sa **nezobrazia** — v Supabase nie sú, historická obnova (analogická `recover-dennik.ps1`) zatiaľ nebola spravená
 
 **Hromadné úpravy (bulk bar):**
 - Status, fáza, termín (`bulkSetDeadline`), Interné/Externé, Ukončiť, Vymazať, Dopyty

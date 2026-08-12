@@ -1865,6 +1865,7 @@ async function syncData() {
       .map(parseCaflouProject);
     caflouTasksCache = {};
     Object.keys(taskEmailCache).forEach(k => delete taskEmailCache[k]);
+    Object.keys(taskNotesCache).forEach(k => delete taskNotesCache[k]);
     _vytazenieCache = null;
     _intTimData = null;
     _financieData = null;
@@ -2958,6 +2959,19 @@ async function loadCaflouTasks(cislo, caflou_id) {
         (emails||[]).forEach(row => { taskEmailCache[String(row.task_id)] = row.thread_url; });
       }
     } catch(e) {}
+    try {
+      const taskIds = all.map(t => t.id).filter(Boolean);
+      if (taskIds.length) {
+        const { data: notes, error } = await sb.from('task_notes')
+          .select('id,task_id,text,created_at').in('task_id', taskIds).order('created_at', { ascending: false });
+        if (error) throw error;
+        (notes||[]).forEach(n => {
+          if (!taskNotesCache[n.task_id]) taskNotesCache[n.task_id] = [];
+          taskNotesCache[n.task_id].push(formatTaskNote(n));
+        });
+        taskIds.forEach(tid => { if (taskNotesCache[tid] === undefined) taskNotesCache[tid] = []; });
+      }
+    } catch(e) {}
     // Aktualizuj taskPonukySet pre tieto úlohy (čerstvé dáta)
     try {
       const taskIds = all.map(t => t.id).filter(Boolean);
@@ -2977,9 +2991,6 @@ async function loadCaflouTasks(cislo, caflou_id) {
       }
     } catch(e) {}
     el.innerHTML = buildCaflouTasksHtml(cislo);
-    // Preload notes for all active tasks in background (each will call refreshUlohy when done)
-    all.filter(t => !t.finished)
-       .forEach(t => preloadTaskNotes(cislo, t.id));
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
   }
@@ -3821,27 +3832,25 @@ async function applyTmplTasks(cislo) {
 }
 
 // ── DENNÍK EXTERNÝCH ÚLOH ────────────────────────────────────────────────
+// Primárne úložisko je Supabase `task_notes` (nie Caflou comments API) — filter
+// commented_id/commented_type na Caflou /comments je ignorovaný server-side
+// (rovnaký problém ako pri denníku projektov), takže záznam sa po chvíli stratí
+// pod bot-komentármi. Zápis do Caflou ostáva len ako backup (addTaskNote).
+function formatTaskNote(n) {
+  const dt = new Date(n.created_at);
+  return { id: n.id, datum: dt.getDate()+'.'+(dt.getMonth()+1)+'.'+dt.getFullYear(), text: n.text, created_at: n.created_at };
+}
+
+// Fallback pre prípad, že úloha nebola pokrytá bulk-loadom v loadCaflouTasks
+// (napr. cache bola medzičasom zmazaná inak než cez syncData).
 async function preloadTaskNotes(cislo, taskId) {
   if (taskNotesCache[taskId] !== undefined) return;
   taskNotesCache[taskId] = null; // loading sentinel
   try {
-    const r = await fetch(
-      `https://app.caflou.com/api/v1/${cfg.caflou_id}/comments?commented_type=Task&commented_id=${taskId}&per=100`,
-      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
-    );
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    const all = d.result || d.results || d.data || [];
-    taskNotesCache[taskId] = all
-      .filter(c => String(c.commented_id) === String(taskId) && (c.text || '').trim())
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-      .map(c => {
-        const raw = c.text || '';
-        const m = raw.match(/^(\d+\.\d+\.\d+): ([\s\S]+)$/);
-        if (m) return { id: c.id, datum: m[1], text: m[2] };
-        const dt = new Date(c.created_at);
-        return { id: c.id, datum: dt.getDate()+'.'+(dt.getMonth()+1)+'.'+dt.getFullYear(), text: raw };
-      });
+    const { data, error } = await sb.from('task_notes')
+      .select('id,text,created_at').eq('task_id', taskId).order('created_at', { ascending: false });
+    if (error) throw error;
+    taskNotesCache[taskId] = (data||[]).map(formatTaskNote);
   } catch(e) {
     taskNotesCache[taskId] = [];
   }
@@ -3888,21 +3897,21 @@ async function toggleTaskNotes(cislo, taskId) {
 async function addTaskNote(cislo, taskId) {
   const inp = document.getElementById('tni-' + taskId);
   const text = inp?.value.trim(); if (!text) return;
-  const now = new Date();
-  const datum = now.getDate() + '.' + (now.getMonth()+1) + '.' + now.getFullYear();
   inp.value = '';
   inp.disabled = true;
   try {
-    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/comments`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment: { text: datum + ': ' + text, commented_type: 'Task', commented_id: taskId } })
-    });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const d = await r.json();
-    const newNote = { id: d.result?.id ?? d.id, datum, text };
+    const { data, error } = await sb.from('task_notes')
+      .insert({ task_id: taskId, cislo, text }).select('id,text,created_at').single();
+    if (error) throw error;
+    const newNote = formatTaskNote(data);
     if (!taskNotesCache[taskId]) taskNotesCache[taskId] = [];
     taskNotesCache[taskId].unshift(newNote);
+    // Backup do Caflou komentárov (best-effort, nekritické — primárne úložisko je Supabase)
+    fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/comments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: { text: newNote.datum + ': ' + text, commented_type: 'Task', commented_id: taskId } })
+    }).then(null, () => {});
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
   } finally {
