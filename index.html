@@ -1407,6 +1407,7 @@ let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
+let gemExpandedSet = new Set(JSON.parse(localStorage.getItem('pmGemExpanded') || '[]')); // {cislo} — zhrnutie AI rozbalené (default skryté, šetrí miesto)
 let activeFaza = 'Štúdia';
 let activeStav = 'pripravovany';
 let searchQuery = '';
@@ -2332,13 +2333,15 @@ function buildDetailHtml(p) {
   </div>
   <div class="pd-section">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-      <div class="pd-label" style="margin-bottom:0">Zhrnutie AI</div>
+      <div class="pd-label" style="margin-bottom:0;cursor:pointer;user-select:none" onclick="event.stopPropagation();toggleGemSummary('${p.cislo}')">
+        <span id="gem-arrow-${p.cislo}">${gemExpandedSet.has(p.cislo)?'▾':'▸'}</span> Zhrnutie AI
+      </div>
       <button onclick="event.stopPropagation();geminiZhrnProjekt('${p.cislo}')"
         id="btn-gem-${p.cislo}"
         style="background:none;border:1px solid var(--border);border-radius:6px;
         padding:2px 8px;font-size:11px;cursor:pointer;color:var(--text2)">✦ Zhrnúť</button>
     </div>
-    <div id="gem-detail-${p.cislo}" style="font-size:12px;color:var(--text2);white-space:pre-wrap;line-height:1.5">${geminiMap[p.cislo]||''}</div>
+    <div id="gem-detail-${p.cislo}" style="font-size:12px;color:var(--text2);white-space:pre-wrap;line-height:1.5;${gemExpandedSet.has(p.cislo)?'':'display:none'}">${geminiMap[p.cislo]||''}</div>
   </div>
   <div class="pd-section">
     <div class="pd-label">Denník projektu</div>
@@ -4151,12 +4154,23 @@ async function geminiZhrnVsetky() {
   renderProjects();
 }
 
+function toggleGemSummary(cislo) {
+  const willExpand = !gemExpandedSet.has(cislo);
+  if (willExpand) gemExpandedSet.add(cislo); else gemExpandedSet.delete(cislo);
+  localStorage.setItem('pmGemExpanded', JSON.stringify([...gemExpandedSet]));
+  const box = document.getElementById('gem-detail-' + cislo);
+  const arrow = document.getElementById('gem-arrow-' + cislo);
+  if (box) box.style.display = willExpand ? '' : 'none';
+  if (arrow) arrow.textContent = willExpand ? '▾' : '▸';
+}
+
 async function geminiZhrnProjekt(cislo) {
   if (!cfg.url) { showToast('Nastav Apps Script URL','err'); return; }
   const p = projects.find(x => x.cislo === cislo); if (!p) return;
   const btn = document.getElementById('btn-gem-' + cislo);
   const detailEl = document.getElementById('gem-detail-' + cislo);
   const rowEl    = document.getElementById('gem-row-' + cislo);
+  if (!gemExpandedSet.has(cislo)) toggleGemSummary(cislo); // nové zhrnutie sa má rovno ukázať
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   if (detailEl) detailEl.textContent = 'Gemini generuje…';
 

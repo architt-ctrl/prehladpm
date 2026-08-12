@@ -252,6 +252,8 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 
 `geminiZhrnVsetky()` calls Apps Script (`cfg.url`) action `zhrniProjekt` for each visible project. Result stored in `geminiMap`. Ak sú pre projekt načítané úlohy v `caflouTasksCache`, zahrnie aj posledné 3 poznámky každej externej úlohy (rovnako ako `geminiZhrnProjekt`).
 
+**Zbaliteľné "Zhrnutie AI" v detaile (2026-08-12):** default skryté (šetrí miesto pri dlhších zhrnutiach) — `gemExpandedSet` (`localStorage('pmGemExpanded')`, obsahuje `cislo` rozbalených projektov), `toggleGemSummary(cislo)` prepína `display` na `#gem-detail-{cislo}` + šípku `#gem-arrow-{cislo}` priamym DOM zásahom (nie cez re-render, rovnaký dôvod ako inde — nesmie kolabovať iné otvorené detaily). Klik na "✦ Zhrnúť" (`geminiZhrnProjekt`) rozbalí automaticky, ak bolo zbalené, nech je nové zhrnutie hneď vidno.
+
 `geminiZhrnPortfolio()` — tlačidlo **Stav** v headeri. Zbiera posledné 3 denník záznamy zo všetkých nearcivovaných projektov + posledných 30 emailov zo SHEET_MAILY. Posiela do Apps Script `action: 'zhrniPortfolio'`. Výsledok zobrazí v `#portfolioModal`.
 
 **Apps Script akcie** (`cfg.url`, `doPost` → if/else if, nie switch):
