@@ -1249,6 +1249,7 @@ nav {
 <div class="overlay hidden" id="financieModal">
   <div class="modal" style="max-width:640px">
     <h3>Príjmy a výdavky projektov</h3>
+    <input id="financieSearch" class="pd-sel" placeholder="Hľadať projekt…" oninput="onFinancieSearch(this.value)" style="width:100%;margin-bottom:8px;font-size:13px">
     <div id="financieContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
     <div class="mactions">
       <button class="btn-ghost" onclick="document.getElementById('financieModal').classList.add('hidden')">Zavrieť</button>
@@ -1729,6 +1730,7 @@ async function openIntTimModal() {
 // ── FINANCIE (príjmy/výdavky projektov, Caflou transfers) ──────────────────
 let _financieData = null; // [{id, kind, project_id, value, name, date}] — invalidovaný pri syncData
 let financieOpenSet = new Set(); // ktoré cislo majú rozbalený zoznam položiek
+let financieSearchQuery = '';
 
 function financieByProject(data) {
   const byId = {};
@@ -1748,8 +1750,10 @@ function financieByProject(data) {
 function buildFinancieHtml() {
   if (!_financieData) return '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
   const groups = financieByProject(_financieData);
-  const list = Object.values(groups).sort((a, b) => a.cislo.localeCompare(b.cislo));
-  if (!list.length) return '<div style="color:var(--text3);padding:12px;text-align:center">Žiadne príjmy ani výdavky</div>';
+  let list = Object.values(groups).sort((a, b) => a.cislo.localeCompare(b.cislo));
+  const q = financieSearchQuery.trim().toLowerCase();
+  if (q) list = list.filter(g => g.cislo.toLowerCase().includes(q) || g.nazov.toLowerCase().includes(q));
+  if (!list.length) return `<div style="color:var(--text3);padding:12px;text-align:center">${q ? 'Žiadny projekt nezodpovedá hľadaniu' : 'Žiadne príjmy ani výdavky'}</div>`;
   return list.map(g => {
     const bilancia = g.prijmy - g.vydavky;
     const bilCol = bilancia >= 0 ? 'var(--green)' : 'var(--red)';
@@ -1792,10 +1796,19 @@ function toggleFinancieRow(cislo) {
   if (el) el.innerHTML = buildFinancieHtml();
 }
 
+function onFinancieSearch(v) {
+  financieSearchQuery = v;
+  const el = document.getElementById('financieContent');
+  if (el) el.innerHTML = buildFinancieHtml();
+}
+
 async function openFinancieModal() {
   document.getElementById('financieModal').classList.remove('hidden');
+  financieSearchQuery = '';
+  const searchEl = document.getElementById('financieSearch');
+  if (searchEl) searchEl.value = '';
   const el = document.getElementById('financieContent');
-  if (_financieData) { el.innerHTML = buildFinancieHtml(); return; }
+  if (_financieData) { el.innerHTML = buildFinancieHtml(); if (searchEl) searchEl.focus(); return; }
   el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
   try {
     let all = [], page = 1, totalPages = 1;
