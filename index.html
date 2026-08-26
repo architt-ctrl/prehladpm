@@ -1732,6 +1732,7 @@ let _financieData = null; // [{id, kind, project_id, task_id, value, name, date}
 let _financieTaskFazaMap = null; // {task_id: fazaTag|null} — invalidovaný pri syncData
 let financieOpenSet = new Set(); // ktoré cislo majú rozbalený zoznam položiek
 let financieSearchQuery = '';
+let financieEditId = null; // id transferu, ktorý sa práve edituje (inline riadok)
 
 function financieByProject(data) {
   const byId = {};
@@ -1776,11 +1777,30 @@ function buildFinancieHtml() {
       const sign = t.kind === 'income' ? '+' : '−';
       const fCol = t.faza ? TASK_FAZA_COLOR[t.faza] : 'var(--text3)';
       const fLabel = t.faza || '—';
+      if (financieEditId === t.id) {
+        return `<div style="padding:5px 0;border-top:1px solid var(--border)44" onclick="event.stopPropagation()">
+          <div style="display:flex;gap:6px">
+            <input id="finE-name-${t.id}" class="pd-sel" value="${(t.name||'').replace(/"/g,'&quot;')}" placeholder="Názov" style="flex:1;font-size:12px">
+            <input id="finE-amt-${t.id}" type="number" step="0.01" value="${Math.abs(t.value)}" class="pd-sel" style="width:90px;font-size:12px">
+            <input id="finE-date-${t.id}" type="date" value="${t.date||''}" class="pd-sel" style="font-size:12px">
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <select id="finE-faza-${t.id}" class="pd-sel" style="flex:1;font-size:12px">
+              <option value="">— bez fázy —</option>
+              ${TASK_FAZA_TAGS.map(f=>`<option value="${f}"${t.faza===f?' selected':''}>${f} – ${TASK_FAZA_LABEL[f]}</option>`).join('')}
+            </select>
+            <button onclick="saveFinancieEditEntry('${g.cislo}',${t.id})" style="background:var(--blue);color:#fff;border:none;border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
+            <button onclick="financieEditId=null;document.getElementById('financieContent').innerHTML=buildFinancieHtml()" class="btn-ghost" style="font-size:12px;padding:5px 10px">Zrušiť</button>
+          </div>
+        </div>`;
+      }
       return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px">
         <span style="color:var(--text3);flex-shrink:0;font-size:10px">${t.date || ''}</span>
         <span style="flex-shrink:0;font-size:9px;font-weight:700;color:${fCol};border:1px solid ${fCol};border-radius:5px;padding:0 4px;min-width:22px;text-align:center">${fLabel}</span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)">${(t.name||'').replace(/</g,'&lt;')}</span>
         <span style="color:${col};font-weight:600;flex-shrink:0">${sign}${Math.abs(t.value).toFixed(2)} €</span>
+        <span onclick="event.stopPropagation();financieEditId=${t.id};document.getElementById('financieContent').innerHTML=buildFinancieHtml()" style="cursor:pointer;color:var(--text3);flex-shrink:0;font-size:11px" title="Upraviť">✎</span>
+        <span onclick="event.stopPropagation();deleteFinancieEntry('${g.cislo}',${t.id})" style="cursor:pointer;color:var(--text3);flex-shrink:0;font-size:11px" title="Vymazať">✕</span>
       </div>`;
     }).join('') : '';
     const addForm = isOpen ? `
@@ -1826,6 +1846,7 @@ function onFinancieSearch(v) {
 async function openFinancieModal() {
   document.getElementById('financieModal').classList.remove('hidden');
   financieSearchQuery = '';
+  financieEditId = null;
   const searchEl = document.getElementById('financieSearch');
   if (searchEl) searchEl.value = '';
   const el = document.getElementById('financieContent');
@@ -1895,6 +1916,45 @@ async function saveFinancieEntry(cislo, kind) {
     if (el) el.innerHTML = buildFinancieHtml();
     showToast('Uložené ✓', 'ok');
   } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
+}
+
+async function saveFinancieEditEntry(cislo, id) {
+  const t = _financieData?.find(x => x.id === id);
+  if (!t) return;
+  const name   = document.getElementById('finE-name-' + id)?.value.trim();
+  const amount = parseFloat(document.getElementById('finE-amt-' + id)?.value);
+  const date   = document.getElementById('finE-date-' + id)?.value;
+  const faza   = document.getElementById('finE-faza-' + id)?.value || null;
+  if (!name || !amount || !date) { showToast('Vyplň názov, sumu a dátum', 'err'); return; }
+  showToast('Ukladám…', 'ok');
+  t.name = name; t.value = amount; t.date = date; t.faza = faza;
+  financieEditId = null;
+  const el = document.getElementById('financieContent');
+  if (el) el.innerHTML = buildFinancieHtml();
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer: { name, value: amount, date, tags: faza ? [faza] : [] } })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    showToast('Uložené ✓', 'ok');
+  } catch(e) { showToast('Chyba ukladania: ' + e.message, 'err'); }
+}
+
+async function deleteFinancieEntry(cislo, id) {
+  if (!confirm('Vymazať tento záznam?')) return;
+  if (_financieData) _financieData = _financieData.filter(x => x.id !== id);
+  const el = document.getElementById('financieContent');
+  if (el) el.innerHTML = buildFinancieHtml();
+  try {
+    await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    showToast('Vymazané ✓', 'ok');
+  } catch(e) { showToast('Chyba mazania: ' + e.message, 'err'); }
 }
 
 // ── SYNC ──────────────────────────────────────────────────────────────────
