@@ -1728,7 +1728,8 @@ async function openIntTimModal() {
 }
 
 // ── FINANCIE (príjmy/výdavky projektov, Caflou transfers) ──────────────────
-let _financieData = null; // [{id, kind, project_id, value, name, date}] — invalidovaný pri syncData
+let _financieData = null; // [{id, kind, project_id, task_id, value, name, date}] — invalidovaný pri syncData
+let _financieTaskFazaMap = null; // {task_id: fazaTag|null} — invalidovaný pri syncData
 let financieOpenSet = new Set(); // ktoré cislo majú rozbalený zoznam položiek
 let financieSearchQuery = '';
 
@@ -1739,10 +1740,13 @@ function financieByProject(data) {
   data.forEach(t => {
     const p = byId[t.project_id]; if (!p) return;
     if (p.caflou_type === 'Interná réžia') return;
-    if (!groups[p.cislo]) groups[p.cislo] = { cislo: p.cislo, nazov: p.nazov, prijmy: 0, vydavky: 0, items: [] };
+    if (!groups[p.cislo]) groups[p.cislo] = { cislo: p.cislo, nazov: p.nazov, prijmy: 0, vydavky: 0, items: [], byFaza: {} };
     const g = groups[p.cislo];
     if (t.kind === 'income') g.prijmy += t.value; else g.vydavky += t.value;
     g.items.push(t);
+    const fk = t.faza || '—';
+    if (!g.byFaza[fk]) g.byFaza[fk] = { prijmy: 0, vydavky: 0 };
+    if (t.kind === 'income') g.byFaza[fk].prijmy += t.value; else g.byFaza[fk].vydavky += t.value;
   });
   return groups;
 }
@@ -1758,11 +1762,23 @@ function buildFinancieHtml() {
     const bilancia = g.prijmy - g.vydavky;
     const bilCol = bilancia >= 0 ? 'var(--green)' : 'var(--red)';
     const isOpen = financieOpenSet.has(g.cislo);
+    const fazaOrder = [...TASK_FAZA_TAGS, '—'];
+    const fazaBar = isOpen ? fazaOrder.filter(f => g.byFaza[f]).map(f => {
+      const fb = g.byFaza[f];
+      const col = f === '—' ? 'var(--text3)' : TASK_FAZA_COLOR[f];
+      const label = f === '—' ? 'bez fázy' : f;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;background:${col}22;color:${col};border-radius:6px;padding:2px 6px;font-weight:700;white-space:nowrap">
+        ${label} <span style="font-weight:400;color:var(--text2)">+${fb.prijmy.toFixed(0)} −${fb.vydavky.toFixed(0)}</span>
+      </span>`;
+    }).join('') : '';
     const itemRows = isOpen ? [...g.items].sort((a, b) => (b.date||'').localeCompare(a.date||'')).map(t => {
       const col = t.kind === 'income' ? 'var(--green)' : 'var(--red)';
       const sign = t.kind === 'income' ? '+' : '−';
+      const fCol = t.faza ? TASK_FAZA_COLOR[t.faza] : 'var(--text3)';
+      const fLabel = t.faza || '—';
       return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px">
         <span style="color:var(--text3);flex-shrink:0;font-size:10px">${t.date || ''}</span>
+        <span style="flex-shrink:0;font-size:9px;font-weight:700;color:${fCol};border:1px solid ${fCol};border-radius:5px;padding:0 4px;min-width:22px;text-align:center">${fLabel}</span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)">${(t.name||'').replace(/</g,'&lt;')}</span>
         <span style="color:${col};font-weight:600;flex-shrink:0">${sign}${Math.abs(t.value).toFixed(2)} €</span>
       </div>`;
@@ -1772,6 +1788,10 @@ function buildFinancieHtml() {
         <input id="fin-name-${g.cislo}" class="pd-sel" placeholder="Názov" style="flex:1;font-size:12px">
         <input id="fin-amt-${g.cislo}" type="number" step="0.01" placeholder="Suma €" class="pd-sel" style="width:90px;font-size:12px">
         <input id="fin-date-${g.cislo}" type="date" value="${new Date().toISOString().substring(0,10)}" class="pd-sel" style="font-size:12px">
+        <select id="fin-faza-${g.cislo}" class="pd-sel" style="font-size:12px">
+          <option value="">— bez fázy —</option>
+          ${TASK_FAZA_TAGS.map(f=>`<option value="${f}">${f} – ${TASK_FAZA_LABEL[f]}</option>`).join('')}
+        </select>
       </div>
       <div style="display:flex;gap:6px;margin-top:6px" onclick="event.stopPropagation()">
         <button onclick="saveFinancieEntry('${g.cislo}','income')" style="flex:1;background:var(--green);color:#fff;border:none;border-radius:7px;padding:5px;font-size:12px;cursor:pointer;font-weight:600">+ Príjem</button>
@@ -1785,7 +1805,8 @@ function buildFinancieHtml() {
         <span style="font-size:11px;color:var(--red);flex-shrink:0">−${g.vydavky.toFixed(0)} €</span>
         <span style="font-size:12px;font-weight:700;color:${bilCol};flex-shrink:0">${bilancia >= 0 ? '+' : ''}${bilancia.toFixed(0)} €</span>
       </div>
-      ${itemRows}${addForm}
+      ${fazaBar ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">${fazaBar}</div>` : ''}
+      ${itemRows ? `<div style="margin-top:6px">${itemRows}</div>` : ''}${addForm}
     </div>`;
   }).join('');
 }
@@ -1822,7 +1843,25 @@ async function openFinancieModal() {
       totalPages = d.total_pages || 1;
       page++;
     }
-    _financieData = all.map(t => ({ id: t.id, kind: t.kind, project_id: t.project_id, value: t.value || 0, name: t.name, date: t.date }));
+    if (!_financieTaskFazaMap) {
+      _financieTaskFazaMap = {};
+      let tp = 1, hasMore = true;
+      while (hasMore) {
+        el.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam fázy úloh, strana ${tp}…</div>`;
+        const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${tp}`,
+          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        (d.results || []).forEach(t => { _financieTaskFazaMap[t.id] = getTaskFazaTag(t); });
+        hasMore = !!d.next_page;
+        tp++;
+      }
+    }
+    _financieData = all.map(t => {
+      const tagFaza = (t.tags||[]).find(tag => TASK_FAZA_TAGS.includes(tag)) || null;
+      const faza = tagFaza || (t.task_id ? (_financieTaskFazaMap[t.task_id] || null) : null);
+      return { id: t.id, kind: t.kind, project_id: t.project_id, task_id: t.task_id || null, value: t.value || 0, name: t.name, date: t.date, faza };
+    });
     el.innerHTML = buildFinancieHtml();
   } catch(e) {
     el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
@@ -1833,9 +1872,11 @@ async function saveFinancieEntry(cislo, kind) {
   const nameEl = document.getElementById('fin-name-' + cislo);
   const amtEl  = document.getElementById('fin-amt-' + cislo);
   const dateEl = document.getElementById('fin-date-' + cislo);
+  const fazaEl = document.getElementById('fin-faza-' + cislo);
   const name   = nameEl?.value.trim();
   const amount = parseFloat(amtEl?.value);
   const date   = dateEl?.value;
+  const faza   = fazaEl?.value || null;
   if (!name || !amount || !date) { showToast('Vyplň názov, sumu a dátum', 'err'); return; }
   const p = projects.find(pp => pp.cislo === cislo);
   if (!p?.caflou_id) { showToast('Projekt nemá Caflou ID', 'err'); return; }
@@ -1844,11 +1885,11 @@ async function saveFinancieEntry(cislo, kind) {
     const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transfer: { kind, project_id: p.caflou_id, name, value: amount, currency: 'EUR', date } })
+      body: JSON.stringify({ transfer: { kind, project_id: p.caflou_id, name, value: amount, currency: 'EUR', date, tags: faza ? [faza] : [] } })
     });
     const d = await r.json();
     if (!d.id) { showToast('Chyba pri ukladaní', 'err'); return; }
-    if (_financieData) _financieData.push({ id: d.id, kind, project_id: p.caflou_id, value: amount, name, date });
+    if (_financieData) _financieData.push({ id: d.id, kind, project_id: p.caflou_id, task_id: null, value: amount, name, date, faza });
     nameEl.value = ''; amtEl.value = '';
     const el = document.getElementById('financieContent');
     if (el) el.innerHTML = buildFinancieHtml();
@@ -1883,6 +1924,7 @@ async function syncData() {
     _vytazenieCache = null;
     _intTimData = null;
     _financieData = null;
+    _financieTaskFazaMap = null;
     financieOpenSet = new Set();
     projects.forEach(p => {
       if (p.aktivita) stavMap[p.cislo] = p.aktivita;
