@@ -2016,8 +2016,8 @@ async function syncResponsibleContacts() {
 
 // ── Dopyty (cenové ponuky pre profesie) ─────────────────────────────────────
 const PONUKY_PROFESSIONS = ['DOPRAVA','ELI','PBS','PLYN','STATIKA','technologie','UK','VN','VZT','ZTI'];
-const PONUKY_FAZY = ['Studia','SZ','DSP/PS','RP','Inziniering'];
-const PONUKY_FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stavebný zámer', 'DSP/PS':'DSP/PS', 'RP':'Realizačný projekt', 'Inziniering':'Inžiniering' };
+const PONUKY_FAZY = ['Studia','SZ','DSP/PS','RP'];
+const PONUKY_FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stavebný zámer', 'DSP/PS':'DSP/PS', 'RP':'Realizačný projekt' };
 
 // caflou_status (raw Caflou status kľúč) rozlišuje DSP/PS/RP presne — na rozdiel od
 // p.podfaza, ktoré má pre 3_DSP/3_PS/4_RP rovnakú hodnotu "Projekt stavby" (pozri CAFLOU_STATUS_MAP)
@@ -2041,7 +2041,8 @@ async function openDopytyModal(cislo) {
   document.getElementById('dopytyTitle').textContent = `Dopyty – ${p.nazov}`;
   document.getElementById('dopytyModal').classList.remove('hidden');
   document.getElementById('dopytyContent').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
-  const faza = projFazaKod(p) || PONUKY_FAZY[0];
+  const detectedFaza = projFazaKod(p);
+  const faza = PONUKY_FAZY.includes(detectedFaza) ? detectedFaza : PONUKY_FAZY[0];
   if (!specialistsList) await loadSpecialists();
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
   _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {} };
@@ -2066,8 +2067,8 @@ function dopytStatusText(reqId) {
   if (winner) {
     const sp = (specialistsList||[]).find(s => s.id === winner.specialist_id);
     const q = c.quotes.find(q => q.invitation_id === winner.id);
-    const total = q?.prices ? Object.values(q.prices).reduce((a,b)=>a+(Number(b)||0),0) : 0;
-    return `✓ ${sp?.name || '?'}${total ? ' · ' + total.toLocaleString('sk-SK') + ' €' : ''}`;
+    const price = q?.prices?.[_dopytyCtx.faza];
+    return `✓ ${sp?.name || '?'}${price != null ? ' · ' + Number(price).toLocaleString('sk-SK') + ' €' : ''}`;
   }
   if (c.invs.length) {
     const nSub = c.invs.filter(i => ['submitted','selected'].includes(i.status)).length;
@@ -2149,12 +2150,12 @@ async function renderDopytyModal() {
 
 function buildDopytDetailHtml(r) {
   const c = _dopytyCtx.invCache[r.id] || { invs: [], quotes: [] };
-  const phases = Array.isArray(r.phases) ? r.phases : [r.phases];
+  const faza = _dopytyCtx.faza;
   const rows = c.invs.map(inv => {
     const sp = (specialistsList||[]).find(s => s.id === inv.specialist_id);
     const q = c.quotes.find(q => q.invitation_id === inv.id);
-    const total = q?.prices ? Object.values(q.prices).reduce((a,b)=>a+(Number(b)||0),0) : 0;
-    const priceTxt = total ? total.toLocaleString('sk-SK') + ' €' : '—';
+    const price = q?.prices?.[faza];
+    const priceTxt = price != null ? Number(price).toLocaleString('sk-SK') + ' €' : '—';
     let actions = '';
     if (inv.status === 'submitted') {
       actions = `<button onclick="selectDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:none;background:var(--green);color:#fff;cursor:pointer">Vybrať</button>
@@ -2182,10 +2183,10 @@ function buildDopytDetailHtml(r) {
     })
     .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
 
-  const priceInputs = phases.map(ph => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-    <label style="font-size:11px;color:var(--text2);min-width:70px">${ph}</label>
-    <input type="number" id="dp-price-${r.id}-${ph.replace(/[^a-z0-9]/gi,'_')}" class="pd-sel" style="font-size:12px;width:110px" placeholder="0 €">
-  </div>`).join('');
+  const priceInputs = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+    <label style="font-size:11px;color:var(--text2);min-width:70px">${PONUKY_FAZA_LABEL[faza] || faza}</label>
+    <input type="number" id="dp-price-${r.id}" class="pd-sel" style="font-size:12px;width:110px" placeholder="0 €">
+  </div>`;
 
   return `
     ${rows}
@@ -2302,15 +2303,12 @@ async function cancelDopytWinner(invId, reqId) {
 }
 
 async function saveManualPonuka(reqId) {
-  const req = _dopytyCtx.reqs.find(r => r.id === reqId);
-  const phases = Array.isArray(req?.phases) ? req.phases : [req.phases];
+  const faza = _dopytyCtx.faza;
   const specId = document.getElementById('dp-spec-' + reqId)?.value;
   if (!specId) { showToast('Vyber profesistu', 'err'); return; }
   const prices = {};
-  phases.forEach(ph => {
-    const v = document.getElementById(`dp-price-${reqId}-${ph.replace(/[^a-z0-9]/gi,'_')}`)?.value;
-    if (v !== '' && v != null) prices[ph] = Number(v);
-  });
+  const v = document.getElementById('dp-price-' + reqId)?.value;
+  if (v !== '' && v != null) prices[faza] = Number(v);
   const notes = document.getElementById('dp-note-' + reqId)?.value.trim() || null;
 
   const { data: inv, error: invErr } = await sb.from('invitations')
