@@ -268,6 +268,7 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 - `generateSuhrn` — vygeneruje „B – Súhrnná správa" (kópia `VZOR_SUHRN_ID`), obsah generuje Gemini z textu tech správ
 - `createDocInFolder(title, text, parentFolderId, templateId)` — `makeCopy()` šablóny → zapíše obsah s Arial štýlom
 - `sendOfficialMail` (2026-07-29) — `{to, subject, body}` → `GmailApp.sendEmail()`, počká 2s, `GmailApp.search('in:sent to:"..." subject:"..."')` nájde vzniknuté vlákno, vráti `{ok, threadId, permalink}` (`#all/{threadId}` formát, funguje bez ohľadu na label). Volané z `sendOfficialMail()` v `index.html` — pozri "Oficiálne mailové vlákno" nižšie
+- `findKoordinaciaFolder` (2026-08-28) — `{cislo}` → nájde priečinok projektu na Shared Drive `1_PROJEKTY` (`PROJECTS_DRIVE_ROOT_ID`) podľa prefixu (`26-026` → `2026-026`), v ňom podpriečinok `20_KOORDINACIA`, vráti `{ok, url}`. Volané z `getKoordinaciaFolderUrl()` v `index.html` pri batch vytváraní dopytov — pozri "Dopyty" vyššie
 
 **Apps Script gotchas:**
 - Gmail oprávnenia môžu expirovat — treba spustiť `sledujMaily` manuálne z editora aby sa zobrazil OAuth popup
@@ -372,6 +373,35 @@ Tlačidlo **„💰 Financie"** v headeri → `openFinancieModal()` → `#financ
 - **Manuálne pridanie** (`saveFinancieEntry(cislo, kind)`) — v rozbalenom riadku formulár Názov + Suma + Dátum + Fáza (bez poľa na firmu, zámerne — pozri gotcha nižšie), tlačidlá **+ Príjem** / **+ Výdavok** → `POST /transfers` s `{transfer:{kind, project_id: p.caflou_id, name, value, currency:'EUR', date, tags:[faza]}}`, po úspechu sa záznam pridá do `_financieData` a modal sa prekreslí bez nového fetchu
 - **Editácia a mazanie existujúcich položiek (2026-08-26):** pri každej položke (v rozbalenom stave) ✎/✕ ikony. ✎ → `financieEditId = t.id` (jednoduchý globálny stav, len jedna položka naraz), riadok sa nahradí inline formulárom (názov/suma/dátum/fáza) → `saveFinancieEditEntry(cislo, id)` optimisticky prepíše lokálny záznam v `_financieData` a prekreslí, potom `PATCH /transfers/{id}` s `{transfer:{name, value, date, tags:[faza]}}` (kind sa needituje — zriedkavá potreba, rieši sa zmazaním a novým pridaním). ✕ → `deleteFinancieEntry(cislo, id)` s `confirm()`, optimisticky odstráni zo `_financieData`, potom `DELETE /transfers/{id}`
 - **Gotcha — company_id pri manuálnom výdavku:** rovnaká Caflou vlastnosť ako pri `createCaflouExpense` v `ponuky.html` — ak sa nepošle `company_id`, Caflou ho automaticky priradí ku **klientovi projektu**, nie k dodávateľovi. Vedomé rozhodnutie (Jozef, 2026-07-30): formulár pole na firmu nemá (jednoduchosť), takto vzniknuté zle priradenie sa opraví ručne priamo v Caflou keď treba — netreba to considerovať za bug
+
+### Dopyty (cenové ponuky pre profesie, 2026-08-28)
+
+**Kontext/dôvod presunu z `ponuky.html`:** pôvodne mal `ponuky.html` dva samostatné taby — „Dopyty" (zoznam zoskupený podľa projektu, naprieč všetkými) a „Prehľad CP" (rovnaké dáta, len súhrnný pohľad na ceny, needitovateľný). Jozef ich zjednotil a presunul do dashboardu: nechce prekliky cez cudzie projekty, chce z projektu v `index.html` priamym tlačidlom vojsť rovno do jeho dopytov, rozdelených po fázach. `ponuky.html` taby „Dopyty"/„Prehľad CP" **zatiaľ ostávajú v kóde** (neodstránené), ale nový tok ide cez `index.html`.
+
+Tlačidlo **„📨 Dopyty"** pri projekte (vedľa „📋 Šablóna") → `openDopytyModal(cislo)` → `#dopytyModal`.
+
+**Záložky fáz (`PONUKY_FAZY`)** — `['Studia','SZ','DSP/PS','RP']`, **bez Inžinieringu** (Jozef: "inžiniering nepatrí do projekcie" — dopyty na profesie sa riešia len počas projekčných fáz). Toto je **iné názvoslovie než `TASK_FAZA_TAGS`** (Caflou task-tagy: AŠ/SZ/DSP/PS/RP/INŽ, DSP a PS oddelene) — `PONUKY_FAZY` kopíruje `harmonogram.faza_kod`/historické `requests.phases` hodnoty (`SZ|DSP/PS|RP|UP|Studia|Inziniering`), lebo sa naň priamo napája (`podklady_datum` z harmonogramu, nižšie). `UP` (územný plán) zámerne vynechané zo záložiek.
+
+**`projFazaKod(p)`** — mapuje aktuálnu fázu projektu na `PONUKY_FAZY` hodnotu. **Musí ísť cez `p.caflou_status`** (raw Caflou status kľúč, napr. `'4_RP'`), nie cez `p.podfaza` — `CAFLOU_STATUS_MAP` má `3_DSP`, `3_PS` aj `4_RP` namapované na **rovnaké** `podfaza:'Projekt stavby'`, takže `podfaza` samotné nevie rozlíšiť RP od DSP/PS. Mapovacia tabuľka `CAFLOU_STATUS_TO_PONUKY_FAZA` je duplicitná (ale odlišná hodnotami) k `CAFLOU_STATUS_TO_FAZA_TAG` — tá druhá drží DSP/PS oddelene pre účely task-tagov, táto ich zlučuje pre účely dopytov.
+
+**Zoznam profesií (`PONUKY_PROFESSIONS`)** — pevný zoznam `DOPRAVA, ELI, PBS, PLYN, STATIKA, technologie, UK, VN, VZT, ZTI`, odvodený zo skutočných kategórií v Supabase `specialists.profession` (vynechané zámerne: `specialne profesie`, `STATIKA_A+`). V „+ Nové dopyty" formulári vždy aj pole na vlastný text (dopyt pre profesiu mimo pevného zoznamu).
+
+**Batch vytvorenie dopytov (`saveDopytyBatch`):** zaškrtneš profesie (checkboxy, viacnásobný výber) → pre každú vznikne samostatný `requests` riadok s `phases: [faza]` (**jeden dopyt = jedna fáza**, na rozdiel od starších dopytov, ktoré mávali `phases` pole s viacerými fázami naraz), `current_phase: faza`, a automaticky doplnené:
+- **`folder_url`** = odkaz na `20_KOORDINACIA` priečinok projektu (pozri "Nová štruktúra projektového priečinka" vyššie) — `getKoordinaciaFolderUrl(cislo)`: najprv cache `project_folders` (Supabase, `cislo → koordinacia_url`), pri cache-miss zavolá Apps Script akciu `findKoordinaciaFolder` (nová, `akcia_findKoordinaciaFolder` v `Code.gs`) a výsledok uloží do cache. Akcia prechádza priamych potomkov Shared Drive `1_PROJEKTY` (`PROJECTS_DRIVE_ROOT_ID = '0AAim-BTmMDGAUk9PVA'`), hľadá priečinok s prefixom `20YY-NNN` (konverzia z dashboard formátu `YY-NNN`, rovnaká konvencia ako `sync-fazy.ps1`) a v ňom `20_KOORDINACIA` podpriečinok.
+- **`hotovo_datum`** = termín projektu (`p.deadline`, Caflou `end_date`) mínus 10 dní.
+- **`podklady_datum`** — ručne zadaný v batch formulári (jedno pole, spoločné pre všetky profesie v danom batchi), predvyplnený z harmonogramu ak existuje (`getHarmPodkladyDatum`: Supabase `harmonogram` riadok pre `cislo`+`faza_kod`+`podpodfaza='príprava pre profesie'` → `start_datum + trvanie_tyzdne`), inak dnešný dátum. Po uložení sa zapíše do **všetkých** dopytov danej fázy naraz (`sb.from('requests').update(...).eq('project_cislo',cislo).contains('phases',[faza])`), nielen do novovytvorených — Jozef: "ten dátum bude pre všetky dopyty v jednej fáze". **Obojstranné prepojenie s harmonogramom (t.j. editácia v dopyte spätne posunie `start_datum` v harmonograme, a naopak) je zatiaľ NEIMPLEMENTOVANÉ** — len jednosmerné prevzatie pri zobrazení defaultnej hodnoty.
+
+**Správa ponúk priamo v modáli** — klik na profesiu rozbalí detail (`toggleDopytRow`/`buildDopytDetailHtml`), mirror logiky z `ponuky.html`:
+- `selectDopytWinner`/`withdrawDopytQuote`/`cancelDopytWinner` — rovnaké statusové prechody ako `ponuky.html` (`selectWinner`/`withdrawQuote`/`cancelWinner`), vrátane zápisu do `task_specialists` a automatického Caflou výdavku (`createCaflouExpense`, kópia rovnomennej funkcie z `ponuky.html`) pri výbere víťaza, ak má profesista `caflou_company_id`
+- **„+ Zadať ponuku ručne"** (`saveManualPonuka`) — priamo tu sa rieši prípad, že profesista nechce/nemá chodiť na portál a pošle cenu mailom: vyberieš ho zo `specialistsList` (tí čo už majú ponuku sú vynechaní), zadáš cenu, uloží sa rovno ako `submitted` (vytvorí `invitation` aj `quote` v jednom kroku — **bez** predchádzajúceho "pozvania", ktoré sa už dávno nepoužíva, pozri nižšie)
+- **Gotcha — cena vždy len za aktuálnu fázu:** `q.prices` je `{fázaKód: suma}` mapa; keďže staršie dopyty môžu mať vo `phases`/`prices` viacero fáz naraz, všetky miesta v tomto modáli (zoznam ponúk, „+ Zadať ponuku ručne", stavový text v hlavičke) čítajú/zapisujú **len `prices[_dopytyCtx.faza]`** (aktuálne otvorená záložka) — nikdy nesčítavajú cez `Object.values(prices)`. Pôvodná implementácia to robila (súčet všetkých fáz) a zobrazovala tak nezmyselne rovnakú/nahustenú sumu bez ohľadu na to, ktorú fázu si pozeral.
+- **✕ Vymazať dopyt** (`deleteDopyt`) — kaskádovo zmaže `quotes`+`invitations`+`requests`, ako `ponuky.html:deleteReq`
+
+**Pozývanie profesistov cez systém je dávno zrušené** (Jozef) — pôvodný `openInviteModal`/`doInvite` flow v `ponuky.html` (checkbox výber kontaktov → vytvorí `invitations` bez ceny, čaká na profesistu) sa reálne nepoužíva a **nie je odnikiaľ vo UI zavesený** (mŕtvy kód, funkcie existujú ale nič ich nevolá). Aktuálny tok: Jozef vytvorí dopyt, profesista dostane **raz** svoj trvalý `portal.html?specialist=UUID` link (`specialists.portal_token`) a odvtedy chodí naň sám kedykoľvek, vidí všetky aktívne dopyty a sám podá ponuku (`submitSpecQuote` v `portal.html` si sama vytvorí `invitation`, ak neexistuje). Preto pri manuálne zakladanom dopyte (vyššie) neexistuje žiadny medzikrok "pozvať" — buď profesista príde sám cez portál, alebo mu cenu zapíšeš ty priamo.
+
+**Výkon — cielený refresh namiesto plného re-renderu:** `renderDopytyModal()` (plné prekreslenie: záložky + zoznam + „+ Nové dopyty" formulár + fetch harmonogramu) sa volá len pri prepnutí záložky (`switchDopytyFaza`), batch vytvorení (`saveDopytyBatch`) a zmazaní (`deleteDopyt`) — teda pri akciách čo menia *zoznam* dopytov. Bežné akcie nad jednou ponukou (rozbalenie riadku, výber/stiahnutie/zrušenie víťaza, ručné zadanie ceny) idú cez `toggleDopytRow`/`refreshDopytRow`, ktoré upravia len `#dopyt-status-{id}`/`#dopyt-detail-{id}` daného riadku priamym DOM zásahom — pôvodná verzia volala plný re-render pri každej takejto akcii (vrátane zbytočného opätovného fetchu harmonogramu), čo bolo citeľne pomalé ("dosť to seká").
+
+**SQL migrácie:** `supabase/project-contacts-setup.sql`, `supabase/project-folders-setup.sql` — obe treba spustiť ručne v Supabase SQL Editore pred použitím.
 
 ### Vyhľadávanie projektov
 
@@ -798,6 +828,20 @@ Top-level mimo `PROFESIE/` ostáva len to, čo nepatrí jednej disciplíne: `0-P
 
 **Stav:** Koncept uzavretý, čaká na rozhodnutie o migrácii a reálne nasadenie.
 
+**Realita overená naživo (2026-08-28, projekt 2026-026):** nasadená štruktúra je jednoduchšia než pôvodný koncept vyššie — plochá, bez `PROFESIE/`/A-B-C trojice:
+```
+YYYY-NNN-Nazov/                    (priamy potomok Shared Drive "1_PROJEKTY", id 0AAim-BTmMDGAUk9PVA)
+├── 00_RIADENIE/
+├── 10_MODEL/
+├── 20_KOORDINACIA/                 JEDEN spoločný priečinok pre všetky profesie naraz
+│   ├── 00_PODKLADY/
+│   ├── ARCHITEKTURA/  ELEKTRO/  STATIKA/  TZB/  ...
+├── 30_FAZY/
+├── 40_PREZENTACIA/
+└── 90_ARCHIV/
+```
+Rozdiel oproti pôvodnému konceptu: **žiadne A/B/C rozlíšenie nacenenie/vypracovanie/interné** — celý `20_KOORDINACIA` sa zdieľa profesistom ako jeden odkaz (pozri "Dopyty" nižšie, `findKoordinaciaFolder` v Apps Scripte). `requests.folder_url` (nacenenie) a `folder_url_work` (vypracovanie) — dva samostatné odkazy — sú teda relevantné len pre **staršie/ručne vytvorené** dopyty; nové (batch, cez `index.html`) majú jeden spoločný `folder_url`.
+
 ---
 
 ## ROZPRACOVANÉ: Nacenovanie projektov (cenové ponuky, CP)
@@ -877,16 +921,12 @@ Toto prostredie nemá Python ani žiadny `xlsx`/zip balík pre Node, a Bash má 
 
 ---
 
-## ROZPRACOVANÉ: Kontakt na zodpovedného projektanta v portáli profesistov
+## Kontakt na zodpovedného projektanta v portáli profesistov (HOTOVO, 2026-08-28)
 
-**Požiadavka (Jozef, 2026-08-28):** systém ponúk pre profesistov má fungovať tak, že Jozef ho nastavuje sám (zakladá dopyty), bez toho aby profesisti museli niekde vypĺňať niečo navyše — ale zároveň chce, aby sa profesisti vedeli sami prihlásiť do portálu, videli tam aktuálne voľné zákazky a mohli dať ponuku, a pri už dohodnutých zákazkách videli zoznam s odkazmi na podklady, **kontaktom na nášho projektanta/architekta, ktorý má daný projekt na starosti**, a dátumami (kedy budú podklady pripravené, kedy čakáme hotový výsledok).
+**Požiadavka (Jozef):** systém ponúk pre profesistov má fungovať tak, že Jozef ho nastavuje sám (zakladá dopyty), bez toho aby profesisti museli niekde vypĺňať niečo navyše — ale zároveň chce, aby sa profesisti vedeli sami prihlásiť do portálu, videli tam aktuálne voľné zákazky a mohli dať ponuku, a pri už dohodnutých zákazkách videli zoznam s odkazmi na podklady, **kontaktom na nášho projektanta/architekta, ktorý má daný projekt na starosti**, a dátumami.
 
-**Overené — väčšina už existuje:** `portal.html?specialist=UUID` (mód "trhisko profesista", pozri `renderSpecialistView`/`renderReqCard` v `portal.html`) presne toto rieši — permanentný link cez `specialists.portal_token`, zoznam aktívnych dopytov (aj mimo tých, čo im Jozef poslal), formulár na ponuku, a pri `selected` invitations zobrazenie `folder_url_work`, `podklady_datum`, `hotovo_datum`, `r.notes` (`portal.html:451-458`). Nič z toho nevyžaduje, aby Jozef čokoľvek posielal ručne navyše.
+**Zdroj kontaktu — Caflou úloha "Príprava ASR":** každý projekt v projekčnej fáze má internú Caflou úlohu, ktorej názov **obsahuje** (nie presne rovná sa — historicky existujú varianty ako "Príprava ASR_rekonštrukcia") reťazec "príprava ASR" (case-insensitive). Jej `target_user_id` = zodpovedný projektant. Email sa ťahá priamo z Caflou (`GET /api/v1/{account}/users` — vracia aj pre interný tím email, na rozdiel od doteraz ručne udržiavanej `CAFLOU_USERS` mapy, ktorá má len mená; telefón Caflou nevracia).
 
-**Chýba:** kontakt na zodpovedného interného projektanta/architekta pri projekte — `requests` tabuľka (ani nič iné v `ponuky.html`/`portal.html`) toto pole zatiaľ nemá, takže sa nemá odkiaľ zobraziť.
+**`index.html` — `syncResponsibleContacts()`:** fire-and-forget na konci `syncData()`. `fetchCaflouUsers()` načíta `{id: {name, email}}` raz za session. Postaví `projByTaskId` mapu (rovnaký vzor ako `openVytazenieModal`), paginovane prejde všetky Caflou úlohy, pre zhodu s "príprava asr" v názve vezme `target_user_id` → email, a upsertne do Supabase `project_contacts (cislo, name, email, updated_at)` — SQL: `supabase/project-contacts-setup.sql`. Toto je nutné, lebo `portal.html` nemá (a nesmie mať) Caflou API kľúč.
 
-**Otvorená otázka (čaká na rozhodnutie Jozefa):**
-- **Ručne per dopyt** — pridať pole (napr. `requests.contact_name`/`contact_email`/`contact_phone` alebo len `contact_note` text) vypĺňané pri zakladaní dopytu. Jednoduchšie na implementáciu, ale Jozef by ho musel vypĺňať pri každom novom dopyte (čo je presne to, čo chce minimalizovať).
-- **Automaticky z Caflou úlohy** — odvodiť z `target_user_id` internej Caflou úlohy cez `CAFLOU_USERS` (index.html), ale tá mapa má zatiaľ len meno, nie email/telefón — vyžadovalo by doplniť kontaktné údaje k internému tímu niekam (nová Supabase tabuľka alebo rozšírenie `CAFLOU_USERS`).
-
-**Stav:** Nič neimplementované, čaká sa na rozhodnutie medzi týmito dvomi prístupmi (alebo iným).
+**`portal.html`:** kontakt sa zobrazuje **len pri `selected` (už dohodnutých) dopytoch**, vedľa termínov podkladov — v móde 1 (`renderStatus`, dotiahne sa cez `sb.from('project_contacts')` priamo v `init()`) aj v móde 2 (`renderReqCard`, batch-loadnuté v `initSpecialistView` pre všetky projekty s aspoň jednou `selected` invitation, uložené v `_specCtx.contacts`).
