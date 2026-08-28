@@ -282,6 +282,7 @@ function doPost(e) {
     else if (req.action === 'generateSuhrn')      resp = akcia_generateSuhrn(req);
     else if (req.action === 'extractMetadata')    resp = akcia_extractMetadata(req);
     else if (req.action === 'sendOfficialMail')   resp = akcia_sendOfficialMail(req);
+    else if (req.action === 'findKoordinaciaFolder') resp = akcia_findKoordinaciaFolder(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -470,6 +471,33 @@ function volajGemini(prompt) {
 
 var VZOR_ZOZNAM_ID = '1J2GzotOVyr-n7Tf315naJjPQszWA1FG2i4RN5j4n9v8';
 var VZOR_SUHRN_ID  = '17u-hXwikZGL-ZVElmGIp7TKB0ToaiR1uULU81jllNZE';
+var PROJECTS_DRIVE_ROOT_ID = '0AAim-BTmMDGAUk9PVA'; // Shared Drive "1_PROJEKTY" – projektové priečinky sú jeho priami potomkovia
+
+// ── HĽADANIE PRIEČINKA 20_KOORDINACIA (pre batch dopytov) ─────────────────────
+
+function akcia_findKoordinaciaFolder(req) {
+  var cislo = String(req.cislo || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  // Dashboard: "26-026" (2-číslicový rok) → priečinok na Drive: "2026-026-..." (4-číslicový rok)
+  var m = cislo.match(/^(\d{2})-(\d{3})$/);
+  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var fi = root.getFolders();
+    var projFolder = null;
+    while (fi.hasNext()) {
+      var f = fi.next();
+      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
+    }
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    var ki = projFolder.getFoldersByName('20_KOORDINACIA');
+    if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
+    var kFolder = ki.next();
+    return { ok: true, url: 'https://drive.google.com/drive/folders/' + kFolder.getId() };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
 
 // ── ZOZNAM SÚBOROV V PRIEČINKU ────────────────────────────────────────────────
 

@@ -1257,6 +1257,16 @@ nav {
   </div>
 </div>
 
+<div class="overlay hidden" id="dopytyModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="dopytyTitle">Dopyty</h3>
+    <div id="dopytyContent" style="max-height:75vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('dopytyModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="portfolioModal">
   <div class="modal" style="max-width:600px">
     <h3>Celkový stav portfólia</h3>
@@ -1957,6 +1967,451 @@ async function deleteFinancieEntry(cislo, id) {
   } catch(e) { showToast('Chyba mazania: ' + e.message, 'err'); }
 }
 
+// ── Zodpovedný projektant (kontakt pre portál profesistov) ─────────────────
+let caflouUsersCache = null; // {id: {name, email}}
+async function fetchCaflouUsers() {
+  if (caflouUsersCache) return caflouUsersCache;
+  caflouUsersCache = {};
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/users?per=100`,
+      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+    const d = await r.json();
+    (d.results || []).forEach(u => { caflouUsersCache[u.id] = { name: u.name, email: u.email }; });
+  } catch(e) {}
+  return caflouUsersCache;
+}
+
+// Nájde internú úlohu "Príprava ASR" v každom aktívnom projekte → jej riešiteľ je
+// zodpovedný projektant pre daný projekt. Zapíše meno+email do Supabase project_contacts,
+// odkiaľ si to prečíta portal.html (nemá prístup ku Caflou API/kľúču).
+async function syncResponsibleContacts() {
+  if (!cfg.caflou_key || !cfg.caflou_id) return;
+  const projByTaskId = {};
+  projects.filter(p => p.faza !== 'Archív').forEach(p =>
+    (p.caflou_task_ids||[]).forEach(id => { projByTaskId[id] = p; })
+  );
+  if (!Object.keys(projByTaskId).length) return;
+  const users = await fetchCaflouUsers();
+  const contacts = {}; // cislo -> {name, email}
+  let page = 1, hasMore = true;
+  while (hasMore) {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+    const d = await r.json();
+    (d.results || []).forEach(t => {
+      if (t.trash) return;
+      if (!(t.name||'').toLowerCase().includes('príprava asr')) return;
+      const p = projByTaskId[t.id]; if (!p) return;
+      const u = t.target_user_id ? users[t.target_user_id] : null;
+      if (!u || !u.email) return;
+      contacts[p.cislo] = { name: u.name, email: u.email };
+    });
+    hasMore = !!d.next_page;
+    page++;
+  }
+  const rows = Object.entries(contacts).map(([cislo, c]) =>
+    ({ cislo, name: c.name, email: c.email, updated_at: new Date().toISOString() }));
+  if (rows.length) sb.from('project_contacts').upsert(rows).then(null, () => {});
+}
+
+// ── Dopyty (cenové ponuky pre profesie) ─────────────────────────────────────
+const PONUKY_PROFESSIONS = ['DOPRAVA','ELI','PBS','PLYN','STATIKA','technologie','UK','VN','VZT','ZTI'];
+const PONUKY_FAZY = ['Studia','SZ','DSP/PS','RP','Inziniering'];
+const PONUKY_FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stavebný zámer', 'DSP/PS':'DSP/PS', 'RP':'Realizačný projekt', 'Inziniering':'Inžiniering' };
+
+// caflou_status (raw Caflou status kľúč) rozlišuje DSP/PS/RP presne — na rozdiel od
+// p.podfaza, ktoré má pre 3_DSP/3_PS/4_RP rovnakú hodnotu "Projekt stavby" (pozri CAFLOU_STATUS_MAP)
+const CAFLOU_STATUS_TO_PONUKY_FAZA = {
+  '0_Podklady':'Studia', '1_Štúdia':'Studia',
+  '2_SZ':'SZ',
+  '3_DSP':'DSP/PS', '3_PS':'DSP/PS',
+  '4_RP':'RP',
+  '5_Inžiniering':'Inziniering', '6_Autorský dozor':'Inziniering',
+};
+function projFazaKod(p) {
+  if (p.podfaza === 'Územný plán') return 'UP';
+  return CAFLOU_STATUS_TO_PONUKY_FAZA[p.caflou_status] || null;
+}
+
+let _dopytyCtx = null; // { cislo, faza, reqs, newProfs: Set<string> }
+
+async function openDopytyModal(cislo) {
+  const p = projects.find(x => x.cislo === cislo);
+  if (!p) return;
+  document.getElementById('dopytyTitle').textContent = `Dopyty – ${p.nazov}`;
+  document.getElementById('dopytyModal').classList.remove('hidden');
+  document.getElementById('dopytyContent').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  const faza = projFazaKod(p) || PONUKY_FAZY[0];
+  if (!specialistsList) await loadSpecialists();
+  const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
+  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {} };
+  await renderDopytyModal();
+}
+
+async function loadDopytInvitations(reqId) {
+  if (_dopytyCtx.invCache[reqId]) return _dopytyCtx.invCache[reqId];
+  const { data: invs } = await sb.from('invitations').select('*').eq('request_id', reqId);
+  const invIds = (invs||[]).map(i => i.id);
+  const { data: quotes } = invIds.length ? await sb.from('quotes').select('*').in('invitation_id', invIds) : { data: [] };
+  const entry = { invs: invs||[], quotes: quotes||[] };
+  _dopytyCtx.invCache[reqId] = entry;
+  return entry;
+}
+function invalidateDopytInv(reqId) { delete _dopytyCtx.invCache[reqId]; }
+
+function dopytStatusText(reqId) {
+  const c = _dopytyCtx.invCache[reqId];
+  if (!c) return '…';
+  const winner = c.invs.find(i => i.status === 'selected');
+  if (winner) {
+    const sp = (specialistsList||[]).find(s => s.id === winner.specialist_id);
+    const q = c.quotes.find(q => q.invitation_id === winner.id);
+    const total = q?.prices ? Object.values(q.prices).reduce((a,b)=>a+(Number(b)||0),0) : 0;
+    return `✓ ${sp?.name || '?'}${total ? ' · ' + total.toLocaleString('sk-SK') + ' €' : ''}`;
+  }
+  if (c.invs.length) {
+    const nSub = c.invs.filter(i => ['submitted','selected'].includes(i.status)).length;
+    return nSub ? `${nSub}/${c.invs.length} ponúk` : `${c.invs.length} pozvaných, bez ponuky`;
+  }
+  return 'bez ponúk';
+}
+
+async function toggleDopytRow(reqId) {
+  if (_dopytyCtx.open.has(reqId)) _dopytyCtx.open.delete(reqId);
+  else _dopytyCtx.open.add(reqId);
+  await renderDopytyModal();
+}
+
+async function switchDopytyFaza(faza) {
+  _dopytyCtx.faza = faza;
+  _dopytyCtx.newProfs = new Set();
+  await renderDopytyModal();
+}
+
+async function renderDopytyModal() {
+  const { cislo, faza, reqs } = _dopytyCtx;
+
+  const tabs = PONUKY_FAZY.map(f => `<button onclick="switchDopytyFaza('${f}')"
+    style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:600;
+    background:${f===faza?'var(--text)':'none'};color:${f===faza?'#fff':'var(--text2)'}">${PONUKY_FAZA_LABEL[f]}</button>`).join('');
+
+  const fazaReqs = reqs.filter(r => (Array.isArray(r.phases) ? r.phases[0] : r.phases) === faza);
+  const existingProfs = new Set(fazaReqs.map(r => r.profession));
+
+  const rows = fazaReqs.length ? fazaReqs.map(r => `
+    <div style="border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" onclick="toggleDopytRow('${r.id}')">
+        <span style="font-size:10px;color:var(--text3);width:12px">${_dopytyCtx.open.has(r.id)?'▾':'▸'}</span>
+        <span style="flex:1;font-size:13px;font-weight:500">${r.profession}</span>
+        <span id="dopyt-status-${r.id}" style="font-size:12px;color:var(--text2)">…</span>
+      </div>
+      <div id="dopyt-detail-${r.id}" style="display:${_dopytyCtx.open.has(r.id)?'block':'none'};padding:0 0 12px 20px">
+        ${_dopytyCtx.open.has(r.id) ? '<div style="font-size:12px;color:var(--text3)">Načítavam…</div>' : ''}
+      </div>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne dopyty pre túto fázu.</div>';
+
+  const addable = PONUKY_PROFESSIONS.filter(prof => !existingProfs.has(prof));
+  const checkboxes = addable.map(prof => `<label style="display:flex;align-items:center;gap:6px;padding:4px 0;font-size:13px;cursor:pointer">
+    <input type="checkbox" data-prof="${prof}" ${_dopytyCtx.newProfs.has(prof)?'checked':''} onchange="toggleDopytProf('${prof}',this.checked)">
+    ${prof}
+  </label>`).join('');
+
+  const harmDate = await getHarmPodkladyDatum(cislo, faza);
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const el = document.getElementById('dopytyContent');
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${tabs}</div>
+    <div style="padding:0">${rows}</div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="pd-label">+ Nové dopyty pre ${PONUKY_FAZA_LABEL[faza]}</div>
+      ${checkboxes || '<div style="font-size:12px;color:var(--text3)">Všetky profesie už majú dopyt pre túto fázu.</div>'}
+      <div style="display:flex;align-items:center;gap:6px;margin:8px 0">
+        <input id="dopyt-custom-prof" class="pd-sel" placeholder="Vlastná profesia…" style="flex:1;font-size:12px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--text2)">Podklady aktuálne od:</label>
+        <input id="dopyt-podklady-datum" type="date" class="pd-sel" style="font-size:12px" value="${harmDate || todayStr}">
+      </div>
+      <button onclick="saveDopytyBatch()" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">Vytvoriť dopyty</button>
+    </div>`;
+
+  fazaReqs.forEach(async r => {
+    await loadDopytInvitations(r.id);
+    const elS = document.getElementById('dopyt-status-' + r.id);
+    if (elS) elS.textContent = dopytStatusText(r.id);
+    if (_dopytyCtx.open.has(r.id)) {
+      const elD = document.getElementById('dopyt-detail-' + r.id);
+      if (elD) elD.innerHTML = buildDopytDetailHtml(r);
+    }
+  });
+}
+
+function buildDopytDetailHtml(r) {
+  const c = _dopytyCtx.invCache[r.id] || { invs: [], quotes: [] };
+  const phases = Array.isArray(r.phases) ? r.phases : [r.phases];
+  const rows = c.invs.map(inv => {
+    const sp = (specialistsList||[]).find(s => s.id === inv.specialist_id);
+    const q = c.quotes.find(q => q.invitation_id === inv.id);
+    const total = q?.prices ? Object.values(q.prices).reduce((a,b)=>a+(Number(b)||0),0) : 0;
+    const priceTxt = total ? total.toLocaleString('sk-SK') + ' €' : '—';
+    let actions = '';
+    if (inv.status === 'submitted') {
+      actions = `<button onclick="selectDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:none;background:var(--green);color:#fff;cursor:pointer">Vybrať</button>
+        <button onclick="withdrawDopytQuote('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Stiahnuť</button>`;
+    } else if (inv.status === 'selected') {
+      actions = `<span style="font-size:11px;color:var(--green);font-weight:600">✓ vybraný</span>
+        <button onclick="cancelDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Zrušiť</button>`;
+    } else if (inv.status === 'rejected') {
+      actions = `<span style="font-size:11px;color:var(--text3)">neúspešný</span>`;
+    }
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px">
+      <span style="flex:1">${sp?.name || '?'}</span>
+      <span style="min-width:80px;text-align:right;font-weight:500">${priceTxt}</span>
+      <span style="display:flex;gap:4px;flex-shrink:0">${actions}</span>
+    </div>`;
+  }).join('') || '<div style="font-size:12px;color:var(--text3);padding:4px 0">Zatiaľ žiadna ponuka.</div>';
+
+  const usedSpecIds = new Set(c.invs.map(i => i.specialist_id));
+  const specOptions = (specialistsList||[])
+    .filter(s => !usedSpecIds.has(s.id))
+    .sort((a,b) => {
+      const am = (a.profession||'').includes(r.profession) ? 0 : 1;
+      const bm = (b.profession||'').includes(r.profession) ? 0 : 1;
+      return am - bm || a.name.localeCompare(b.name,'sk');
+    })
+    .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
+
+  const priceInputs = phases.map(ph => `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+    <label style="font-size:11px;color:var(--text2);min-width:70px">${ph}</label>
+    <input type="number" id="dp-price-${r.id}-${ph.replace(/[^a-z0-9]/gi,'_')}" class="pd-sel" style="font-size:12px;width:110px" placeholder="0 €">
+  </div>`).join('');
+
+  return `
+    ${rows}
+    <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">+ Zadať ponuku ručne (napr. z mailu)</div>
+      <select id="dp-spec-${r.id}" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
+        <option value="">— vyber profesistu —</option>
+        ${specOptions}
+      </select>
+      ${priceInputs}
+      <input id="dp-note-${r.id}" class="pd-sel" placeholder="Poznámka…" style="font-size:12px;width:100%;margin:4px 0">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+        <button onclick="saveManualPonuka('${r.id}')" style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Uložiť ponuku</button>
+        <button onclick="deleteDopyt('${r.id}')" style="margin-left:auto;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">✕ Vymazať dopyt</button>
+      </div>
+    </div>`;
+}
+
+async function selectDopytWinner(invId, reqId) {
+  const c = await loadDopytInvitations(reqId);
+  await Promise.all(c.invs.map(i =>
+    sb.from('invitations').update({ status: i.id === invId ? 'selected' : 'rejected' }).eq('id', i.id)
+  ));
+  await sb.from('requests').update({ status: 'closed' }).eq('id', reqId);
+  const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+  if (req) req.status = 'closed';
+
+  const inv = c.invs.find(i => i.id === invId);
+  const sp = (specialistsList||[]).find(s => s.id === inv?.specialist_id);
+  if (req?.caflou_task_id && sp?.name) {
+    sb.from('task_specialists').upsert({
+      task_id: req.caflou_task_id,
+      task_name: req.notes || req.profession,
+      project_cislo: req.project_cislo,
+      specialist_name: sp.name,
+      updated_at: new Date().toISOString(),
+    }).then(null, () => {});
+  }
+  if (req?.caflou_task_id && sp) {
+    const q = c.quotes.find(qq => qq.invitation_id === invId);
+    const phaseEntries = Object.entries(q?.prices || {}).filter(([, v]) => Number(v) > 0);
+    if (phaseEntries.length) {
+      if (sp.caflou_company_id) {
+        (async () => {
+          const transferIds = {};
+          for (const [phase, amount] of phaseEntries) {
+            const transferId = await createCaflouExpense(req.caflou_task_id, sp.caflou_company_id, Number(amount), `${sp.name} – ${req.profession || ''} – ${phase}`);
+            if (transferId) transferIds[phase] = transferId;
+          }
+          const okCount = Object.keys(transferIds).length;
+          if (okCount) {
+            showToast(`Zapísaných výdavkov do Caflou: ${okCount}/${phaseEntries.length}`, okCount === phaseEntries.length ? 'ok' : 'err');
+            if (q) sb.from('quotes').update({ caflou_transfer_ids: transferIds }).eq('id', q.id).then(null, () => {});
+          } else {
+            showToast('Zápis výdavkov do Caflou zlyhal', 'err');
+          }
+        })();
+      } else {
+        showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v ponuky.html', 'err');
+      }
+    }
+  }
+  invalidateDopytInv(reqId);
+  await renderDopytyModal();
+  showToast('Profesista vybraný ✓', 'ok');
+}
+
+async function createCaflouExpense(taskId, companyId, amount, description) {
+  if (!cfg.caflou_key || !taskId || !companyId || !amount) return null;
+  try {
+    const taskR = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${taskId}`, {
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    const task = await taskR.json();
+    if (!task?.project_id) return null;
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transfer: {
+        kind: 'expense',
+        project_id: task.project_id,
+        task_id: taskId,
+        company_id: companyId,
+        name: description,
+        value: amount,
+        currency: 'EUR',
+        date: new Date().toISOString().slice(0, 10),
+      }})
+    });
+    if (!r.ok) return null;
+    const created = await r.json();
+    return created?.id || null;
+  } catch(e) { return null; }
+}
+
+async function withdrawDopytQuote(invId, reqId) {
+  if (!confirm('Stiahnuť ponuku? Ceny sa zmažú a stav sa vráti na Odoslané.')) return;
+  await sb.from('quotes').delete().eq('invitation_id', invId);
+  await sb.from('invitations').update({ status: 'sent' }).eq('id', invId);
+  invalidateDopytInv(reqId);
+  await renderDopytyModal();
+}
+
+async function cancelDopytWinner(invId, reqId) {
+  if (!confirm('Zrušiť výber? Všetci profesisti sa vrátia na stav Ponuka.')) return;
+  const c = await loadDopytInvitations(reqId);
+  const toRevert = c.invs.filter(i => ['selected','rejected'].includes(i.status));
+  await Promise.all(toRevert.map(i => sb.from('invitations').update({ status: 'submitted' }).eq('id', i.id)));
+  const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+  if (req?.caflou_task_id) sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id).then(null, () => {});
+  if (req) { await sb.from('requests').update({ status: 'active' }).eq('id', reqId); req.status = 'active'; }
+  invalidateDopytInv(reqId);
+  await renderDopytyModal();
+}
+
+async function saveManualPonuka(reqId) {
+  const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+  const phases = Array.isArray(req?.phases) ? req.phases : [req.phases];
+  const specId = document.getElementById('dp-spec-' + reqId)?.value;
+  if (!specId) { showToast('Vyber profesistu', 'err'); return; }
+  const prices = {};
+  phases.forEach(ph => {
+    const v = document.getElementById(`dp-price-${reqId}-${ph.replace(/[^a-z0-9]/gi,'_')}`)?.value;
+    if (v !== '' && v != null) prices[ph] = Number(v);
+  });
+  const notes = document.getElementById('dp-note-' + reqId)?.value.trim() || null;
+
+  const { data: inv, error: invErr } = await sb.from('invitations')
+    .insert({ request_id: reqId, specialist_id: specId, status: 'submitted' })
+    .select('id').single();
+  if (invErr) { showToast('Chyba: ' + invErr.message, 'err'); return; }
+  const { error: qErr } = await sb.from('quotes').insert({ invitation_id: inv.id, prices, notes, submitted_at: new Date().toISOString() });
+  if (qErr) { showToast('Chyba: ' + qErr.message, 'err'); return; }
+
+  invalidateDopytInv(reqId);
+  await renderDopytyModal();
+  showToast('Ponuka uložená ✓', 'ok');
+}
+
+async function deleteDopyt(reqId) {
+  if (!confirm('Vymazať dopyt aj so všetkými ponukami?')) return;
+  const c = await loadDopytInvitations(reqId);
+  const invIds = c.invs.map(i => i.id);
+  if (invIds.length) await sb.from('quotes').delete().in('invitation_id', invIds);
+  await sb.from('invitations').delete().eq('request_id', reqId);
+  await sb.from('requests').delete().eq('id', reqId);
+  _dopytyCtx.reqs = _dopytyCtx.reqs.filter(r => r.id !== reqId);
+  invalidateDopytInv(reqId);
+  _dopytyCtx.open.delete(reqId);
+  await renderDopytyModal();
+  showToast('Dopyt vymazaný', 'ok');
+}
+
+function toggleDopytProf(prof, checked) {
+  if (checked) _dopytyCtx.newProfs.add(prof); else _dopytyCtx.newProfs.delete(prof);
+}
+
+async function getHarmPodkladyDatum(cislo, fazaKod) {
+  try {
+    const { data } = await sb.from('harmonogram').select('start_datum,trvanie_tyzdne')
+      .eq('cislo', cislo).eq('faza_kod', fazaKod).eq('podpodfaza', 'príprava pre profesie').maybeSingle();
+    if (!data || !data.start_datum) return null;
+    const d = new Date(data.start_datum + 'T00:00:00');
+    d.setDate(d.getDate() + Math.round((data.trvanie_tyzdne||0) * 7));
+    return d.toISOString().split('T')[0];
+  } catch(e) { return null; }
+}
+
+async function getKoordinaciaFolderUrl(cislo) {
+  try {
+    const { data } = await sb.from('project_folders').select('koordinacia_url').eq('cislo', cislo).maybeSingle();
+    if (data?.koordinacia_url) return data.koordinacia_url;
+  } catch(e) {}
+  if (!cfg.url) return null;
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'findKoordinaciaFolder', cislo }) });
+    const d = await r.json();
+    if (d.ok && d.url) {
+      sb.from('project_folders').upsert({ cislo, koordinacia_url: d.url, updated_at: new Date().toISOString() }).then(null, () => {});
+      return d.url;
+    }
+  } catch(e) {}
+  return null;
+}
+
+async function saveDopytyBatch() {
+  const { cislo, faza, newProfs } = _dopytyCtx;
+  const customEl = document.getElementById('dopyt-custom-prof');
+  const custom = customEl?.value.trim();
+  const profs = [...newProfs];
+  if (custom) profs.push(custom);
+  if (!profs.length) { showToast('Vyber aspoň jednu profesiu', 'err'); return; }
+
+  const p = projects.find(x => x.cislo === cislo);
+  const podkladyDatum = document.getElementById('dopyt-podklady-datum').value || null;
+  const hotovoDatum = p.deadline ? new Date(p.deadline.getTime() - 10*86400000).toISOString().split('T')[0] : null;
+  const folderUrl = await getKoordinaciaFolderUrl(cislo);
+
+  const rows = profs.map(prof => ({
+    project_cislo: cislo,
+    project_name: p.nazov,
+    profession: prof,
+    phases: [faza],
+    current_phase: faza,
+    folder_url: folderUrl,
+    podklady_datum: podkladyDatum,
+    hotovo_datum: hotovoDatum,
+    status: 'active',
+  }));
+  const { error } = await sb.from('requests').insert(rows);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+
+  // Zosúladiť podklady_datum vo VŠETKÝCH dopytoch tejto fázy (aj už existujúcich, nielen novovytvorených)
+  if (podkladyDatum) {
+    sb.from('requests').update({ podklady_datum: podkladyDatum })
+      .eq('project_cislo', cislo).contains('phases', [faza])
+      .then(null, () => {});
+  }
+
+  showToast(`Vytvorených ${profs.length} dopytov ✓`, 'ok');
+  const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
+  _dopytyCtx.reqs = reqs || [];
+  _dopytyCtx.newProfs = new Set();
+  await renderDopytyModal();
+}
+
 // ── SYNC ──────────────────────────────────────────────────────────────────
 async function syncData() {
   if (!cfg.caflou_key || !cfg.caflou_id) { loadDemo(); return; }
@@ -2047,6 +2502,7 @@ async function syncData() {
     renderAll();
     showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
     migrateTaskSpecialists().catch(() => {});
+    syncResponsibleContacts().catch(() => {});
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     if (!projects.length) loadDemo();
@@ -2509,6 +2965,8 @@ function buildDetailHtml(p) {
         style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">+ Úloha</button>
       <button onclick="openTmplPicker('${p.cislo}')"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📋 Šablóna</button>
+      <button onclick="event.stopPropagation();openDopytyModal('${p.cislo}')"
+        style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📨 Dopyty</button>
       <a href="suhrn.html?cislo=${encodeURIComponent(p.cislo)}&nazov=${encodeURIComponent(p.nazov)}&faza=${encodeURIComponent(p.faza||'')}&podfaza=${encodeURIComponent(p.podfaza||'')}&caflouid=${encodeURIComponent(p.caflou_id||'')}&taskids=${encodeURIComponent((p.caflou_task_ids||[]).join(','))}" onclick="event.stopPropagation()" target="_blank"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);text-decoration:none;display:inline-flex;align-items:center">📄 A,B</a>
     </div>
@@ -3678,7 +4136,7 @@ async function deleteCaflouTask(cislo, task_id) {
 async function loadSpecialists() {
   if (specialistsList !== null) return;
   try {
-    const { data } = await sb.from('specialists').select('id,name,profession,email').order('name');
+    const { data } = await sb.from('specialists').select('id,name,profession,email,caflou_company_id').order('name');
     specialistsList = data || [];
   } catch(e) { specialistsList = []; }
 }
