@@ -874,3 +874,19 @@ Toto prostredie nemá Python ani žiadny `xlsx`/zip balík pre Node, a Bash má 
 3. Vlastný minimalistický ZIP writer v Node (`store`/bez kompresie, `zlib.crc32()` je v Node 24 zabudované) — funguje spoľahlivo, overené round-trip testom (rozbaliť späť a skontrolovať hodnoty/SUM vzorce)
 
 **Stav:** Postup zdokumentovaný, jeden rozpracovaný príklad (REVIVA) v `podklady k CP/Navrh_CP_REVIVA.md` + vyplnený `PR 04...vyplnene.xlsx`. Žiadny nástroj v dashboarde zatiaľ nevzniká — zatiaľ manuálny proces (Claude pripraví draft na základe podkladov, Jozef doladí a ručne vloží do Caflou ako `offer`). Nedorobené: presnejší zdroj per-profesijných cien (`ponuky.html` quotes.prices?), honorár.sk PDF prerobiť na 16,3 mil. €, rozhodnutie či/ako toto zautomatizovať v dashboarde (pozri skorší koncept "nástroj na tvorbu CP" v histórii konverzácie — Caflou historické CP ako referencia + Gemini draft).
+
+---
+
+## ROZPRACOVANÉ: Kontakt na zodpovedného projektanta v portáli profesistov
+
+**Požiadavka (Jozef, 2026-08-28):** systém ponúk pre profesistov má fungovať tak, že Jozef ho nastavuje sám (zakladá dopyty), bez toho aby profesisti museli niekde vypĺňať niečo navyše — ale zároveň chce, aby sa profesisti vedeli sami prihlásiť do portálu, videli tam aktuálne voľné zákazky a mohli dať ponuku, a pri už dohodnutých zákazkách videli zoznam s odkazmi na podklady, **kontaktom na nášho projektanta/architekta, ktorý má daný projekt na starosti**, a dátumami (kedy budú podklady pripravené, kedy čakáme hotový výsledok).
+
+**Overené — väčšina už existuje:** `portal.html?specialist=UUID` (mód "trhisko profesista", pozri `renderSpecialistView`/`renderReqCard` v `portal.html`) presne toto rieši — permanentný link cez `specialists.portal_token`, zoznam aktívnych dopytov (aj mimo tých, čo im Jozef poslal), formulár na ponuku, a pri `selected` invitations zobrazenie `folder_url_work`, `podklady_datum`, `hotovo_datum`, `r.notes` (`portal.html:451-458`). Nič z toho nevyžaduje, aby Jozef čokoľvek posielal ručne navyše.
+
+**Chýba:** kontakt na zodpovedného interného projektanta/architekta pri projekte — `requests` tabuľka (ani nič iné v `ponuky.html`/`portal.html`) toto pole zatiaľ nemá, takže sa nemá odkiaľ zobraziť.
+
+**Otvorená otázka (čaká na rozhodnutie Jozefa):**
+- **Ručne per dopyt** — pridať pole (napr. `requests.contact_name`/`contact_email`/`contact_phone` alebo len `contact_note` text) vypĺňané pri zakladaní dopytu. Jednoduchšie na implementáciu, ale Jozef by ho musel vypĺňať pri každom novom dopyte (čo je presne to, čo chce minimalizovať).
+- **Automaticky z Caflou úlohy** — odvodiť z `target_user_id` internej Caflou úlohy cez `CAFLOU_USERS` (index.html), ale tá mapa má zatiaľ len meno, nie email/telefón — vyžadovalo by doplniť kontaktné údaje k internému tímu niekam (nová Supabase tabuľka alebo rozšírenie `CAFLOU_USERS`).
+
+**Stav:** Nič neimplementované, čaká sa na rozhodnutie medzi týmito dvomi prístupmi (alebo iným).
