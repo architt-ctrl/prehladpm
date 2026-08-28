@@ -2078,9 +2078,32 @@ function dopytStatusText(reqId) {
 }
 
 async function toggleDopytRow(reqId) {
-  if (_dopytyCtx.open.has(reqId)) _dopytyCtx.open.delete(reqId);
-  else _dopytyCtx.open.add(reqId);
-  await renderDopytyModal();
+  const opening = !_dopytyCtx.open.has(reqId);
+  if (opening) _dopytyCtx.open.add(reqId); else _dopytyCtx.open.delete(reqId);
+  const arrowEl = document.getElementById('dopyt-arrow-' + reqId);
+  if (arrowEl) arrowEl.textContent = opening ? '▾' : '▸';
+  const detailEl = document.getElementById('dopyt-detail-' + reqId);
+  if (!detailEl) return;
+  detailEl.style.display = opening ? 'block' : 'none';
+  if (opening) {
+    detailEl.innerHTML = '<div style="font-size:12px;color:var(--text3)">Načítavam…</div>';
+    await loadDopytInvitations(reqId);
+    const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+    if (req) detailEl.innerHTML = buildDopytDetailHtml(req);
+  }
+}
+
+// Cielená obnova jedného riadku (bez plného re-renderu modálu) po akcii nad ponukou
+async function refreshDopytRow(reqId) {
+  invalidateDopytInv(reqId);
+  await loadDopytInvitations(reqId);
+  const elS = document.getElementById('dopyt-status-' + reqId);
+  if (elS) elS.textContent = dopytStatusText(reqId);
+  if (_dopytyCtx.open.has(reqId)) {
+    const elD = document.getElementById('dopyt-detail-' + reqId);
+    const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+    if (elD && req) elD.innerHTML = buildDopytDetailHtml(req);
+  }
 }
 
 async function switchDopytyFaza(faza) {
@@ -2102,7 +2125,7 @@ async function renderDopytyModal() {
   const rows = fazaReqs.length ? fazaReqs.map(r => `
     <div style="border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer" onclick="toggleDopytRow('${r.id}')">
-        <span style="font-size:10px;color:var(--text3);width:12px">${_dopytyCtx.open.has(r.id)?'▾':'▸'}</span>
+        <span id="dopyt-arrow-${r.id}" style="font-size:10px;color:var(--text3);width:12px">${_dopytyCtx.open.has(r.id)?'▾':'▸'}</span>
         <span style="flex:1;font-size:13px;font-weight:500">${r.profession}</span>
         <span id="dopyt-status-${r.id}" style="font-size:12px;color:var(--text2)">…</span>
       </div>
@@ -2249,8 +2272,7 @@ async function selectDopytWinner(invId, reqId) {
       }
     }
   }
-  invalidateDopytInv(reqId);
-  await renderDopytyModal();
+  await refreshDopytRow(reqId);
   showToast('Profesista vybraný ✓', 'ok');
 }
 
@@ -2286,8 +2308,7 @@ async function withdrawDopytQuote(invId, reqId) {
   if (!confirm('Stiahnuť ponuku? Ceny sa zmažú a stav sa vráti na Odoslané.')) return;
   await sb.from('quotes').delete().eq('invitation_id', invId);
   await sb.from('invitations').update({ status: 'sent' }).eq('id', invId);
-  invalidateDopytInv(reqId);
-  await renderDopytyModal();
+  await refreshDopytRow(reqId);
 }
 
 async function cancelDopytWinner(invId, reqId) {
@@ -2298,8 +2319,7 @@ async function cancelDopytWinner(invId, reqId) {
   const req = _dopytyCtx.reqs.find(r => r.id === reqId);
   if (req?.caflou_task_id) sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id).then(null, () => {});
   if (req) { await sb.from('requests').update({ status: 'active' }).eq('id', reqId); req.status = 'active'; }
-  invalidateDopytInv(reqId);
-  await renderDopytyModal();
+  await refreshDopytRow(reqId);
 }
 
 async function saveManualPonuka(reqId) {
@@ -2318,8 +2338,7 @@ async function saveManualPonuka(reqId) {
   const { error: qErr } = await sb.from('quotes').insert({ invitation_id: inv.id, prices, notes, submitted_at: new Date().toISOString() });
   if (qErr) { showToast('Chyba: ' + qErr.message, 'err'); return; }
 
-  invalidateDopytInv(reqId);
-  await renderDopytyModal();
+  await refreshDopytRow(reqId);
   showToast('Ponuka uložená ✓', 'ok');
 }
 
