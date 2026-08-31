@@ -126,7 +126,13 @@ async function init() {
     await sb.from('invitations').update({ status: 'viewed' }).eq('id', inv.id);
   }
 
-  if (inv.status === 'selected') { renderStatus('selected', req, spec, quote); return; }
+  if (inv.status === 'selected') {
+    const contact = req.project_cislo
+      ? (await sb.from('project_contacts').select('name,email').eq('cislo', req.project_cislo).maybeSingle()).data
+      : null;
+    renderStatus('selected', req, spec, quote, contact);
+    return;
+  }
   if (inv.status === 'rejected') { renderStatus('rejected', req, spec, quote); return; }
 
   renderForm(inv, req, spec, quote);
@@ -143,7 +149,7 @@ function renderError(msg) {
     </div>`;
 }
 
-function renderStatus(status, req, spec, quote) {
+function renderStatus(status, req, spec, quote, contact) {
   const sel = status === 'selected';
   const proj = `${req.project_cislo ? req.project_cislo + ' ' : ''}${req.project_name}`;
   const phases = Array.isArray(req.phases) ? req.phases : [];
@@ -156,8 +162,13 @@ function renderStatus(status, req, spec, quote) {
     </tr>`;
   }).join('') : '';
 
-  const reqBlock = (req.folder_url || req.folder_url_work || req.notes) ? `
+  const contactLine = sel && contact?.name
+    ? `<div class="meta-item"><label>Zodpovedný projektant</label><span>${contact.name}${contact.email ? ` · <a href="mailto:${contact.email}" style="color:inherit">${contact.email}</a>` : ''}</span></div>`
+    : '';
+
+  const reqBlock = (req.folder_url || req.folder_url_work || req.notes || contactLine) ? `
     <div class="divider"></div>
+    ${contactLine ? `<div class="meta" style="margin-bottom:10px">${contactLine}</div>` : ''}
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:${req.notes ? '10px' : '0'}">
       ${req.folder_url ? `<a href="${req.folder_url}" target="_blank" class="link-btn">📁 Podklady na nacenenie</a>` : ''}
       ${req.folder_url_work ? `<a href="${req.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : ''}
@@ -322,7 +333,19 @@ async function initSpecialistView() {
     ? await sb.from('requests').select('id,project_cislo,project_name,profession,phases,notes,folder_url,folder_url_work,podklady_datum,hotovo_datum').in('id', missingIds)
     : { data: [] };
 
-  _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [] };
+  // Kontakt na zodpovedného projektanta — len pre projekty, kde je aspoň jedna vybraná ponuka
+  const selectedCisla = [...new Set(
+    (invs || []).filter(i => i.status === 'selected')
+      .map(i => [...(reqs||[]), ...(srReqs||[])].find(r => r.id === i.request_id)?.project_cislo)
+      .filter(Boolean)
+  )];
+  const { data: contactRows } = selectedCisla.length
+    ? await sb.from('project_contacts').select('cislo,name,email').in('cislo', selectedCisla)
+    : { data: [] };
+  const contacts = {};
+  (contactRows || []).forEach(c => { contacts[c.cislo] = c; });
+
+  _specCtx = { spec, reqs: reqs || [], srReqs: srReqs || [], invs: invs || [], qts: qts || [], contacts };
   renderSpecialistView();
 }
 
@@ -417,7 +440,7 @@ function renderSpecialistView() {
 }
 
 function renderReqCard(r) {
-  const { invs, qts } = _specCtx;
+  const { invs, qts, contacts } = _specCtx;
   const inv = invs.find(i => i.request_id === r.id);
   const qt = inv ? qts.find(q => q.invitation_id === inv.id) : null;
   const status = inv?.status;
@@ -449,12 +472,16 @@ function renderReqCard(r) {
       <div style="display:${isOpen ? 'block' : 'none'}">
         <div class="req-card-body">
           ${sel ? (() => {
+            const contact = r.project_cislo ? contacts?.[r.project_cislo] : null;
             const infoItems = [
               r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
               r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
               r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
             ].filter(Boolean);
-            return `${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
+            const contactLine = contact?.name
+              ? `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Zodpovedný projektant: <strong>${contact.name}</strong>${contact.email ? ` · <a href="mailto:${contact.email}" style="color:inherit">${contact.email}</a>` : ''}</div>`
+              : '';
+            return `${contactLine}${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
           })() : ''}
           ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
             <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
