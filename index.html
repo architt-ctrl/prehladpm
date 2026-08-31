@@ -2869,7 +2869,8 @@ function koordIconHtml(cislo) {
   const url = koordinaciaFolderMap[cislo];
   if (url) {
     return `<a id="koord-${cislo}" href="${url}" target="_blank" onclick="event.stopPropagation()"
-      title="Otvoriť podklady na Drive (20_KOORDINACIA)" style="${KOORD_ICON_STYLE}">🗂️</a>`;
+      title="Otvoriť podklady na Drive (20_KOORDINACIA)"
+      style="${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);">🔗</a>`;
   }
   return `<button id="koord-${cislo}" onclick="event.stopPropagation();findKoordFolder('${cislo}')"
     title="Nájsť priečinok s podkladmi (20_KOORDINACIA)" style="${KOORD_ICON_STYLE}">🔍</button>`;
