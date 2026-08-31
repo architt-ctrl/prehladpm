@@ -1417,6 +1417,7 @@ let dennikThreadOpen = new Set(); // id-čka zápisov, ktorých podvlákno odpov
 let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo: ISO_timestamp} — kedy user naposledy otvoril projekt
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
+let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
 let gemExpandedSet = new Set(JSON.parse(localStorage.getItem('pmGemExpanded') || '[]')); // {cislo} — zhrnutie AI rozbalené (default skryté, šetrí miesto)
 let activeFaza = 'Štúdia';
@@ -2516,6 +2517,13 @@ async function syncData() {
       }
     } catch(e) {}
 
+    // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
+    try {
+      const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url');
+      koordinaciaFolderMap = {};
+      (folders || []).forEach(f => { if (f.koordinacia_url) koordinaciaFolderMap[f.cislo] = f.koordinacia_url; });
+    } catch(e) {}
+
     renderAll();
     showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
     migrateTaskSpecialists().catch(() => {});
@@ -2777,6 +2785,7 @@ function renderProjects() {
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
                 display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+              ${koordIconHtml(p.cislo)}
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -2803,6 +2812,7 @@ function renderProjects() {
             style="background:none;border:1px solid var(--border);border-radius:5px;
             width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
             display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+          ${koordIconHtml(p.cislo)}
           <div style="font-size:16px;color:var(--text3)">✓</div>
         </div>
         <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>`).join('')
@@ -2851,6 +2861,33 @@ function folderSearchLink(cislo) {
   return `search-ms:query=${encodeURIComponent(cislo)}&crumb=location:${encodeURIComponent(loc)}`;
 }
 
+const KOORD_ICON_STYLE = `background:none;border:1px solid var(--border);border-radius:5px;
+        width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
+        display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;`;
+
+function koordIconHtml(cislo) {
+  const url = koordinaciaFolderMap[cislo];
+  if (url) {
+    return `<a id="koord-${cislo}" href="${url}" target="_blank" onclick="event.stopPropagation()"
+      title="Otvoriť podklady na Drive (20_KOORDINACIA)" style="${KOORD_ICON_STYLE}">🗂️</a>`;
+  }
+  return `<button id="koord-${cislo}" onclick="event.stopPropagation();findKoordFolder('${cislo}')"
+    title="Nájsť priečinok s podkladmi (20_KOORDINACIA)" style="${KOORD_ICON_STYLE}">🔍</button>`;
+}
+
+async function findKoordFolder(cislo) {
+  const btn = document.getElementById(`koord-${cislo}`);
+  if (btn) btn.style.opacity = '0.4';
+  const url = await getKoordinaciaFolderUrl(cislo);
+  if (url) {
+    koordinaciaFolderMap[cislo] = url;
+    showToast('Priečinok nájdený', 'ok');
+  } else {
+    showToast('Priečinok 20_KOORDINACIA sa nenašiel (projekt asi nemá novú štruktúru)', 'err');
+  }
+  document.querySelectorAll(`#koord-${cislo}`).forEach(el => el.outerHTML = koordIconHtml(cislo));
+}
+
 function projRowHtml(p) {
   const gem = geminiMap[p.cislo] || '';
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
@@ -2874,6 +2911,7 @@ function projRowHtml(p) {
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
         display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+      ${koordIconHtml(p.cislo)}
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
