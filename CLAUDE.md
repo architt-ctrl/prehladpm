@@ -415,7 +415,18 @@ Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlí
 
 Tlačidlo 📁 pri každom projekte otvára priečinok projektu v reálnom Windows Prieskumníku. `folderSearchLink(cislo)` vracia `search-ms:` URI (`query=<cislo>&crumb=location:H:\Spoločné disky\1_PROJEKTY`), nie priamy `file://` odkaz — presný názov priečinka na disku sa môže líšiť od Caflou (rovnaký dôvod, prečo `sync-fazy.ps1` hľadá priečinky prefix-regexom, nie presnou zhodou), a `file://` linky z `https://` stránky navyše prehliadač spoľahlivo neotvára v Exploreri. `search-ms` funguje len ak má Windows Search zaindexovaný daný H: disk (Indexing Options).
 
+**Nefunkčné v praxi (2026-08-31, potvrdené Jozefom — "otvorí Explorer ale nič nenájde"):** `H:\Spoločné disky\...` je Google Drive for Desktop mount v "Stream" režime — virtuálny súborový systém bez lokálneho change journalu, ktorý Windows Search principiálne nevie indexovať (nie je to len otázka zapnutia v Indexing Options). `search-ms` preto pri tomto disku dlhodobo nemôže fungovať. Zatiaľ sa nerieši (Jozef: "nechaj to tak") — vyriešiteľná alternatíva (Drive web link namiesto lokálneho Explorera, rovnaký princíp ako "Odkaz na priečinok s podkladmi" nižšie, keďže `akcia_findKoordinaciaFolder` už cestou k `20_KOORDINACIA` nájde aj koreňový priečinok projektu) je premyslená, ale zámerne neimplementovaná — čaká na Jozefov súhlas.
+
 **Šablóna riadku projektu existuje na 3 miestach** (`projRowHtml`, výsledky vyhľadávania a Archív v `renderProjects()`) — akúkoľvek zmenu tlačidiel v riadku (📁, ✎...) treba spraviť na všetkých troch, inak zmizne len v niektorých pohľadoch (stalo sa pri prvom pridaní 📁 — chýbalo vo vyhľadávaní aj Archíve).
+
+### Odkaz na priečinok s podkladmi (🔗, 2026-08-31)
+
+Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri vyššie) je vedľa 📁 ďalšia ikona — priamy link na Drive priečinok `20_KOORDINACIA` (spoločný priečinok pre podklady všetkých profesií, pozri "Realita overená naživo" v sekcii o štruktúre priečinka nižšie). Zámerne **nie** automatický scan naprieč všetkými projektmi (bolo by to príliš veľa Apps Script/Drive volaní naraz) — objavuje sa lenivo, projekt po projekte, na Jozefov klik.
+
+- `koordinaciaFolderMap` — `{cislo: url}`, bulk-loadovaná v `syncData()` z existujúcej cache tabuľky `project_folders` (tá istá, čo používa batch vytváranie dopytov — pozri "Dopyty" vyššie)
+- `koordIconHtml(cislo)` — ak je `cislo` v mape → modrý `🔗` odkaz priamo na Drive (`target="_blank"`); inak `🔍` tlačidlo
+- `findKoordFolder(cislo)` — klik na `🔍` zavolá existujúci `getKoordinaciaFolderUrl(cislo)` (Apps Script `findKoordinaciaFolder`, s rovnakým upsertom do `project_folders` ako pri Dopytoch), po úspechu/neúspechu prepíše len daný `#koord-{cislo}` element (`outerHTML`) — žiadny plný re-render
+- **Farba/ikona zámerne odlišná od 📁** (modré orámovanie + 🔗, namiesto podobného 🗂️ z prvej verzie) — Jozef: pôvodné dve ikony boli vizuálne príliš podobné na to, aby vedel na prvý pohľad rozlíšiť, ktorá otvára čo
 
 ## Other files
 
