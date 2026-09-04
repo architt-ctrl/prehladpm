@@ -283,6 +283,7 @@ function doPost(e) {
     else if (req.action === 'extractMetadata')    resp = akcia_extractMetadata(req);
     else if (req.action === 'sendOfficialMail')   resp = akcia_sendOfficialMail(req);
     else if (req.action === 'findKoordinaciaFolder') resp = akcia_findKoordinaciaFolder(req);
+    else if (req.action === 'findIfcFile')        resp = akcia_findIfcFile(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -494,6 +495,43 @@ function akcia_findKoordinaciaFolder(req) {
     if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
     var kFolder = ki.next();
     return { ok: true, url: 'https://drive.google.com/drive/folders/' + kFolder.getId() };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── HĽADANIE IFC SÚBORU (pre IFC 3D viewer link) ──────────────────────────────
+// Nájde prvý .ifc súbor v 20_KOORDINACIA/ARCHITEKTURA daného projektu a nastaví
+// naň verejné zdieľanie "ktokoľvek s odkazom" (view), aby ho vedel prečítať
+// aj cudzí prehliadač bez prístupu do firemného Drive (cez Drive API + API kľúč).
+function akcia_findIfcFile(req) {
+  var cislo = String(req.cislo || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  var m = cislo.match(/^(\d{2})-(\d{3})$/);
+  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var fi = root.getFolders();
+    var projFolder = null;
+    while (fi.hasNext()) {
+      var f = fi.next();
+      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
+    }
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    var ki = projFolder.getFoldersByName('20_KOORDINACIA');
+    if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
+    var ai = ki.next().getFoldersByName('ARCHITEKTURA');
+    if (!ai.hasNext()) return { ok: false, error: 'Priečinok ARCHITEKTURA sa v 20_KOORDINACIA nenašiel' };
+    var archFolder = ai.next();
+    var files = archFolder.getFiles();
+    var ifcFile = null;
+    while (files.hasNext()) {
+      var file = files.next();
+      if (file.getName().toLowerCase().indexOf('.ifc') === file.getName().length - 4) { ifcFile = file; break; }
+    }
+    if (!ifcFile) return { ok: false, error: 'V ARCHITEKTURA sa nenašiel žiadny .ifc súbor' };
+    ifcFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    return { ok: true, fileId: ifcFile.getId(), name: ifcFile.getName() };
   } catch(e) {
     return { ok: false, error: e.message };
   }

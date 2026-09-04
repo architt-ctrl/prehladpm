@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D náhľad</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#f5f3ef; --bg2:#fff; --bg3:#f0ede8;
+      --border:#e4dfd8;
+      --text:#2c2825; --text2:#6b6460; --text3:#9e9590;
+      --green:#1e7a4a; --grn-bg:#f0faf5; --grn-bd:#b8e6cc;
+      --blue:#1a5fa0; --blu-bg:#f0f6fd; --blu-bd:#b8d4f0;
+      --red:#c0392b; --red-bg:#fdf2f1; --red-bd:#f5c6c2;
+      --sans:'DM Sans',system-ui,sans-serif;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;-webkit-font-smoothing:antialiased}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;overflow:hidden}
+
+    .top{background:var(--text);color:#f5f3ef;padding:12px 18px;display:flex;align-items:center;gap:8px;position:relative;z-index:20}
+    .top-logo{font-size:16px;font-weight:600}
+    .top-sub{font-size:13px;color:rgba(245,243,239,.45)}
+    .top-name{margin-left:auto;font-size:14px;font-weight:500}
+
+    #viewport-wrap{position:absolute;top:49px;left:0;right:0;bottom:0}
+    #container{position:absolute;inset:0}
+
+    .panel{position:absolute;top:12px;left:12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;z-index:10;max-width:calc(100% - 24px);box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    .panel-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .pbtn{padding:7px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:var(--sans);font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap}
+    .pbtn:hover{background:var(--border)}
+    .pbtn.hidden-cat{opacity:.4}
+    .panel-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 4px;width:100%}
+
+    .status-wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;background:var(--bg);z-index:15}
+    .status-icon{font-size:44px}
+    .status-wrap p{color:var(--text2);font-size:14px;text-align:center;max-width:320px;padding:0 16px}
+    .status-wrap .err{color:var(--red)}
+    .spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+
+<div class="top">
+  <span class="top-logo">Tornyos Architects</span>
+  <span class="top-sub">· 3D náhľad</span>
+  <span class="top-name" id="topName"></span>
+</div>
+
+<div id="viewport-wrap">
+  <div id="container"></div>
+
+  <div class="panel" id="panel" style="display:none">
+    <div class="panel-row">
+      <button class="pbtn" id="btnClip">✂️ Rez (dvojklik v modeli)</button>
+      <button class="pbtn" id="btnClearClip">Zmazať rezy</button>
+    </div>
+    <div class="panel-label">Vrstvy</div>
+    <div class="panel-row" id="cats"></div>
+  </div>
+
+  <div class="status-wrap" id="status">
+    <div class="spinner" id="spinnerIcon"></div>
+    <div class="status-icon" id="statusIcon" style="display:none"></div>
+    <p id="statusText">Načítavam model...</p>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "camera-controls": "https://cdn.jsdelivr.net/npm/camera-controls@3.1.2/+esm",
+    "web-ifc": "https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/+esm",
+    "@thatopen/fragments": "https://cdn.jsdelivr.net/npm/@thatopen/fragments@3.4.7/+esm",
+    "@thatopen/components": "https://cdn.jsdelivr.net/npm/@thatopen/components@3.4.8/+esm"
+  }
+}
+</script>
+<script type="module">
+const DRIVE_API_KEY = 'AIzaSyDx3fr6pErdbnQMgDuKIBRHHlzdEEqhAN0';
+
+const params = new URLSearchParams(location.search);
+const fileId = params.get('fileId');
+const nazov = params.get('nazov') || '';
+document.getElementById('topName').textContent = nazov;
+document.title = nazov ? (nazov + ' — 3D náhľad') : '3D náhľad';
+
+function setStatus(text, isError) {
+  document.getElementById('statusText').textContent = text;
+  document.getElementById('statusText').className = isError ? 'err' : '';
+  document.getElementById('spinnerIcon').style.display = isError ? 'none' : '';
+  document.getElementById('statusIcon').style.display = isError ? '' : 'none';
+  document.getElementById('statusIcon').textContent = isError ? '⚠️' : '';
+}
+function hideStatus() { document.getElementById('status').style.display = 'none'; }
+
+async function main() {
+  if (!fileId) { setStatus('Chýba odkaz na model (fileId).', true); return; }
+
+  const THREE = await import('three');
+  const OBC = await import('@thatopen/components');
+
+  const container = document.getElementById('container');
+  const components = new OBC.Components();
+  const worlds = components.get(OBC.Worlds);
+  const world = worlds.create();
+  world.scene = new OBC.SimpleScene(components);
+  world.renderer = new OBC.SimpleRenderer(components, container);
+  world.camera = new OBC.SimpleCamera(components);
+  components.init();
+  world.scene.setup();
+  world.scene.three.background = new THREE.Color('#f5f3ef');
+
+  const grids = components.get(OBC.Grids);
+  grids.create(world);
+
+  const fragments = components.get(OBC.FragmentsManager);
+  const workerUrl = await OBC.FragmentsManager.getWorker();
+  fragments.init(workerUrl);
+
+  const ifcLoader = components.get(OBC.IfcLoader);
+  await ifcLoader.setup({ autoSetWasm: false, wasm: { path: 'https://unpkg.com/web-ifc@0.0.77/', absolute: true } });
+
+  setStatus('Sťahujem model z Google Drive...');
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&key=${DRIVE_API_KEY}`;
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (e) {
+    setStatus('Model sa nepodarilo stiahnuť (sieťová chyba).', true);
+    return;
+  }
+  if (!resp.ok) {
+    setStatus(resp.status === 404
+      ? 'Model sa nenašiel — možno bolo zrušené zdieľanie súboru.'
+      : 'Model sa nepodarilo stiahnuť (chyba ' + resp.status + ').', true);
+    return;
+  }
+  const buf = new Uint8Array(await resp.arrayBuffer());
+
+  setStatus('Spracúvam model (môže trvať pri veľkých súboroch)...');
+
+  let model;
+  fragments.list.onItemSet.add(({ value: m }) => {
+    m.useCamera(world.camera.three);
+    world.scene.three.add(m.object);
+    fragments.core.update(true);
+  });
+  try {
+    model = await ifcLoader.load(buf, false, 'model');
+  } catch (e) {
+    setStatus('Model sa nepodarilo spracovať: ' + e.message, true);
+    return;
+  }
+
+  // Počkaj kým geometria dotečie z workera (asynchrónne, nezávislé od load() promise)
+  let lastCount = -1, stableRounds = 0;
+  for (let i = 0; i < 40 && stableRounds < 3; i++) {
+    await new Promise(r => setTimeout(r, 300));
+    const n = model.object.children.length;
+    if (n === lastCount) stableRounds++; else stableRounds = 0;
+    lastCount = n;
+  }
+
+  try {
+    const box = new THREE.Box3().setFromObject(model.object);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3()).length() || 20;
+    world.camera.controls.setLookAt(center.x + size, center.y + size, center.z + size, center.x, center.y, center.z);
+  } catch (e) {}
+
+  hideStatus();
+  document.getElementById('panel').style.display = '';
+
+  // Rezy
+  const clipper = components.get(OBC.Clipper);
+  clipper.enabled = true;
+  window.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.panel')) return;
+    clipper.create(world);
+  });
+  window.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') clipper.delete(world); });
+  document.getElementById('btnClearClip').onclick = () => clipper.deleteAll();
+
+  // Vrstvy (IFC kategórie)
+  try {
+    const classifier = components.get(OBC.Classifier);
+    await classifier.byCategory({ models: [model] });
+    const catMap = classifier.list.get('Categories');
+    const cats = catMap ? [...catMap.keys()].sort() : [];
+    const hider = components.get(OBC.Hider);
+    const catsEl = document.getElementById('cats');
+    for (const cat of cats) {
+      const b = document.createElement('button');
+      b.className = 'pbtn';
+      b.textContent = cat.replace(/^IFC/, '');
+      b.onclick = async () => {
+        const gd = classifier.getGroupData('Categories', cat);
+        const resolvedMap = await gd.get();
+        const vis = b.classList.contains('hidden-cat');
+        await hider.set(vis, resolvedMap);
+        b.classList.toggle('hidden-cat', !vis);
+      };
+      catsEl.appendChild(b);
+    }
+  } catch (e) {
+    // vrstvy sú len doplnková funkcia — chyba tu nesmie zhodiť celý viewer
+  }
+}
+
+main().catch(e => setStatus('Nastala neočakávaná chyba: ' + e.message, true));
+</script>
+</body>
+</html>

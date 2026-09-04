@@ -1418,6 +1418,7 @@ let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
+let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
 let gemExpandedSet = new Set(JSON.parse(localStorage.getItem('pmGemExpanded') || '[]')); // {cislo} — zhrnutie AI rozbalené (default skryté, šetrí miesto)
 let activeFaza = 'Štúdia';
@@ -2519,9 +2520,13 @@ async function syncData() {
 
     // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
     try {
-      const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url');
+      const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url,ifc_file_id,ifc_file_name');
       koordinaciaFolderMap = {};
-      (folders || []).forEach(f => { if (f.koordinacia_url) koordinaciaFolderMap[f.cislo] = f.koordinacia_url; });
+      ifcFileMap = {};
+      (folders || []).forEach(f => {
+        if (f.koordinacia_url) koordinaciaFolderMap[f.cislo] = f.koordinacia_url;
+        if (f.ifc_file_id) ifcFileMap[f.cislo] = { fileId: f.ifc_file_id, name: f.ifc_file_name };
+      });
     } catch(e) {}
 
     renderAll();
@@ -2786,6 +2791,7 @@ function renderProjects() {
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
                 display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
               ${koordIconHtml(p.cislo)}
+              ${ifcIconHtml(p.cislo)}
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -2813,6 +2819,7 @@ function renderProjects() {
             width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
             display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
           ${koordIconHtml(p.cislo)}
+          ${ifcIconHtml(p.cislo)}
           <div style="font-size:16px;color:var(--text3)">✓</div>
         </div>
         <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>`).join('')
@@ -2889,6 +2896,45 @@ async function findKoordFolder(cislo) {
   document.querySelectorAll(`#koord-${cislo}`).forEach(el => el.outerHTML = koordIconHtml(cislo));
 }
 
+function ifcIconHtml(cislo) {
+  const ifc = ifcFileMap[cislo];
+  const style = ifc ? `${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);` : KOORD_ICON_STYLE;
+  const title = ifc ? `Skopírovať link na 3D náhľad (${ifc.name})` : 'Nájsť IFC model a vytvoriť link na 3D náhľad';
+  return `<button id="ifc-${cislo}" onclick="event.stopPropagation();shareIfcLink('${cislo}')"
+    title="${title}" style="${style}">🧊</button>`;
+}
+
+async function shareIfcLink(cislo) {
+  const btn = document.getElementById(`ifc-${cislo}`);
+  if (btn) btn.style.opacity = '0.4';
+  let ifc = ifcFileMap[cislo];
+  if (!ifc) {
+    if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); if (btn) btn.style.opacity = '1'; return; }
+    try {
+      const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'findIfcFile', cislo }) });
+      const d = await r.json();
+      if (d.ok && d.fileId) {
+        ifc = { fileId: d.fileId, name: d.name };
+        ifcFileMap[cislo] = ifc;
+        sb.from('project_folders').upsert({ cislo, ifc_file_id: d.fileId, ifc_file_name: d.name, updated_at: new Date().toISOString() }).then(null, () => {});
+      } else {
+        showToast(d.error || 'IFC súbor sa nenašiel (20_KOORDINACIA/ARCHITEKTURA/*.ifc)', 'err');
+        if (btn) btn.style.opacity = '1';
+        return;
+      }
+    } catch(e) {
+      showToast('Chyba: ' + e.message, 'err');
+      if (btn) btn.style.opacity = '1';
+      return;
+    }
+  }
+  const p = projects.find(x => x.cislo === cislo);
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const link = base + 'ifc-viewer.html?fileId=' + encodeURIComponent(ifc.fileId) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo);
+  navigator.clipboard.writeText(link).then(() => showToast('Odkaz na 3D model skopírovaný'), () => showToast(link));
+  document.querySelectorAll(`#ifc-${cislo}`).forEach(el => el.outerHTML = ifcIconHtml(cislo));
+}
+
 function projRowHtml(p) {
   const gem = geminiMap[p.cislo] || '';
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
@@ -2913,6 +2959,7 @@ function projRowHtml(p) {
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
         display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
       ${koordIconHtml(p.cislo)}
+      ${ifcIconHtml(p.cislo)}
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
