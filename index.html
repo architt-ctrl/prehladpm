@@ -638,7 +638,6 @@ nav {
 /* ── PROJECT ROW NEW ── */
 .prow-wrap { position: relative; }
 .prow-podfaza { font-size: 11px; color: var(--text3); margin-bottom: 3px; }
-.prow-gemini { font-size: 11px; color: var(--text2); margin-top: 3px; font-style: italic; }
 
 /* ── PROJEKT DETAIL (inline) ── */
 .proj-detail {
@@ -2777,14 +2776,12 @@ function renderProjects() {
       ? list.map(p => {
           const fc = FAZA_COLOR[p.faza] || 'var(--text3)';
           const fazaBadge = `<span style="color:${fc};font-size:10px;font-weight:600">${p.faza}</span>`;
-          const gem = geminiMap[p.cislo] || '';
           return `<div class="prow-wrap">
             <div class="prow" onclick="toggleProjDetail('${p.cislo}',event)">
               <div class="prow-num">${p.cislo}</div>
               <div class="prow-body">
                 <div class="prow-name">${p.nazov}</div>
                 <div class="prow-podfaza">${fazaBadge}${p.podfaza ? ' · ' + p.podfaza : ''}</div>
-                ${gem ? `<div class="prow-gemini">${gem}</div>` : ''}
               </div>
               <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
@@ -2936,7 +2933,6 @@ async function shareIfcLink(cislo) {
 }
 
 function projRowHtml(p) {
-  const gem = geminiMap[p.cislo] || '';
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
   const dlStr = p.deadline ? `${p.deadline.getDate()}.${p.deadline.getMonth()+1}.` : '';
   const seenTs = pmSeenAt[p.cislo] ? new Date(pmSeenAt[p.cislo]).getTime() : null;
@@ -2951,7 +2947,6 @@ function projRowHtml(p) {
         <div class="prow-name">${p.nazov}${badges}</div>
         ${p.podpodfaza ? `<div class="prow-podfaza">${p.podfaza} › ${p.podpodfaza}</div>`
           : p.podfaza  ? `<div class="prow-podfaza">${p.podfaza}</div>` : ''}
-        ${gem ? `<div class="prow-gemini" id="gem-row-${p.cislo}">${gem}</div>` : `<div class="prow-gemini" id="gem-row-${p.cislo}" style="display:none"></div>`}
       </div>
       <div id="pd-deadline-row-${p.cislo}" class="prow-days ${dlCls}" title="${p.deadline ? 'Termín ukončenia: '+p.deadline.getDate()+'.'+(p.deadline.getMonth()+1)+'.'+p.deadline.getFullYear() : ''}">${dlStr}</div>
       <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
@@ -4845,7 +4840,6 @@ async function geminiZhrnProjekt(cislo) {
   const p = projects.find(x => x.cislo === cislo); if (!p) return;
   const btn = document.getElementById('btn-gem-' + cislo);
   const detailEl = document.getElementById('gem-detail-' + cislo);
-  const rowEl    = document.getElementById('gem-row-' + cislo);
   if (!gemExpandedSet.has(cislo)) toggleGemSummary(cislo); // nové zhrnutie sa má rovno ukázať
   if (btn) { btn.disabled = true; btn.textContent = '…'; }
   if (detailEl) detailEl.textContent = 'Gemini generuje…';
@@ -4879,7 +4873,6 @@ async function geminiZhrnProjekt(cislo) {
       geminiMap[cislo] = d.zhrnutie;
       localStorage.setItem('pmGemini', JSON.stringify(geminiMap));
       if (detailEl) { detailEl.textContent = d.zhrnutie; }
-      if (rowEl)    { rowEl.textContent = d.zhrnutie; rowEl.style.display = ''; }
     } else {
       if (detailEl) detailEl.textContent = 'Chyba: ' + (d.error||'neznáma');
     }
