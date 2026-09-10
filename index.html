@@ -2896,7 +2896,7 @@ async function findKoordFolder(cislo) {
 function ifcIconHtml(cislo) {
   const ifc = ifcFileMap[cislo];
   const style = ifc ? `${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);` : KOORD_ICON_STYLE;
-  const title = ifc ? `Overiť aktuálny IFC model a skopírovať link (${ifc.name})` : 'Nájsť IFC model a vytvoriť link na 3D náhľad';
+  const title = ifc ? `Zaevidovať aktuálny IFC model (${ifc.name}) a skopírovať stály link — po výmene súboru stačí kliknúť znova, link sa nemení` : 'Nájsť IFC model a vytvoriť stály link na 3D náhľad';
   return `<button id="ifc-${cislo}" onclick="event.stopPropagation();shareIfcLink('${cislo}')"
     title="${title}" style="${style}">🧊</button>`;
 }
@@ -2927,7 +2927,7 @@ async function shareIfcLink(cislo) {
   }
   const p = projects.find(x => x.cislo === cislo);
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
-  const link = base + 'ifc-viewer.html?fileId=' + encodeURIComponent(ifc.fileId) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo);
+  const link = base + 'ifc-viewer.html?cislo=' + encodeURIComponent(cislo) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo);
   navigator.clipboard.writeText(link).then(() => showToast('Odkaz na 3D model skopírovaný'), () => showToast(link));
   document.querySelectorAll(`#ifc-${cislo}`).forEach(el => el.outerHTML = ifcIconHtml(cislo));
 }

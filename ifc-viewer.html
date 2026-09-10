@@ -6,6 +6,7 @@
   <title>3D náhľad</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
       --bg:#f5f3ef; --bg2:#fff; --bg3:#f0ede8;
@@ -85,10 +86,14 @@
 const DRIVE_API_KEY = 'AIzaSyDx3fr6pErdbnQMgDuKIBRHHlzdEEqhAN0';
 
 const params = new URLSearchParams(location.search);
-const fileId = params.get('fileId');
+const cislo = params.get('cislo');
 const nazov = params.get('nazov') || '';
 document.getElementById('topName').textContent = nazov;
 document.title = nazov ? (nazov + ' — 3D náhľad') : '3D náhľad';
+
+const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 function setStatus(text, isError) {
   document.getElementById('statusText').textContent = text;
@@ -100,7 +105,18 @@ function setStatus(text, isError) {
 function hideStatus() { document.getElementById('status').style.display = 'none'; }
 
 async function main() {
-  if (!fileId) { setStatus('Chýba odkaz na model (fileId).', true); return; }
+  if (!cislo) { setStatus('Chýba číslo projektu v odkaze (cislo).', true); return; }
+
+  setStatus('Vyhľadávam aktuálny model...');
+  let fileId;
+  try {
+    const { data } = await sb.from('project_folders').select('ifc_file_id').eq('cislo', cislo).maybeSingle();
+    fileId = data?.ifc_file_id;
+  } catch (e) {}
+  if (!fileId) {
+    setStatus('Pre tento projekt ešte nebol nájdený žiadny IFC model — treba ho najprv nájsť v dashboarde (🧊 tlačidlo pri projekte).', true);
+    return;
+  }
 
   const THREE = await import('three');
   const OBC = await import('@thatopen/components');
