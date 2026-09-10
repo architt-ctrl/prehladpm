@@ -501,9 +501,12 @@ function akcia_findKoordinaciaFolder(req) {
 }
 
 // ── HĽADANIE IFC SÚBORU (pre IFC 3D viewer link) ──────────────────────────────
-// Nájde prvý .ifc súbor v 20_KOORDINACIA/ARCHITEKTURA daného projektu a nastaví
-// naň verejné zdieľanie "ktokoľvek s odkazom" (view), aby ho vedel prečítať
-// aj cudzí prehliadač bez prístupu do firemného Drive (cez Drive API + API kľúč).
+// Nájde najnovšie upravený .ifc súbor v 20_KOORDINACIA/ARCHITEKTURA daného projektu
+// (nie len prvý nájdený — priečinok môže mať aj staršie/nahradené súbory, ktoré Jozef
+// pri výmene modelu nemaže) a nastaví naň verejné zdieľanie "ktokoľvek s odkazom",
+// aby ho vedel prečítať aj cudzí prehliadač bez prístupu do firemného Drive
+// (cez Drive API + API kľúč). Volané VŽDY nanovo pri klikutí na 🧊 v dashboarde
+// (žiadny trvalý cache-skip) — práve preto, aby výmena súboru bola vidno hneď.
 function akcia_findIfcFile(req) {
   var cislo = String(req.cislo || '').trim();
   if (!cislo) return { ok: false, error: 'Chýba cislo' };
@@ -527,7 +530,9 @@ function akcia_findIfcFile(req) {
     var ifcFile = null;
     while (files.hasNext()) {
       var file = files.next();
-      if (file.getName().toLowerCase().indexOf('.ifc') === file.getName().length - 4) { ifcFile = file; break; }
+      if (file.getName().toLowerCase().indexOf('.ifc') === file.getName().length - 4) {
+        if (!ifcFile || file.getLastUpdated().getTime() > ifcFile.getLastUpdated().getTime()) ifcFile = file;
+      }
     }
     if (!ifcFile) return { ok: false, error: 'V ARCHITEKTURA sa nenašiel žiadny .ifc súbor' };
     ifcFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
