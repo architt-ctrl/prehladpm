@@ -183,34 +183,45 @@ async function main() {
     lastCount = n;
   }
 
-  // Jemné hranové čiary (architektonický vzhľad) — Fragments geometrie majú neštandardné
-  // atribúty, na ktorých THREE.EdgesGeometry priamo padá, preto sa stavia z holých
-  // position/index polí (pozri CLAUDE.md, sekcia IFC 3D viewer)
+  // Jemné hranové čiary, outline pre každý predmet/objem (architektonický vzhľad).
+  // DÔLEŽITÉ: nemôže sa počítať z raw mesh position/index dát — Fragments zlučuje veľa
+  // IFC položiek do jedného Mesh-u a per-položkovú transformáciu aplikuje až v custom
+  // vertex shaderi (onBeforeCompile), takže surové súradnice sú v "šablónovom" priestore
+  // pred touto transformáciou (skúšané, výsledné čiary boli viditeľne mimo modelu).
+  // Správne: model.getItemsGeometry(ids) vráti za každú položku {positions,indices,transform},
+  // transform sa aplikuje na vypočítanú EdgesGeometry priamo (nie na mesh).
   try {
-    const EDGE_DENSITY_CAP = 4000; // segmentov na mesh — nad tento počet ide o "príliš husté" (zaoblená plocha), vynechať
+    const EDGE_DENSITY_CAP = 4000; // segmentov na položku — nad tento počet ide o "príliš husté" (zaoblená plocha), vynechať
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x1a1614, transparent: true, opacity: 0.6 });
-    model.object.traverse(obj => {
-      if (!obj.isMesh || obj.isBatchedMesh) return;
-      try {
-        // Čiary ležia presne na povrchu mesh-a -> z-fighting s vlastnou plochou modelu
-        // (blikanie/miznutie podľa uhla kamery). Štandardná oprava: posunúť plochu v
-        // hĺbkovom bufferi mierne dozadu (polygonOffset), aby čiary vždy vyhrali.
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        mats.forEach(m => { if (m) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; } });
 
-        const posAttr = obj.geometry.attributes.position;
-        const cleanGeom = new THREE.BufferGeometry();
-        cleanGeom.setAttribute('position', new THREE.BufferAttribute(posAttr.array, posAttr.itemSize));
-        if (obj.geometry.index) cleanGeom.setIndex(new THREE.BufferAttribute(obj.geometry.index.array, 1));
-        // Nízky prah (1°) = obrysuje každú zmenu plochy, nielen ostré rohy — presne
-        // to Jozef chcel ("úplne každý predmet/objem"). Výnimka: veľmi husto
-        // tesselované plochy (zaoblenia/oblúky) by pri takomto prahu vyprodukovali
-        // stovky nezmyselných čiar — tie sa preskočia (EDGE_DENSITY_CAP).
-        const eg = new THREE.EdgesGeometry(cleanGeom, 1);
-        if (eg.attributes.position.count / 2 > EDGE_DENSITY_CAP) return;
-        obj.add(new THREE.LineSegments(eg, edgeMat));
-      } catch (e) {}
+    // Čiary ležia presne na povrchu -> z-fighting s vlastnou plochou modelu (blikanie/
+    // miznutie podľa uhla kamery). Štandardná oprava: posunúť plochu v hĺbkovom bufferi
+    // mierne dozadu (polygonOffset), aby čiary vždy vyhrali.
+    model.object.traverse(obj => {
+      if (!obj.isMesh) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m => { if (m) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; } });
     });
+
+    const ids = await model.getItemsIdsWithGeometry();
+    const geomMap = await model.getItemsGeometry(ids);
+    for (const localId in geomMap) {
+      for (const piece of geomMap[localId]) {
+        if (!piece.positions || !piece.indices || !piece.transform) continue;
+        try {
+          const g = new THREE.BufferGeometry();
+          g.setAttribute('position', new THREE.Float32BufferAttribute(piece.positions, 3));
+          g.setIndex(Array.from(piece.indices));
+          // Nízky prah (1°) = outline pre každú zmenu plochy, nielen ostré rohy — presne
+          // to Jozef chcel ("úplne každý predmet/objem"). Výnimka: veľmi husto tesselované
+          // plochy (zaoblenia/oblúky) by pri takomto prahu dali stovky nezmyselných čiar.
+          const eg = new THREE.EdgesGeometry(g, 1);
+          if (eg.attributes.position.count / 2 > EDGE_DENSITY_CAP) continue;
+          eg.applyMatrix4(piece.transform);
+          model.object.add(new THREE.LineSegments(eg, edgeMat));
+        } catch (e) {}
+      }
+    }
   } catch (e) {}
 
   try {
