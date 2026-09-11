@@ -2523,18 +2523,18 @@ async function toggleDohodaForm() {
 function buildDohodaFormHtml() {
   const { reqs, dohodaTasks, faza } = _dopytyCtx;
   const linkedTaskIds = new Set(reqs.map(r => r.caflou_task_id).filter(Boolean).map(Number));
-  const tasks = (dohodaTasks || []).filter(t => !linkedTaskIds.has(Number(t.id)));
-  const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  const tasks = dohodaTasks || [];
+  const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}${linkedTaskIds.has(Number(t.id)) ? ' (už má dopyt)' : ''}</option>`).join('');
   const specOptions = (specialistsList||[]).slice().sort((a,b) => a.name.localeCompare(b.name,'sk'))
     .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
 
   return `
-    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Pre úlohu dohodnutú mimo systému dopytov (napr. spred jeho zavedenia) — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky.</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Pre úlohu dohodnutú mimo systému dopytov (napr. spred jeho zavedenia) — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky. Úlohy s "(už má dopyt)" majú aj tak zmysel vybrať, ak na tej istej profesii/úlohe robí ďalší profesista.</div>
     <select id="dohoda-task" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
       <option value="">— vyber externú úlohu —</option>
       ${taskOptions}
     </select>
-    ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Žiadna voľná externá úloha (buď žiadna neexistuje, alebo už všetky majú dopyt).</div>' : ''}
+    ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Na projekte sa nenašla žiadna externá úloha.</div>' : ''}
     <select id="dohoda-spec" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
       <option value="">— vyber profesistu —</option>
       ${specOptions}
