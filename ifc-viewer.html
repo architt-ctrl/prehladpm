@@ -258,7 +258,23 @@ async function main() {
   cutLineMat.resolution.set(window.innerWidth, window.innerHeight);
   window.addEventListener('resize', () => cutLineMat.resolution.set(window.innerWidth, window.innerHeight));
 
+  // 1cm tolerancia — trojuholníky takmer v rovine rezu (napr. stena takmer rovnobežná
+  // s rovinou) sú numericky nestabilné: plávajúca čiarka spôsobí, že sa striedavo javia
+  // ako "nad"/"pod" rovinou pozdĺž celej plochy, čo vytvorí hustú čmáranicu namiesto
+  // jednej čistej čiary (nahlásené Jozefom — "hádže čiary aj tam kde nemá"). Takéto
+  // takmer-koplanárne trojuholníky sa preto rovno preskočia, žiadny rez sa pre ne nepočíta.
+  const CUT_EPS = 0.01;
   function trianglePlaneIntersect(plane, a, b, c, out) {
+    const da = plane.distanceToPoint(a);
+    const db = plane.distanceToPoint(b);
+    const dc = plane.distanceToPoint(c);
+    if (Math.abs(da) < CUT_EPS && Math.abs(db) < CUT_EPS && Math.abs(dc) < CUT_EPS) return;
+    const sa = da > CUT_EPS ? 1 : da < -CUT_EPS ? -1 : 0;
+    const sb = db > CUT_EPS ? 1 : db < -CUT_EPS ? -1 : 0;
+    const sc = dc > CUT_EPS ? 1 : dc < -CUT_EPS ? -1 : 0;
+    if (sa >= 0 && sb >= 0 && sc >= 0) return; // celý trojuholník na jednej strane (vrátane "na rovine")
+    if (sa <= 0 && sb <= 0 && sc <= 0) return;
+
     const pts = [];
     const edges = [[a,b],[b,c],[c,a]];
     for (const [p1,p2] of edges) {
