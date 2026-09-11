@@ -290,9 +290,17 @@ async function main() {
     cutLines.forEach(l => { world.scene.three.remove(l); l.geometry.dispose(); });
     cutLines = [];
     if (!itemGeomMap) return;
-    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+    // Rovina rezu je matematicky nekonečná — bez tohto obmedzenia sa cez otvorený
+    // priestor (schodisko/atrium) premietnu na to isté miesto na obrazovke aj rezy
+    // ďalšími podlažiami/stenami hlboko v budove (nahlásené Jozefom ako "čmáranica" —
+    // v skutočnosti reálne, len vzdialené a navzájom prekryté rezy). Obmedziť len na
+    // rozumnú oblasť okolo miesta, kde bol rez vytvorený.
+    const modelSize = new THREE.Box3().setFromObject(model.object).getSize(new THREE.Vector3()).length();
+    const maxCutDist = Math.max(modelSize * 0.15, 5);
+    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), centroid = new THREE.Vector3();
     for (const [, planeEntry] of clipper.list) {
       const plane = planeEntry.three;
+      const origin = planeEntry.origin;
       if (!plane) continue;
       const segs = [];
       for (const localId in itemGeomMap) {
@@ -305,6 +313,10 @@ async function main() {
             va.set(pos[ia],pos[ia+1],pos[ia+2]).applyMatrix4(m);
             vb.set(pos[ib],pos[ib+1],pos[ib+2]).applyMatrix4(m);
             vc.set(pos[ic],pos[ic+1],pos[ic+2]).applyMatrix4(m);
+            if (origin) {
+              centroid.set((va.x+vb.x+vc.x)/3, (va.y+vb.y+vc.y)/3, (va.z+vb.z+vc.z)/3);
+              if (centroid.distanceTo(origin) > maxCutDist) continue;
+            }
             trianglePlaneIntersect(plane, va, vb, vc, segs);
           }
         }
