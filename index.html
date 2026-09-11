@@ -2046,7 +2046,7 @@ async function openDopytyModal(cislo) {
   const faza = PONUKY_FAZY.includes(detectedFaza) ? detectedFaza : PONUKY_FAZY[0];
   if (!specialistsList) await loadSpecialists();
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
-  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {}, dohodaOpen: false, dohodaTasks: null };
+  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {}, dohodaOpen: false, dohodaTasks: null, editingInv: null };
   await renderDopytyModal();
 }
 
@@ -2162,7 +2162,7 @@ async function renderDopytyModal() {
     </div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleDohodaForm()">
-        <span class="pd-label" style="margin:0">+ Zapísať dohodnutú spoluprácu</span>
+        <span class="pd-label" style="margin:0">+ Priradiť dopyt k existujúcej úlohe</span>
         <span id="dohoda-arrow" style="font-size:11px;color:var(--text3)">${_dopytyCtx.dohodaOpen ? '▾' : '▸'}</span>
       </div>
       <div id="dohoda-form" style="display:${_dopytyCtx.dohodaOpen ? 'block' : 'none'};margin-top:8px">
@@ -2189,12 +2189,36 @@ function buildDopytDetailHtml(r) {
     const q = c.quotes.find(q => q.invitation_id === inv.id);
     const price = q?.prices?.[faza];
     const priceTxt = price != null ? Number(price).toLocaleString('sk-SK') + ' €' : '—';
+    const hasExpense = !!(q?.caflou_transfer_ids && Object.keys(q.caflou_transfer_ids).length);
+
+    if (inv.status === 'selected' && _dopytyCtx.editingInv === inv.id) {
+      return `<div style="padding:6px 0;font-size:12px;border-top:1px dashed var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span style="flex:1;font-weight:500">${sp?.name || '?'}</span>
+          <input type="number" id="dp-editprice-${inv.id}" class="pd-sel" style="font-size:12px;width:110px" value="${price ?? ''}" placeholder="0 €">
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);margin-bottom:6px;cursor:pointer">
+          <input type="checkbox" id="dp-editexp-${inv.id}" ${hasExpense ? 'checked' : ''} style="margin:0">
+          Aktualizovať aj výdavok v Caflou ${hasExpense ? '(zmaže starý, založí nový)' : '(založí nový)'}
+        </label>
+        <div style="display:flex;gap:8px">
+          <button onclick="saveEditDopytPrice('${inv.id}','${r.id}')" style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:12px;font-weight:600;cursor:pointer">Uložiť</button>
+          <button onclick="toggleEditDopytPrice(null,'${r.id}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;color:var(--text2)">Zrušiť</button>
+        </div>
+      </div>`;
+    }
+
     let actions = '';
     if (inv.status === 'submitted') {
-      actions = `<button onclick="selectDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:none;background:var(--green);color:#fff;cursor:pointer">Vybrať</button>
+      actions = `<label style="display:flex;align-items:center;gap:3px;font-size:10px;color:var(--text2);cursor:pointer" title="Vytvoriť výdavok v Caflou">
+          <input type="checkbox" id="dp-selexp-${inv.id}" checked style="margin:0;width:12px;height:12px">výdavok
+        </label>
+        <button onclick="selectDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:none;background:var(--green);color:#fff;cursor:pointer">Vybrať</button>
         <button onclick="withdrawDopytQuote('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Stiahnuť</button>`;
     } else if (inv.status === 'selected') {
       actions = `<span style="font-size:11px;color:var(--green);font-weight:600">✓ vybraný</span>
+        ${hasExpense ? '<span style="font-size:12px" title="Výdavok zapísaný v Caflou">💶</span>' : ''}
+        <button onclick="toggleEditDopytPrice('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Upraviť cenu</button>
         <button onclick="cancelDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Zrušiť</button>`;
     } else if (inv.status === 'rejected') {
       actions = `<span style="font-size:11px;color:var(--text3)">neúspešný</span>`;
@@ -2243,6 +2267,7 @@ function buildDopytDetailHtml(r) {
 }
 
 async function selectDopytWinner(invId, reqId) {
+  const makeExpense = document.getElementById('dp-selexp-' + invId)?.checked;
   const c = await loadDopytInvitations(reqId);
   await Promise.all(c.invs.map(i =>
     sb.from('invitations').update({ status: i.id === invId ? 'selected' : 'rejected' }).eq('id', i.id)
@@ -2262,7 +2287,7 @@ async function selectDopytWinner(invId, reqId) {
       updated_at: new Date().toISOString(),
     }).then(null, () => {});
   }
-  if (req?.caflou_task_id && sp) {
+  if (makeExpense && req?.caflou_task_id && sp) {
     const q = c.quotes.find(qq => qq.invitation_id === invId);
     const phaseEntries = Object.entries(q?.prices || {}).filter(([, v]) => Number(v) > 0);
     if (phaseEntries.length) {
@@ -2318,6 +2343,25 @@ async function createCaflouExpense(taskId, companyId, amount, description) {
   } catch(e) { return null; }
 }
 
+async function deleteCaflouExpense(transferId) {
+  if (!cfg.caflou_key || !transferId) return false;
+  try {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/transfers/${transferId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    return r.ok;
+  } catch(e) { return false; }
+}
+
+// Zmaže všetky Caflou výdavky naviazané na quote (naprieč fázami) a vráti počet zmazaných.
+async function deleteCaflouExpensesForQuote(q) {
+  const ids = Object.values(q?.caflou_transfer_ids || {}).filter(Boolean);
+  let ok = 0;
+  for (const id of ids) { if (await deleteCaflouExpense(id)) ok++; }
+  return ok;
+}
+
 async function withdrawDopytQuote(invId, reqId) {
   if (!confirm('Stiahnuť ponuku? Ceny sa zmažú a stav sa vráti na Odoslané.')) return;
   await sb.from('quotes').delete().eq('invitation_id', invId);
@@ -2326,13 +2370,58 @@ async function withdrawDopytQuote(invId, reqId) {
 }
 
 async function cancelDopytWinner(invId, reqId) {
-  if (!confirm('Zrušiť výber? Všetci profesisti sa vrátia na stav Ponuka.')) return;
   const c = await loadDopytInvitations(reqId);
+  const q = c.quotes.find(qq => qq.invitation_id === invId);
+  const hasExpense = !!(q?.caflou_transfer_ids && Object.keys(q.caflou_transfer_ids).length);
+  if (!confirm(`Zrušiť výber? Všetci profesisti sa vrátia na stav Ponuka.${hasExpense ? ' Zmaže sa aj naviazaný výdavok v Caflou.' : ''}`)) return;
+  if (hasExpense) {
+    const n = await deleteCaflouExpensesForQuote(q);
+    sb.from('quotes').update({ caflou_transfer_ids: {} }).eq('id', q.id).then(null, () => {});
+    showToast(`Zmazaných výdavkov: ${n}`, n ? 'ok' : 'err');
+  }
   const toRevert = c.invs.filter(i => ['selected','rejected'].includes(i.status));
   await Promise.all(toRevert.map(i => sb.from('invitations').update({ status: 'submitted' }).eq('id', i.id)));
   const req = _dopytyCtx.reqs.find(r => r.id === reqId);
   if (req?.caflou_task_id) sb.from('task_specialists').delete().eq('task_id', req.caflou_task_id).then(null, () => {});
   if (req) { await sb.from('requests').update({ status: 'active' }).eq('id', reqId); req.status = 'active'; }
+  await refreshDopytRow(reqId);
+}
+
+async function toggleEditDopytPrice(invId, reqId) {
+  _dopytyCtx.editingInv = invId;
+  await refreshDopytRow(reqId);
+}
+
+async function saveEditDopytPrice(invId, reqId) {
+  const faza = _dopytyCtx.faza;
+  const v = document.getElementById('dp-editprice-' + invId)?.value;
+  const updateExpense = document.getElementById('dp-editexp-' + invId)?.checked;
+  const newPrice = (v !== '' && v != null) ? Number(v) : null;
+
+  const c = await loadDopytInvitations(reqId);
+  const q = c.quotes.find(qq => qq.invitation_id === invId);
+  if (!q) { showToast('Ponuka sa nenašla', 'err'); return; }
+  const prices = { ...(q.prices || {}) };
+  if (newPrice != null) prices[faza] = newPrice; else delete prices[faza];
+
+  if (updateExpense) {
+    await deleteCaflouExpensesForQuote(q);
+    const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+    const inv = c.invs.find(i => i.id === invId);
+    const sp = (specialistsList||[]).find(s => s.id === inv?.specialist_id);
+    let newTransferId = null;
+    if (req?.caflou_task_id && sp?.caflou_company_id && newPrice > 0) {
+      newTransferId = await createCaflouExpense(req.caflou_task_id, sp.caflou_company_id, newPrice, `${sp.name} – ${req.profession || ''} – ${faza}`);
+    }
+    const transferIds = newTransferId ? { [faza]: newTransferId } : {};
+    await sb.from('quotes').update({ prices, caflou_transfer_ids: transferIds }).eq('id', q.id);
+    showToast(newTransferId ? 'Cena aj výdavok aktualizované ✓' : 'Cena aktualizovaná, výdavok sa nevytvoril', newTransferId ? 'ok' : 'err');
+  } else {
+    await sb.from('quotes').update({ prices }).eq('id', q.id);
+    showToast('Cena aktualizovaná ✓', 'ok');
+  }
+
+  _dopytyCtx.editingInv = null;
   await refreshDopytRow(reqId);
 }
 
@@ -2404,8 +2493,11 @@ async function saveManualPonuka(reqId) {
 }
 
 async function deleteDopyt(reqId) {
-  if (!confirm('Vymazať dopyt aj so všetkými ponukami?')) return;
   const c = await loadDopytInvitations(reqId);
+  const transferIds = c.quotes.flatMap(q => Object.values(q.caflou_transfer_ids || {})).filter(Boolean);
+  if (!confirm(`Vymazať dopyt aj so všetkými ponukami?${transferIds.length ? ` Zmažú sa aj ${transferIds.length} naviazané výdavky v Caflou.` : ''}`)) return;
+  let expDeleted = 0;
+  for (const tid of transferIds) { if (await deleteCaflouExpense(tid)) expDeleted++; }
   const invIds = c.invs.map(i => i.id);
   if (invIds.length) await sb.from('quotes').delete().in('invitation_id', invIds);
   await sb.from('invitations').delete().eq('request_id', reqId);
@@ -2414,7 +2506,7 @@ async function deleteDopyt(reqId) {
   invalidateDopytInv(reqId);
   _dopytyCtx.open.delete(reqId);
   await renderDopytyModal();
-  showToast('Dopyt vymazaný', 'ok');
+  showToast(transferIds.length ? `Dopyt vymazaný, výdavkov zmazaných: ${expDeleted}/${transferIds.length}` : 'Dopyt vymazaný', 'ok');
 }
 
 function toggleDopytProf(prof, checked) {
@@ -2449,6 +2541,28 @@ async function getKoordinaciaFolderUrl(cislo) {
   return null;
 }
 
+// Vytvorí externú Caflou úlohu (tag 'ext' + fáza-tag podľa aktuálneho stavu projektu) a vráti jej id, alebo null pri zlyhaní.
+async function createExtCaflouTask(p, name, fazaTag) {
+  if (!p?.caflou_id || !cfg.caflou_key) return null;
+  try {
+    const tags = ['ext', fazaTag].filter(Boolean);
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: {
+        name, project_id: p.caflou_id,
+        task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
+        tags,
+      }})
+    });
+    if (!r.ok) return null;
+    const rd = await r.json();
+    const newId = rd.result?.id ?? rd.id ?? null;
+    if (newId) p.caflou_task_ids = [...(p.caflou_task_ids || []), newId];
+    return newId;
+  } catch(e) { return null; }
+}
+
 async function saveDopytyBatch() {
   const { cislo, faza, newProfs } = _dopytyCtx;
   const customEl = document.getElementById('dopyt-custom-prof');
@@ -2461,20 +2575,29 @@ async function saveDopytyBatch() {
   const podkladyDatum = document.getElementById('dopyt-podklady-datum').value || null;
   const hotovoDatum = p.deadline ? new Date(p.deadline.getTime() - 10*86400000).toISOString().split('T')[0] : null;
   const folderUrl = await getKoordinaciaFolderUrl(cislo);
+  const fazaTag = CAFLOU_STATUS_TO_FAZA_TAG[p.caflou_status] || null;
 
-  const rows = profs.map(prof => ({
-    project_cislo: cislo,
-    project_name: p.nazov,
-    profession: prof,
-    phases: [faza],
-    current_phase: faza,
-    folder_url: folderUrl,
-    podklady_datum: podkladyDatum,
-    hotovo_datum: hotovoDatum,
-    status: 'active',
-  }));
+  let tasksCreated = 0;
+  const rows = [];
+  for (const prof of profs) {
+    const taskId = await createExtCaflouTask(p, prof, fazaTag);
+    if (taskId) tasksCreated++;
+    rows.push({
+      project_cislo: cislo,
+      project_name: p.nazov,
+      profession: prof,
+      phases: [faza],
+      current_phase: faza,
+      folder_url: folderUrl,
+      podklady_datum: podkladyDatum,
+      hotovo_datum: hotovoDatum,
+      status: 'active',
+      caflou_task_id: taskId,
+    });
+  }
   const { error } = await sb.from('requests').insert(rows);
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  if (tasksCreated) delete caflouTasksCache[cislo];
 
   // Zosúladiť podklady_datum vo VŠETKÝCH dopytoch tejto fázy (aj už existujúcich, nielen novovytvorených)
   if (podkladyDatum) {
@@ -2483,7 +2606,7 @@ async function saveDopytyBatch() {
       .then(null, () => {});
   }
 
-  showToast(`Vytvorených ${profs.length} dopytov ✓`, 'ok');
+  showToast(`Vytvorených ${profs.length} dopytov${tasksCreated < profs.length ? ` (Caflou úloha sa vytvorila pri ${tasksCreated}/${profs.length})` : ''} ✓`, 'ok');
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
   _dopytyCtx.reqs = reqs || [];
   _dopytyCtx.newProfs = new Set();
@@ -2523,18 +2646,18 @@ async function toggleDohodaForm() {
 function buildDohodaFormHtml() {
   const { reqs, dohodaTasks, faza } = _dopytyCtx;
   const linkedTaskIds = new Set(reqs.map(r => r.caflou_task_id).filter(Boolean).map(Number));
-  const tasks = dohodaTasks || [];
-  const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}${linkedTaskIds.has(Number(t.id)) ? ' (už má dopyt)' : ''}</option>`).join('');
+  const tasks = (dohodaTasks || []).filter(t => !linkedTaskIds.has(Number(t.id)));
+  const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
   const specOptions = (specialistsList||[]).slice().sort((a,b) => a.name.localeCompare(b.name,'sk'))
     .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
 
   return `
-    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Pre úlohu dohodnutú mimo systému dopytov (napr. spred jeho zavedenia) — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky. Úlohy s "(už má dopyt)" majú aj tak zmysel vybrať, ak na tej istej profesii/úlohe robí ďalší profesista.</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Priradí dopyt k existujúcej Caflou úlohe, ktorá ešte žiadny nemá — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky.</div>
     <select id="dohoda-task" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
       <option value="">— vyber externú úlohu —</option>
       ${taskOptions}
     </select>
-    ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Na projekte sa nenašla žiadna externá úloha.</div>' : ''}
+    ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Žiadna voľná externá úloha (buď žiadna neexistuje, alebo už všetky majú dopyt).</div>' : ''}
     <select id="dohoda-spec" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
       <option value="">— vyber profesistu —</option>
       ${specOptions}
@@ -4011,10 +4134,12 @@ async function createDopytFromTask(cislo, taskId) {
   const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
   const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
   const profession = uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '';
+  const detected = projFazaKod(p);
+  const faza = PONUKY_FAZY.includes(detected) ? detected : PONUKY_FAZY[0];
   try {
     const { error } = await sb.from('requests').insert({
       project_cislo: p.cislo, project_name: p.nazov,
-      profession, phases: [], notes: t.name, status: 'active',
+      profession, phases: [faza], current_phase: faza, notes: t.name, status: 'active',
       caflou_task_id: taskId,
     });
     if (error) throw new Error(error.message);
@@ -4028,10 +4153,12 @@ async function bulkCreateDopyty(cislo) {
   const p = projects.find(x => x.cislo === cislo); if (!p) return;
   const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
   const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
+  const detected = projFazaKod(p);
+  const faza = PONUKY_FAZY.includes(detected) ? detected : PONUKY_FAZY[0];
   const rows = tasks.filter(t => selSet.has(t.id)).map(t => ({
     project_cislo: p.cislo, project_name: p.nazov,
     profession: uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '',
-    phases: [], notes: t.name, status: 'active',
+    phases: [faza], current_phase: faza, notes: t.name, status: 'active',
     caflou_task_id: t.id,
   }));
   try {
