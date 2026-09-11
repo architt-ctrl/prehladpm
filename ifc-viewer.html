@@ -187,10 +187,16 @@ async function main() {
   // atribúty, na ktorých THREE.EdgesGeometry priamo padá, preto sa stavia z holých
   // position/index polí (pozri CLAUDE.md, sekcia IFC 3D viewer)
   try {
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x2c2825, transparent: true, opacity: 0.35 });
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x1a1614, transparent: true, opacity: 0.6 });
     model.object.traverse(obj => {
       if (!obj.isMesh || obj.isBatchedMesh) return;
       try {
+        // Čiary ležia presne na povrchu mesh-a -> z-fighting s vlastnou plochou modelu
+        // (blikanie/miznutie podľa uhla kamery). Štandardná oprava: posunúť plochu v
+        // hĺbkovom bufferi mierne dozadu (polygonOffset), aby čiary vždy vyhrali.
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach(m => { if (m) { m.polygonOffset = true; m.polygonOffsetFactor = 1; m.polygonOffsetUnits = 1; } });
+
         const posAttr = obj.geometry.attributes.position;
         const cleanGeom = new THREE.BufferGeometry();
         cleanGeom.setAttribute('position', new THREE.BufferAttribute(posAttr.array, posAttr.itemSize));
