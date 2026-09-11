@@ -78,7 +78,12 @@
     "camera-controls": "https://cdn.jsdelivr.net/npm/camera-controls@3.1.2/+esm",
     "web-ifc": "https://cdn.jsdelivr.net/npm/web-ifc@0.0.77/+esm",
     "@thatopen/fragments": "https://cdn.jsdelivr.net/npm/@thatopen/fragments@3.4.7/+esm",
-    "@thatopen/components": "https://cdn.jsdelivr.net/npm/@thatopen/components@3.4.8/+esm"
+    "@thatopen/components": "https://cdn.jsdelivr.net/npm/@thatopen/components@3.4.8/+esm",
+    "three/addons/lines/Line2.js": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/lines/Line2.js",
+    "three/addons/lines/LineGeometry.js": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/lines/LineGeometry.js",
+    "three/addons/lines/LineMaterial.js": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/lines/LineMaterial.js",
+    "three/addons/lines/LineSegments2.js": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/lines/LineSegments2.js",
+    "three/addons/lines/LineSegmentsGeometry.js": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/lines/LineSegmentsGeometry.js"
   }
 }
 </script>
@@ -183,6 +188,8 @@ async function main() {
     lastCount = n;
   }
 
+  let itemGeomMap = null; // {localId: [{positions,indices,transform,...}]} — zdieľané medzi hranami a rezovou čiarou
+
   // Jemné hranové čiary, outline pre každý predmet/objem (architektonický vzhľad).
   // DÔLEŽITÉ: nemôže sa počítať z raw mesh position/index dát — Fragments zlučuje veľa
   // IFC položiek do jedného Mesh-u a per-položkovú transformáciu aplikuje až v custom
@@ -205,6 +212,7 @@ async function main() {
 
     const ids = await model.getItemsIdsWithGeometry();
     const geomMap = await model.getItemsGeometry(ids);
+    itemGeomMap = geomMap;
     for (const localId in geomMap) {
       for (const piece of geomMap[localId]) {
         if (!piece.positions || !piece.indices || !piece.transform) continue;
@@ -237,12 +245,73 @@ async function main() {
   // Rezy
   const clipper = components.get(OBC.Clipper);
   clipper.enabled = true;
-  window.addEventListener('dblclick', (e) => {
+
+  // Hrubá rezová čiara (architektonický štandard — miesto, kde rovina reže konštrukciu,
+  // má mať výraznú, hrubú čiaru, nie len "dieru"). Clipper sám o sebe žiadnu takú
+  // funkciu nemá (len WebGL clippingPlanes), preto sa prienik roviny s modelom počíta
+  // ručne z rovnakých per-položkových dát ako hranové čiary (itemGeomMap).
+  let cutLines = [];
+  const { Line2 } = await import('three/addons/lines/Line2.js');
+  const { LineGeometry } = await import('three/addons/lines/LineGeometry.js');
+  const { LineMaterial } = await import('three/addons/lines/LineMaterial.js');
+  const cutLineMat = new LineMaterial({ color: 0x000000, linewidth: 3, worldUnits: false });
+  cutLineMat.resolution.set(window.innerWidth, window.innerHeight);
+  window.addEventListener('resize', () => cutLineMat.resolution.set(window.innerWidth, window.innerHeight));
+
+  function trianglePlaneIntersect(plane, a, b, c, out) {
+    const pts = [];
+    const edges = [[a,b],[b,c],[c,a]];
+    for (const [p1,p2] of edges) {
+      const pt = new THREE.Vector3();
+      if (plane.intersectLine(new THREE.Line3(p1,p2), pt)) {
+        if (!pts.some(e => e.distanceToSquared(pt) < 1e-8)) pts.push(pt.clone());
+      }
+    }
+    if (pts.length === 2) { out.push(pts[0].x,pts[0].y,pts[0].z, pts[1].x,pts[1].y,pts[1].z); }
+  }
+
+  function refreshCutLines() {
+    cutLines.forEach(l => { world.scene.three.remove(l); l.geometry.dispose(); });
+    cutLines = [];
+    if (!itemGeomMap) return;
+    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+    for (const [, planeEntry] of clipper.list) {
+      const plane = planeEntry.three;
+      if (!plane) continue;
+      const segs = [];
+      for (const localId in itemGeomMap) {
+        for (const piece of itemGeomMap[localId]) {
+          if (!piece.positions || !piece.indices || !piece.transform) continue;
+          const pos = piece.positions, idx = piece.indices;
+          const m = piece.transform;
+          for (let i = 0; i < idx.length; i += 3) {
+            const ia = idx[i]*3, ib = idx[i+1]*3, ic = idx[i+2]*3;
+            va.set(pos[ia],pos[ia+1],pos[ia+2]).applyMatrix4(m);
+            vb.set(pos[ib],pos[ib+1],pos[ib+2]).applyMatrix4(m);
+            vc.set(pos[ic],pos[ic+1],pos[ic+2]).applyMatrix4(m);
+            trianglePlaneIntersect(plane, va, vb, vc, segs);
+          }
+        }
+      }
+      if (segs.length) {
+        const lg = new LineGeometry();
+        lg.setPositions(segs);
+        const line = new Line2(lg, cutLineMat);
+        world.scene.three.add(line);
+        cutLines.push(line);
+      }
+    }
+  }
+
+  window.addEventListener('dblclick', async (e) => {
     if (e.target.closest('.panel')) return;
-    clipper.create(world);
+    const plane = await clipper.create(world);
+    if (plane) { plane.onDraggingEnded?.add(refreshCutLines); refreshCutLines(); }
   });
-  window.addEventListener('keydown', (e) => { if (e.key === 'Delete' || e.key === 'Backspace') clipper.delete(world); });
-  document.getElementById('btnClearClip').onclick = () => clipper.deleteAll();
+  window.addEventListener('keydown', async (e) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') { await clipper.delete(world); refreshCutLines(); }
+  });
+  document.getElementById('btnClearClip').onclick = () => { clipper.deleteAll(); refreshCutLines(); };
 
   // Vrstvy (IFC kategórie)
   try {
