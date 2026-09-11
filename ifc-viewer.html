@@ -187,6 +187,7 @@ async function main() {
   // atribúty, na ktorých THREE.EdgesGeometry priamo padá, preto sa stavia z holých
   // position/index polí (pozri CLAUDE.md, sekcia IFC 3D viewer)
   try {
+    const EDGE_DENSITY_CAP = 4000; // segmentov na mesh — nad tento počet ide o "príliš husté" (zaoblená plocha), vynechať
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x1a1614, transparent: true, opacity: 0.6 });
     model.object.traverse(obj => {
       if (!obj.isMesh || obj.isBatchedMesh) return;
@@ -201,7 +202,13 @@ async function main() {
         const cleanGeom = new THREE.BufferGeometry();
         cleanGeom.setAttribute('position', new THREE.BufferAttribute(posAttr.array, posAttr.itemSize));
         if (obj.geometry.index) cleanGeom.setIndex(new THREE.BufferAttribute(obj.geometry.index.array, 1));
-        obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(cleanGeom, 25), edgeMat));
+        // Nízky prah (1°) = obrysuje každú zmenu plochy, nielen ostré rohy — presne
+        // to Jozef chcel ("úplne každý predmet/objem"). Výnimka: veľmi husto
+        // tesselované plochy (zaoblenia/oblúky) by pri takomto prahu vyprodukovali
+        // stovky nezmyselných čiar — tie sa preskočia (EDGE_DENSITY_CAP).
+        const eg = new THREE.EdgesGeometry(cleanGeom, 1);
+        if (eg.attributes.position.count / 2 > EDGE_DENSITY_CAP) return;
+        obj.add(new THREE.LineSegments(eg, edgeMat));
       } catch (e) {}
     });
   } catch (e) {}
