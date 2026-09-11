@@ -183,6 +183,23 @@ async function main() {
     lastCount = n;
   }
 
+  // Jemné hranové čiary (architektonický vzhľad) — Fragments geometrie majú neštandardné
+  // atribúty, na ktorých THREE.EdgesGeometry priamo padá, preto sa stavia z holých
+  // position/index polí (pozri CLAUDE.md, sekcia IFC 3D viewer)
+  try {
+    const edgeMat = new THREE.LineBasicMaterial({ color: 0x2c2825, transparent: true, opacity: 0.35 });
+    model.object.traverse(obj => {
+      if (!obj.isMesh || obj.isBatchedMesh) return;
+      try {
+        const posAttr = obj.geometry.attributes.position;
+        const cleanGeom = new THREE.BufferGeometry();
+        cleanGeom.setAttribute('position', new THREE.BufferAttribute(posAttr.array, posAttr.itemSize));
+        if (obj.geometry.index) cleanGeom.setIndex(new THREE.BufferAttribute(obj.geometry.index.array, 1));
+        obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(cleanGeom, 25), edgeMat));
+      } catch (e) {}
+    });
+  } catch (e) {}
+
   try {
     const box = new THREE.Box3().setFromObject(model.object);
     const center = box.getCenter(new THREE.Vector3());
