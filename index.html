@@ -2046,7 +2046,7 @@ async function openDopytyModal(cislo) {
   const faza = PONUKY_FAZY.includes(detectedFaza) ? detectedFaza : PONUKY_FAZY[0];
   if (!specialistsList) await loadSpecialists();
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
-  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {} };
+  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {}, dohodaOpen: false, dohodaTasks: null };
   await renderDopytyModal();
 }
 
@@ -2159,6 +2159,15 @@ async function renderDopytyModal() {
         <input id="dopyt-podklady-datum" type="date" class="pd-sel" style="font-size:12px" value="${harmDate || todayStr}">
       </div>
       <button onclick="saveDopytyBatch()" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">Vytvoriť dopyty</button>
+    </div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleDohodaForm()">
+        <span class="pd-label" style="margin:0">+ Zapísať dohodnutú spoluprácu</span>
+        <span id="dohoda-arrow" style="font-size:11px;color:var(--text3)">${_dopytyCtx.dohodaOpen ? '▾' : '▸'}</span>
+      </div>
+      <div id="dohoda-form" style="display:${_dopytyCtx.dohodaOpen ? 'block' : 'none'};margin-top:8px">
+        ${_dopytyCtx.dohodaOpen ? buildDohodaFormHtml() : ''}
+      </div>
     </div>`;
 
   fazaReqs.forEach(async r => {
@@ -2215,15 +2224,19 @@ function buildDopytDetailHtml(r) {
   return `
     ${rows}
     <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
-      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">+ Zadať ponuku ručne (napr. z mailu)</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:4px">+ Zapísať dohodnuté ručne (napr. cena prišla mailom)</div>
       <select id="dp-spec-${r.id}" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
         <option value="">— vyber profesistu —</option>
         ${specOptions}
       </select>
       ${priceInputs}
       <input id="dp-note-${r.id}" class="pd-sel" placeholder="Poznámka…" style="font-size:12px;width:100%;margin:4px 0">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);margin:6px 0;cursor:pointer">
+        <input type="checkbox" id="dp-mkexp-${r.id}" checked style="margin:0">
+        Vytvoriť výdavok v Caflou
+      </label>
       <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
-        <button onclick="saveManualPonuka('${r.id}')" style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Uložiť ponuku</button>
+        <button onclick="saveManualPonuka('${r.id}')" style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Zapísať ako dohodnuté</button>
         <button onclick="deleteDopyt('${r.id}')" style="margin-left:auto;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">✕ Vymazať dopyt</button>
       </div>
     </div>`;
@@ -2323,6 +2336,9 @@ async function cancelDopytWinner(invId, reqId) {
   await refreshDopytRow(reqId);
 }
 
+// Manuálne zadanie = vždy priamo dohodnuté (rovnaký princíp ako "Zapísať dohodnutú spoluprácu"),
+// nie medzikrok "submitted" čakajúci na samostatné kliknutie Vybrať. task_specialists sa zapíše
+// vždy, Caflou výdavok len ak je zaškrtnuté (default zapnuté — bežný prípad je aktívny dopyt).
 async function saveManualPonuka(reqId) {
   const faza = _dopytyCtx.faza;
   const specId = document.getElementById('dp-spec-' + reqId)?.value;
@@ -2331,16 +2347,60 @@ async function saveManualPonuka(reqId) {
   const v = document.getElementById('dp-price-' + reqId)?.value;
   if (v !== '' && v != null) prices[faza] = Number(v);
   const notes = document.getElementById('dp-note-' + reqId)?.value.trim() || null;
+  const makeExpense = document.getElementById('dp-mkexp-' + reqId)?.checked;
+
+  const c = await loadDopytInvitations(reqId);
+  await Promise.all(c.invs.map(i => sb.from('invitations').update({ status: 'rejected' }).eq('id', i.id)));
 
   const { data: inv, error: invErr } = await sb.from('invitations')
-    .insert({ request_id: reqId, specialist_id: specId, status: 'submitted' })
+    .insert({ request_id: reqId, specialist_id: specId, status: 'selected' })
     .select('id').single();
   if (invErr) { showToast('Chyba: ' + invErr.message, 'err'); return; }
-  const { error: qErr } = await sb.from('quotes').insert({ invitation_id: inv.id, prices, notes, submitted_at: new Date().toISOString() });
+  const { data: q, error: qErr } = await sb.from('quotes')
+    .insert({ invitation_id: inv.id, prices, notes, submitted_at: new Date().toISOString() })
+    .select('id').single();
   if (qErr) { showToast('Chyba: ' + qErr.message, 'err'); return; }
 
+  await sb.from('requests').update({ status: 'closed' }).eq('id', reqId);
+  const req = _dopytyCtx.reqs.find(r => r.id === reqId);
+  if (req) req.status = 'closed';
+
+  const sp = (specialistsList||[]).find(s => s.id === specId);
+  if (req?.caflou_task_id && sp?.name) {
+    sb.from('task_specialists').upsert({
+      task_id: req.caflou_task_id,
+      task_name: req.notes || req.profession,
+      project_cislo: req.project_cislo,
+      specialist_name: sp.name,
+      updated_at: new Date().toISOString(),
+    }).then(null, () => {});
+  }
+  if (makeExpense && req?.caflou_task_id && sp) {
+    const phaseEntries = Object.entries(prices).filter(([, v]) => Number(v) > 0);
+    if (phaseEntries.length) {
+      if (sp.caflou_company_id) {
+        (async () => {
+          const transferIds = {};
+          for (const [phase, amount] of phaseEntries) {
+            const transferId = await createCaflouExpense(req.caflou_task_id, sp.caflou_company_id, Number(amount), `${sp.name} – ${req.profession || ''} – ${phase}`);
+            if (transferId) transferIds[phase] = transferId;
+          }
+          const okCount = Object.keys(transferIds).length;
+          if (okCount) {
+            showToast(`Zapísaných výdavkov do Caflou: ${okCount}/${phaseEntries.length}`, okCount === phaseEntries.length ? 'ok' : 'err');
+            sb.from('quotes').update({ caflou_transfer_ids: transferIds }).eq('id', q.id).then(null, () => {});
+          } else {
+            showToast('Zápis výdavkov do Caflou zlyhal', 'err');
+          }
+        })();
+      } else {
+        showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v ponuky.html', 'err');
+      }
+    }
+  }
+
   await refreshDopytRow(reqId);
-  showToast('Ponuka uložená ✓', 'ok');
+  showToast('Zapísané ako dohodnuté ✓', 'ok');
 }
 
 async function deleteDopyt(reqId) {
@@ -2428,6 +2488,146 @@ async function saveDopytyBatch() {
   _dopytyCtx.reqs = reqs || [];
   _dopytyCtx.newProfs = new Set();
   await renderDopytyModal();
+}
+
+// ── Dohodnutá spolupráca (retroaktívny zápis pre úlohy spred systému dopytov) ──
+async function loadExtTasksForDohoda(cislo) {
+  if (caflouTasksCache[cislo]) return caflouTasksCache[cislo].filter(t => (t.tags||[]).includes('ext'));
+  const p = projects.find(x => x.cislo === cislo);
+  if (!p?.caflou_id) return [];
+  const taskIdSet = new Set((p.caflou_task_ids || []).map(Number));
+  let all = [], page = 1, tp = 1;
+  try {
+    while (page <= tp) {
+      const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${p.caflou_id}&per=100&page=${page}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+      const d = await r.json();
+      if (d.error) break;
+      all = all.concat((d.results || []).filter(t => taskIdSet.has(Number(t.id))));
+      if (taskIdSet.size > 0 && all.length >= taskIdSet.size) break;
+      tp = d.total_pages || 1;
+      page++;
+    }
+  } catch(e) {}
+  return all.filter(t => (t.tags||[]).includes('ext'));
+}
+
+async function toggleDohodaForm() {
+  _dopytyCtx.dohodaOpen = !_dopytyCtx.dohodaOpen;
+  if (_dopytyCtx.dohodaOpen && !_dopytyCtx.dohodaTasks) {
+    _dopytyCtx.dohodaTasks = await loadExtTasksForDohoda(_dopytyCtx.cislo);
+  }
+  await renderDopytyModal();
+}
+
+function buildDohodaFormHtml() {
+  const { reqs, dohodaTasks, faza } = _dopytyCtx;
+  const linkedTaskIds = new Set(reqs.map(r => r.caflou_task_id).filter(Boolean).map(Number));
+  const tasks = (dohodaTasks || []).filter(t => !linkedTaskIds.has(Number(t.id)));
+  const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+  const specOptions = (specialistsList||[]).slice().sort((a,b) => a.name.localeCompare(b.name,'sk'))
+    .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
+
+  return `
+    <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Pre úlohu dohodnutú mimo systému dopytov (napr. spred jeho zavedenia) — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky.</div>
+    <select id="dohoda-task" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
+      <option value="">— vyber externú úlohu —</option>
+      ${taskOptions}
+    </select>
+    ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Žiadna voľná externá úloha (buď žiadna neexistuje, alebo už všetky majú dopyt).</div>' : ''}
+    <select id="dohoda-spec" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
+      <option value="">— vyber profesistu —</option>
+      ${specOptions}
+    </select>
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <label style="font-size:11px;color:var(--text2);min-width:70px">${PONUKY_FAZA_LABEL[faza] || faza}</label>
+      <input type="number" id="dohoda-price" class="pd-sel" style="font-size:12px;width:110px" placeholder="0 €">
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);margin-bottom:8px;cursor:pointer">
+      <input type="checkbox" id="dohoda-mkexp" style="margin:0">
+      Vytvoriť výdavok v Caflou
+    </label>
+    <button onclick="saveDohodaSprac()" style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">Zapísať ako dohodnuté</button>`;
+}
+
+async function saveDohodaSprac() {
+  const { cislo, faza } = _dopytyCtx;
+  const taskId = document.getElementById('dohoda-task')?.value;
+  const specId = document.getElementById('dohoda-spec')?.value;
+  const priceV = document.getElementById('dohoda-price')?.value;
+  const makeExpense = document.getElementById('dohoda-mkexp')?.checked;
+  if (!taskId) { showToast('Vyber úlohu', 'err'); return; }
+  if (!specId) { showToast('Vyber profesistu', 'err'); return; }
+
+  const p = projects.find(x => x.cislo === cislo);
+  const sp = (specialistsList||[]).find(s => s.id === specId);
+  const task = (_dopytyCtx.dohodaTasks||[]).find(t => String(t.id) === String(taskId));
+  const profession = (sp?.profession || '').split(',')[0].trim() || task?.name || '—';
+  const folderUrl = await getKoordinaciaFolderUrl(cislo);
+
+  const { data: req, error: reqErr } = await sb.from('requests').insert({
+    project_cislo: cislo,
+    project_name: p?.nazov,
+    profession,
+    phases: [faza],
+    current_phase: faza,
+    caflou_task_id: Number(taskId),
+    folder_url: folderUrl,
+    status: 'closed',
+  }).select('*').single();
+  if (reqErr) { showToast('Chyba: ' + reqErr.message, 'err'); return; }
+
+  const { data: inv, error: invErr } = await sb.from('invitations')
+    .insert({ request_id: req.id, specialist_id: specId, status: 'selected' })
+    .select('id').single();
+  if (invErr) { showToast('Chyba: ' + invErr.message, 'err'); return; }
+
+  const prices = {};
+  if (priceV !== '' && priceV != null) prices[faza] = Number(priceV);
+  const { data: q, error: qErr } = await sb.from('quotes')
+    .insert({ invitation_id: inv.id, prices, submitted_at: new Date().toISOString() })
+    .select('id').single();
+  if (qErr) { showToast('Chyba: ' + qErr.message, 'err'); return; }
+
+  if (sp?.name) {
+    sb.from('task_specialists').upsert({
+      task_id: Number(taskId),
+      task_name: profession,
+      project_cislo: cislo,
+      specialist_name: sp.name,
+      updated_at: new Date().toISOString(),
+    }).then(null, () => {});
+  }
+
+  if (makeExpense && sp) {
+    const phaseEntries = Object.entries(prices).filter(([, v]) => Number(v) > 0);
+    if (phaseEntries.length) {
+      if (sp.caflou_company_id) {
+        (async () => {
+          const transferIds = {};
+          for (const [phase, amount] of phaseEntries) {
+            const transferId = await createCaflouExpense(Number(taskId), sp.caflou_company_id, Number(amount), `${sp.name} – ${profession} – ${phase}`);
+            if (transferId) transferIds[phase] = transferId;
+          }
+          const okCount = Object.keys(transferIds).length;
+          if (okCount) {
+            showToast(`Zapísaných výdavkov do Caflou: ${okCount}/${phaseEntries.length}`, okCount === phaseEntries.length ? 'ok' : 'err');
+            sb.from('quotes').update({ caflou_transfer_ids: transferIds }).eq('id', q.id).then(null, () => {});
+          } else {
+            showToast('Zápis výdavkov do Caflou zlyhal', 'err');
+          }
+        })();
+      } else {
+        showToast('Profesista nemá priradenú Caflou firmu — výdavok sa nezapísal, priraď ju v ponuky.html', 'err');
+      }
+    }
+  }
+
+  _dopytyCtx.reqs.unshift(req);
+  _dopytyCtx.dohodaOpen = false;
+  _dopytyCtx.dohodaTasks = null;
+  await renderDopytyModal();
+  showToast('Dohodnutá spolupráca zapísaná ✓', 'ok');
 }
 
 // ── SYNC ──────────────────────────────────────────────────────────────────
