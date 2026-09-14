@@ -284,6 +284,7 @@ function doPost(e) {
     else if (req.action === 'sendOfficialMail')   resp = akcia_sendOfficialMail(req);
     else if (req.action === 'findKoordinaciaFolder') resp = akcia_findKoordinaciaFolder(req);
     else if (req.action === 'findIfcFile')        resp = akcia_findIfcFile(req);
+    else if (req.action === 'findProjectFolderName') resp = akcia_findProjectFolderName(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -495,6 +496,30 @@ function akcia_findKoordinaciaFolder(req) {
     if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
     var kFolder = ki.next();
     return { ok: true, url: 'https://drive.google.com/drive/folders/' + kFolder.getId() };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── PRESNÝ NÁZOV PROJEKTOVÉHO PRIEČINKA (pre kopírovanie cesty do schránky) ────
+// search-ms: (Windows Search) nevie indexovať Google Drive Stream virtuálny disk H:
+// principiálne (potvrdené — H: sa nedá pridať ani cez Indexing Options), takže
+// jediná spoľahlivá cesta je dať Jozefovi presnú cestu na ručné vloženie.
+function akcia_findProjectFolderName(req) {
+  var cislo = String(req.cislo || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  var m = cislo.match(/^(\d{2})-(\d{3})$/);
+  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var fi = root.getFolders();
+    var projFolder = null;
+    while (fi.hasNext()) {
+      var f = fi.next();
+      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
+    }
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    return { ok: true, name: projFolder.getName() };
   } catch(e) {
     return { ok: false, error: e.message };
   }

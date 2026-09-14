@@ -411,11 +411,17 @@ Tlačidlo **„📨 Dopyty"** pri projekte (vedľa „📋 Šablóna") → `open
 
 Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlíšiteľné (všetky "Prehľad"). `toggleProjDetail(cislo)` preto pri otvorení detailu nastaví `document.title = p.nazov`; pri zatvorení sa vráti na `DEFAULT_TITLE` (pôvodný `<title>`, zachytený raz pri načítaní skriptu) — alebo na názov iného projektu, ak ostal otvorený iný `.proj-detail.open`.
 
-### Odkaz na projektový priečinok (📁, 2026-07-20)
+### Odkaz na projektový priečinok (📁, 2026-07-20, prerobené 2026-09-14)
 
-Tlačidlo 📁 pri každom projekte otvára priečinok projektu v reálnom Windows Prieskumníku. `folderSearchLink(cislo)` vracia `search-ms:` URI (`query=<cislo>&crumb=location:H:\Spoločné disky\1_PROJEKTY`), nie priamy `file://` odkaz — presný názov priečinka na disku sa môže líšiť od Caflou (rovnaký dôvod, prečo `sync-fazy.ps1` hľadá priečinky prefix-regexom, nie presnou zhodou), a `file://` linky z `https://` stránky navyše prehliadač spoľahlivo neotvára v Exploreri. `search-ms` funguje len ak má Windows Search zaindexovaný daný H: disk (Indexing Options).
+**Pôvodné riešenie (`search-ms:` URI otvárajúce Windows Search) bolo nefunkčné a je odstránené.** Dôvod (potvrdené 2026-08-31 Jozefom — "otvorí Explorer ale nič nenájde", diagnostikované 2026-09-14): `H:\Spoločné disky\...` je Google Drive for Desktop mount v "Stream" režime — virtuálny súborový systém bez lokálneho change journalu, ktorý Windows Search **principiálne** nevie indexovať. Overené priamo: PowerShell dopyt cez `Search.CollatorDSO` (ADODB) na daný path vrátil 0 výsledkov; registry `HKLM:\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` nikdy neobsahoval H:; v Indexing Options (`control.exe /name Microsoft.IndexingOptions`) sa H: nedá pridať ako zdroj vôbec (len C: a D: sú ponúkané) — nie je to teda otázka konfigurácie, len permanentné obmedzenie Drive Stream disku.
 
-**Nefunkčné v praxi (2026-08-31, potvrdené Jozefom — "otvorí Explorer ale nič nenájde"):** `H:\Spoločné disky\...` je Google Drive for Desktop mount v "Stream" režime — virtuálny súborový systém bez lokálneho change journalu, ktorý Windows Search principiálne nevie indexovať (nie je to len otázka zapnutia v Indexing Options). `search-ms` preto pri tomto disku dlhodobo nemôže fungovať. Zatiaľ sa nerieši (Jozef: "nechaj to tak") — vyriešiteľná alternatíva (Drive web link namiesto lokálneho Explorera, rovnaký princíp ako "Odkaz na priečinok s podkladmi" nižšie, keďže `akcia_findKoordinaciaFolder` už cestou k `20_KOORDINACIA` nájde aj koreňový priečinok projektu) je premyslená, ale zámerne neimplementovaná — čaká na Jozefov súhlas.
+**Zvažovaná alternatíva (Drive web link, rovnaký princíp ako 🔗 nižšie) bola zamietnutá** — Jozef potrebuje reálnu lokálnu cestu, aby vedel projekt otvoriť priamo v Autodesk desktopových aplikáciách (AutoCAD, Revit), čo webový Drive link neumožňuje.
+
+**Finálne riešenie — kopírovanie presnej cesty priečinka do schránky:** klik na 📁 skopíruje `H:\Spoločné disky\1_PROJEKTY\{presný názov priečinka}` do schránky (`navigator.clipboard.writeText`) — Jozef si ju vloží do Prieskumníka/Autodesk aplikácie sám (Ctrl+V), obchádza tak nefunkčné vyhľadávanie úplne.
+
+- `projectFolderNameMap` — `{cislo: presný_názov_priečinka}`, bulk-loadovaná v `syncData()` z `project_folders.folder_name` (tá istá cache tabuľka ako 🔗/🧊)
+- `folderPathIconHtml(cislo)` / `copyProjectFolderPath(cislo)` — rovnaký vzor ako `koordIconHtml`/`findKoordFolder`: ak je meno v cache → modré 📁 tlačidlo, klik rovno kopíruje; inak sivé 📁, prvý klik zavolá Apps Script akciu `findProjectFolderName` (`akcia_findProjectFolderName`, `Code.gs`, vzor `akcia_findKoordinaciaFolder` — prefix-zhoda `20YY-NNN` na priamych potomkoch `1_PROJEKTY`), výsledok sa uloží do `project_folders.folder_name` a rovno skopíruje. SQL: `supabase/project-folder-name-setup.sql`
+- `PROJECTS_LOCAL_ROOT = 'H:\\Spoločné disky\\1_PROJEKTY\\'` — konštanta v `index.html`
 
 **Šablóna riadku projektu existuje na 3 miestach** (`projRowHtml`, výsledky vyhľadávania a Archív v `renderProjects()`) — akúkoľvek zmenu tlačidiel v riadku (📁, ✎...) treba spraviť na všetkých troch, inak zmizne len v niektorých pohľadoch (stalo sa pri prvom pridaní 📁 — chýbalo vo vyhľadávaní aj Archíve).
 
@@ -1012,3 +1018,20 @@ Jozef si postupným, viackolovým dopĺňaním (nie naraz — po malých krokoch
 **Riziko, na ktoré Claude upozornil:** ak investor schválenie kľúčových podkladov naťahuje/odflákne, presúva sa tým rovnaký problém (čakanie na investora) len o krok skôr v procese. Aby to nefungovalo kontraproduktívne, schválenie by malo byť rýchle a ľahké (napr. jeden mail/podpis k pár bodom), nie ďalší byrokratický krok.
 
 **Stav:** len nápad na premyslenie, čaká sa na rozhodnutie šéfa. Nerozhodnuté: či/ako by sa toto premietlo do dashboardu (nový krok/checklist pri spúšťaní Dopytov?), akou formou by prebiehalo schválenie, ako presne by sa definovalo čo je "podstatné"/"kľúčové".
+
+---
+
+## NÁPAD: Živý stromový tracker priebehu projekcie (2026-09-11, smer pre budúcu session)
+
+Po dokončení procesnej mapy "Priebeh projekcie" (vyššie) Jozef vyjadril, že by ju chcel použiť ako **základ pre skutočnú funkciu v dashboarde**, nie len ako referenčný dokument — sledovanie, kde sa konkrétny projekt nachádza a čo ešte treba urobiť.
+
+**Prvý návrh (Claude) — šablóna úloh:** premeniť kroky z Priebehu projekcie na `task_templates` (existujúci mechanizmus, "📋 Šablóna"), aplikovať na projekt pri štarte Projekcie, sledovať cez bežné Caflou úlohy. **Jozef to zamietol** — plochý zoznam úloh len presúva strážene na neho, nerieši to, že podmienené vetvy (napr. plyn len ~5 % projektov) a závislosti (vytýčenie čaká na zakreslenie) by aj tak musel riešiť ručne pri každom projekte. Poučenie: šablóna/checklist nie je automatizácia, len iné miesto na to isté ručné sledovanie — pri hodnotení podobných nápadov do budúcna na toto pamätať.
+
+**Jozefova skutočná vízia:** **živý stromový/vetvený pohľad na projekt** — vizuálne rovnaká štruktúra ako schémy v artefakte "Priebeh projekcie" (vetvy HGP/IGP, plyn, voda, elektrina, rozhodovací strom HGP...), ale naviazaná na reálny stav konkrétneho projektu:
+- **Vyfarbené/zvýraznené**, čím už projekt prešiel (dokončené kroky)
+- **Vetvy, ktoré rozhodnutie už vylúčilo, sa z pohľadu vypustia/zjednodušia** — napr. keď sa nepripája na plyn, celá tá vetva zmizne namiesto toho aby visela ako nerozhodnutá; keď HGP ukáže "dobré podložie", zvyšné dva scenáre rozhodovacieho stromu (slabé vsakovanie / nemožné) sa už nezobrazujú
+- Strom **sa sám prispôsobuje** podľa toho, čím si projekt už prešiel — nie je to statický checklist, ale odvodený pohľad
+
+**Aby toto fungovalo bez toho, aby si to Jozef musel sám ručne udržiavať**, stav krokov by sa mal **odvodzovať z dát, ktoré už v systéme vznikajú** (dokončená Caflou úloha, vybraný víťaz v Dopytoch, vyplnený dátum), nie z novej samostatnej evidencie, ktorú by bolo treba paralelne aktualizovať. Podmienené vetvy (plyn áno/nie a pod.) by stačilo vyriešiť jedným prepínačom nastaveným raz na projekte, nie priebežným sledovaním.
+
+**Rozsah práce:** nový dátový model mapujúci kroky z Priebehu projekcie na reálne Caflou/Dopyty dianie, plus stromové/vetvené UI (podobné schémam v artefakte, ale interaktívne a naviazané na dáta) — výrazne väčší kus práce než šablóna úloh. **Nič nie je rozhodnuté ani rozbehnuté** — čaká sa na ďalšiu session, kde sa má spraviť poriadne scopovanie (dátový model, čo presne sledovať ako prvé, ako riešiť podmienené vetvy).

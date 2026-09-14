@@ -1418,6 +1418,7 @@ let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponu
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
+let projectFolderNameMap = {};   // {cislo: presný názov priečinka na Drive} — pre kopírovanie lokálnej cesty (search-ms nefunguje)
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
 let gemExpandedSet = new Set(JSON.parse(localStorage.getItem('pmGemExpanded') || '[]')); // {cislo} — zhrnutie AI rozbalené (default skryté, šetrí miesto)
 let activeFaza = 'Štúdia';
@@ -2842,12 +2843,14 @@ async function syncData() {
 
     // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
     try {
-      const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url,ifc_file_id,ifc_file_name');
+      const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url,ifc_file_id,ifc_file_name,folder_name');
       koordinaciaFolderMap = {};
       ifcFileMap = {};
+      projectFolderNameMap = {};
       (folders || []).forEach(f => {
         if (f.koordinacia_url) koordinaciaFolderMap[f.cislo] = f.koordinacia_url;
         if (f.ifc_file_id) ifcFileMap[f.cislo] = { fileId: f.ifc_file_id, name: f.ifc_file_name };
+        if (f.folder_name) projectFolderNameMap[f.cislo] = f.folder_name;
       });
     } catch(e) {}
 
@@ -3106,10 +3109,7 @@ function renderProjects() {
                 <div class="prow-name">${p.nazov}</div>
                 <div class="prow-podfaza">${fazaBadge}${p.podfaza ? ' · ' + p.podfaza : ''}</div>
               </div>
-              <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
-                style="background:none;border:1px solid var(--border);border-radius:5px;
-                width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
-                display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+              ${folderPathIconHtml(p.cislo)}
               ${koordIconHtml(p.cislo)}
               ${ifcIconHtml(p.cislo)}
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
@@ -3134,10 +3134,7 @@ function renderProjects() {
             <div class="prow-name">${p.nazov}</div>
             ${p.projektant?`<div class="prow-podfaza">${p.projektant}</div>`:''}
           </div>
-          <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
-            style="background:none;border:1px solid var(--border);border-radius:5px;
-            width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
-            display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+          ${folderPathIconHtml(p.cislo)}
           ${koordIconHtml(p.cislo)}
           ${ifcIconHtml(p.cislo)}
           <div style="font-size:16px;color:var(--text3)">✓</div>
@@ -3181,11 +3178,6 @@ function renderProjects() {
 
 function emptyHtml(msg) {
   return `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>${msg}</div>`;
-}
-
-function folderSearchLink(cislo) {
-  const loc = 'H:\\Spoločné disky\\1_PROJEKTY';
-  return `search-ms:query=${encodeURIComponent(cislo)}&crumb=location:${encodeURIComponent(loc)}`;
 }
 
 const KOORD_ICON_STYLE = `background:none;border:1px solid var(--border);border-radius:5px;
@@ -3255,6 +3247,45 @@ async function shareIfcLink(cislo) {
   document.querySelectorAll(`#ifc-${cislo}`).forEach(el => el.outerHTML = ifcIconHtml(cislo));
 }
 
+const PROJECTS_LOCAL_ROOT = 'H:\\Spoločné disky\\1_PROJEKTY\\';
+
+function folderPathIconHtml(cislo) {
+  const name = projectFolderNameMap[cislo];
+  const style = name ? `${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);` : KOORD_ICON_STYLE;
+  const title = name ? `Skopírovať cestu k priečinku projektu\n${PROJECTS_LOCAL_ROOT}${name}` : 'Nájsť priečinok projektu a skopírovať jeho cestu';
+  return `<button id="fpath-${cislo}" onclick="event.stopPropagation();copyProjectFolderPath('${cislo}')"
+    title="${title}" style="${style}">📁</button>`;
+}
+
+async function copyProjectFolderPath(cislo) {
+  const btn = document.getElementById(`fpath-${cislo}`);
+  if (btn) btn.style.opacity = '0.4';
+  let name = projectFolderNameMap[cislo];
+  if (!name) {
+    if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); if (btn) btn.style.opacity = '1'; return; }
+    try {
+      const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'findProjectFolderName', cislo }) });
+      const d = await r.json();
+      if (d.ok && d.name) {
+        name = d.name;
+        projectFolderNameMap[cislo] = name;
+        sb.from('project_folders').upsert({ cislo, folder_name: name, updated_at: new Date().toISOString() }).then(null, () => {});
+      } else {
+        showToast(d.error || 'Priečinok projektu sa nenašiel', 'err');
+        if (btn) btn.style.opacity = '1';
+        return;
+      }
+    } catch(e) {
+      showToast('Chyba: ' + e.message, 'err');
+      if (btn) btn.style.opacity = '1';
+      return;
+    }
+  }
+  const path = PROJECTS_LOCAL_ROOT + name;
+  navigator.clipboard.writeText(path).then(() => showToast('Cesta k priečinku skopírovaná'), () => showToast(path));
+  document.querySelectorAll(`#fpath-${cislo}`).forEach(el => el.outerHTML = folderPathIconHtml(cislo));
+}
+
 function projRowHtml(p) {
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
   const dlStr = p.deadline ? `${p.deadline.getDate()}.${p.deadline.getMonth()+1}.` : '';
@@ -3272,10 +3303,7 @@ function projRowHtml(p) {
           : p.podfaza  ? `<div class="prow-podfaza">${p.podfaza}</div>` : ''}
       </div>
       <div id="pd-deadline-row-${p.cislo}" class="prow-days ${dlCls}" title="${p.deadline ? 'Termín ukončenia: '+p.deadline.getDate()+'.'+(p.deadline.getMonth()+1)+'.'+p.deadline.getFullYear() : ''}">${dlStr}</div>
-      <a href="${folderSearchLink(p.cislo)}" onclick="event.stopPropagation()" title="Otvoriť priečinok v Prieskumníku"
-        style="background:none;border:1px solid var(--border);border-radius:5px;
-        width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
-        display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none;">📁</a>
+      ${folderPathIconHtml(p.cislo)}
       ${koordIconHtml(p.cislo)}
       ${ifcIconHtml(p.cislo)}
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
