@@ -2640,8 +2640,39 @@ async function toggleDohodaForm() {
   _dopytyCtx.dohodaOpen = !_dopytyCtx.dohodaOpen;
   if (_dopytyCtx.dohodaOpen && !_dopytyCtx.dohodaTasks) {
     _dopytyCtx.dohodaTasks = await loadExtTasksForDohoda(_dopytyCtx.cislo);
+    try {
+      const { data: ts } = await sb.from('task_specialists').select('task_id,specialist_name').eq('project_cislo', _dopytyCtx.cislo);
+      (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
+    } catch(e) {}
   }
   await renderDopytyModal();
+}
+
+// Ak má vybraná úloha už zaznamenaného profesistu (task_specialists/extSpecOverride),
+// dropdown sa obmedzí len naňho — nedáva zmysel dohodnutú spoluprácu zapísať na niekoho iného.
+function dohodaAssignedSpecId(taskId) {
+  const task = (_dopytyCtx.dohodaTasks||[]).find(t => String(t.id) === String(taskId));
+  const specName = extSpecOverride[String(taskId)] || '';
+  if (!specName || !task) return null;
+  const sp = (specialistsList||[]).find(s => s.name === specName);
+  return sp ? sp.id : null;
+}
+
+function dohodaSpecSelectHtml(taskId) {
+  if (!taskId) return `<option value="">— najprv vyber úlohu —</option>`;
+  const assignedId = dohodaAssignedSpecId(taskId);
+  if (assignedId) {
+    const sp = (specialistsList||[]).find(s => s.id === assignedId);
+    return `<option value="${assignedId}">${sp.name}${sp.profession ? ' – ' + sp.profession : ''} (už priradený k úlohe)</option>`;
+  }
+  const allOptions = (specialistsList||[]).slice().sort((a,b) => a.name.localeCompare(b.name,'sk'))
+    .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
+  return `<option value="">— vyber profesistu —</option>${allOptions}`;
+}
+
+function updateDohodaSpecSelect(taskId) {
+  const sel = document.getElementById('dohoda-spec');
+  if (sel) sel.innerHTML = dohodaSpecSelectHtml(taskId);
 }
 
 function buildDohodaFormHtml() {
@@ -2649,19 +2680,16 @@ function buildDohodaFormHtml() {
   const linkedTaskIds = new Set(reqs.map(r => r.caflou_task_id).filter(Boolean).map(Number));
   const tasks = (dohodaTasks || []).filter(t => !linkedTaskIds.has(Number(t.id)));
   const taskOptions = tasks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-  const specOptions = (specialistsList||[]).slice().sort((a,b) => a.name.localeCompare(b.name,'sk'))
-    .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
 
   return `
     <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Priradí dopyt k existujúcej Caflou úlohe, ktorá ešte žiadny nemá — zapíše sa rovno ako vybraný víťaz, bez podávania ponuky.</div>
-    <select id="dohoda-task" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
+    <select id="dohoda-task" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px" onchange="updateDohodaSpecSelect(this.value)">
       <option value="">— vyber externú úlohu —</option>
       ${taskOptions}
     </select>
     ${!tasks.length ? '<div style="font-size:11px;color:var(--text3);margin:-2px 0 6px">Žiadna voľná externá úloha (buď žiadna neexistuje, alebo už všetky majú dopyt).</div>' : ''}
     <select id="dohoda-spec" class="pd-sel" style="font-size:12px;width:100%;margin-bottom:6px">
-      <option value="">— vyber profesistu —</option>
-      ${specOptions}
+      ${dohodaSpecSelectHtml('')}
     </select>
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
       <label style="font-size:11px;color:var(--text2);min-width:70px">${PONUKY_FAZA_LABEL[faza] || faza}</label>
