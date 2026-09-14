@@ -3215,8 +3215,9 @@ const KOORD_ICON_STYLE = `background:none;border:1px solid var(--border);border-
 function koordIconHtml(cislo) {
   const url = koordinaciaFolderMap[cislo];
   if (url) {
-    return `<a id="koord-${cislo}" href="${url}" target="_blank" onclick="event.stopPropagation()"
-      title="Otvoriť podklady na Drive (20_KOORDINACIA)"
+    return `<a id="koord-${cislo}" href="${url}" target="_blank"
+      onclick="event.stopPropagation();navigator.clipboard.writeText('${url}').then(()=>showToast('Odkaz na podklady skopírovaný'),()=>{});"
+      title="Otvoriť podklady na Drive (20_KOORDINACIA) — klik aj skopíruje odkaz do schránky na poslanie profesistovi"
       style="${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);">🔗</a>`;
   }
   return `<button id="koord-${cislo}" onclick="event.stopPropagation();findKoordFolder('${cislo}')"
