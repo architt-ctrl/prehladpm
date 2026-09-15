@@ -1282,7 +1282,7 @@ nav {
     <h3>Zápisky</h3>
     <div style="display:flex;gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);flex-wrap:wrap">
       <div class="proj-search-wrap" style="flex:1;min-width:140px">
-        <input type="text" id="chronoProjQ" class="dennik-input" placeholder="Projekt (filter + cieľ zápisu)…" autocomplete="off"
+        <input type="text" id="chronoProjQ" class="dennik-input" placeholder="Projekt (voliteľné) – filter + cieľ zápisu…" autocomplete="off"
           oninput="onChronoProjQ()" style="width:100%;box-sizing:border-box">
         <div class="proj-dropdown" id="chronoProjDrop"></div>
       </div>
@@ -3671,8 +3671,8 @@ function renderChronoEntry(e) {
       <div${clickAttr}>
         <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:2px">
           <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.datum}</span>
-          <span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>
-          <span style="font-size:13px;font-weight:600;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
+          ${e.cislo ? `<span style="font-size:10px;color:var(--text3);flex-shrink:0">${e.cislo}</span>` : ''}
+          <span style="font-size:13px;font-weight:600;color:${e.cislo ? 'var(--text)' : 'var(--text3)'};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1${strike}">${e.projName}</span>
           ${badge}
         </div>
         <div style="font-size:12px;color:var(--text);line-height:1.4${strike}">${e.text}</div>
@@ -3687,12 +3687,12 @@ function buildChronoContent() {
   const entries = [];
   Object.entries(dennikMap).forEach(([cislo, items]) => {
     if (filterCislo && cislo !== filterCislo) return;
-    const proj = projects.find(p => p.cislo === cislo);
+    const proj = cislo ? projects.find(p => p.cislo === cislo) : null;
     (items || []).forEach(e => {
       if (e.parent_id) return; // odpovede sa zobrazujú vnorené pod rodičom, nie ako samostatný riadok
       entries.push({
         type: 'dennik', cislo, id: e.id, done: !!e.done, today: !!e.today,
-        projName: proj ? proj.nazov : cislo,
+        projName: cislo ? (proj ? proj.nazov : cislo) : 'Bez projektu',
         datum: e.datum, text: e.text,
         ts: e.created_at ? new Date(e.created_at).getTime() : 0
       });
@@ -3736,10 +3736,10 @@ function buildChronoContent() {
 }
 
 async function chronoAddDennik() {
-  const cislo = document.getElementById('chronoProjVal').value;
+  const cislo = document.getElementById('chronoProjVal').value || ''; // '' = zápis bez projektu
   const textEl = document.getElementById('chronoAddText');
   const text = textEl.value.trim();
-  if (!cislo || !text) { if (!cislo) showToast('Vyber projekt', 'err'); return; }
+  if (!text) return;
   if (!dennikMap[cislo]) dennikMap[cislo] = [];
   const now = new Date();
   const datum = `${now.getDate()}.${now.getMonth()+1}.${now.getFullYear()}`;

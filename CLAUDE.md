@@ -249,6 +249,8 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 
 **Podvlákno v Zápiskoch:** rovnaké správanie ako v detaile projektu (klik na text zápisu rozbaľuje/zbaľuje, posledné 3 odpovede vždy viditeľné) — zdieľa `dennikThreadOpen` Set aj `buildDennikThreadPreviewHtml`/`buildDennikRepliesHtml` s `buildDennikListHtml`, keďže obe miesta čítajú ten istý `dennikMap`.
 
+**Zápis bez projektu (2026-09-15):** `chronoAddDennik()` už nevyžaduje vybraný projekt — prázdny `#chronoProjVal` znamená všeobecnú poznámku, uloží sa do `dennikMap['']` (prázdny reťazec ako kľúč, nie `null` — `dennik.cislo` má v Supabase `NOT NULL` constraint, overené priamym test-insertom). V `buildChronoContent()`/`renderChronoEntry` sa takýto záznam zobrazí s `projName:'Bez projektu'` a bez cislo-odznaku. Caflou-backup zápis (`caflouAddComment`) sa preň automaticky vynechá — `projects.find(x => x.cislo === '')` nikdy nič nenájde. **Tieto záznamy sa zobrazujú len v globálnom Zápisky modáli** (keď nie je aktívny filter na konkrétny projekt), nie v detaile žiadneho projektu — `buildDennikListHtml(cislo)` sa volá vždy s konkrétnym `cislo`, nikdy s `''`.
+
 ### Gemini integration
 
 `geminiZhrnVsetky()` calls Apps Script (`cfg.url`) action `zhrniProjekt` for each visible project. Result stored in `geminiMap`. Ak sú pre projekt načítané úlohy v `caflouTasksCache`, zahrnie aj posledné 3 poznámky každej externej úlohy (rovnako ako `geminiZhrnProjekt`).
