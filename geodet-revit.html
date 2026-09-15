@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geodet → Revit</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --card: #ffffff; --border: #e2ddd3; --text: #2c2825; --text2: #6b6459;
+    --text3: #9a9186; --blue: #2563eb; --blue-bg: #eff4ff; --green: #1a7a3c; --red: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text2); font-size: 13px; margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  .drop {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 32px 20px; text-align: center;
+    cursor: pointer; transition: .15s; color: var(--text2); font-size: 14px;
+  }
+  .drop.over { border-color: var(--blue); background: var(--blue-bg); color: var(--blue); }
+  .drop b { color: var(--text); }
+  input[type=file] { display: none; }
+  .row { display: flex; align-items: center; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+  label.opt { display: flex; align-items: center; gap: 7px; font-size: 13px; cursor: pointer; user-select: none; }
+  select { font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: #fff; }
+  .stat { font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+  .stat b { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  th, td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--text2); font-weight: 600; text-align: right; }
+  td:first-child, th:first-child { text-align: left; }
+  .col-drop { color: var(--text3); text-decoration: line-through; }
+  .col-keep { color: var(--text); }
+  .warn { color: var(--red); font-size: 12px; margin-top: 8px; }
+  .btn { background: var(--text); color: #fff; border: none; border-radius: 7px; padding: 9px 18px; font-size: 13px;
+    font-weight: 600; cursor: pointer; }
+  .btn:disabled { background: var(--text3); cursor: default; }
+  .btn-ghost { background: none; border: 1px solid var(--border); border-radius: 7px; padding: 9px 16px; font-size: 13px;
+    cursor: pointer; color: var(--text2); }
+  .toast { font-size: 12px; color: var(--green); margin-left: 10px; }
+  .offset-box { background: var(--blue-bg); border: 1px solid #c7d9fb; border-radius: 8px; padding: 10px 14px;
+    font-size: 12px; color: var(--text2); margin-top: 10px; display: none; }
+  .offset-box b { color: var(--text); font-family: monospace; }
+  code { background: #f0ede6; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Geodet → Revit</h1>
+  <p class="sub">Prevod TXT zoznamu bodov od geodeta (číslo, Y, X, Z, kód) na formát, ktorý vie priamo načítať Revit (Toposurface → Create from Import → Specify Points File).</p>
+
+  <div class="card">
+    <div class="drop" id="drop">
+      Pretiahni sem TXT súbor, alebo <b>klikni a vyber</b>
+      <input type="file" id="file" accept=".txt,.csv">
+    </div>
+  </div>
+
+  <div class="card" id="settingsCard" style="display:none">
+    <div class="row">
+      <label class="opt"><input type="checkbox" id="swapYX" checked> Prehodiť Y ↔ X (slovenský geodetický zápis je Y,X — Revit očakáva X,Y)</label>
+    </div>
+    <div class="row">
+      <label class="opt">Oddeľovač vo výstupe:
+        <select id="outSep">
+          <option value=",">čiarka ( , )</option>
+          <option value=" ">medzera</option>
+          <option value="\t">tabulátor</option>
+        </select>
+      </label>
+      <label class="opt">Desatinné miesta: <select id="decimals"><option value="3" selected>3</option><option value="2">2</option><option value="4">4</option></select></label>
+    </div>
+    <div class="row">
+      <label class="opt"><input type="checkbox" id="useOffset"> Posunúť súradnice bližšie k nule (odporúčané pri veľkých S-JTSK číslach)</label>
+    </div>
+    <div class="offset-box" id="offsetBox"></div>
+  </div>
+
+  <div class="card" id="previewCard" style="display:none">
+    <div class="stat" id="stat"></div>
+    <div id="warnBox"></div>
+    <div style="overflow-x:auto">
+      <table id="previewTable"></table>
+    </div>
+  </div>
+
+  <div class="card" id="actionCard" style="display:none">
+    <button class="btn" id="downloadBtn">Stiahnuť súbor pre Revit</button>
+    <button class="btn-ghost" id="resetBtn">Nahrať iný súbor</button>
+    <span class="toast" id="toast"></span>
+  </div>
+</div>
+
+<script>
+let points = []; // {cislo, y, x, z, kod}
+let fileBaseName = 'body';
+
+const dropEl = document.getElementById('drop');
+const fileEl = document.getElementById('file');
+
+dropEl.addEventListener('click', () => fileEl.click());
+dropEl.addEventListener('dragover', e => { e.preventDefault(); dropEl.classList.add('over'); });
+dropEl.addEventListener('dragleave', () => dropEl.classList.remove('over'));
+dropEl.addEventListener('drop', e => {
+  e.preventDefault(); dropEl.classList.remove('over');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileEl.addEventListener('change', () => { if (fileEl.files.length) handleFile(fileEl.files[0]); });
+
+function handleFile(file) {
+  fileBaseName = file.name.replace(/\.[^.]+$/, '');
+  const reader = new FileReader();
+  reader.onload = e => parseText(e.target.result);
+  reader.readAsText(file, 'utf-8');
+}
+
+function parseText(text) {
+  const lines = text.split(/\r?\n/);
+  points = [];
+  let skipped = 0;
+  lines.forEach(line => {
+    const t = line.trim();
+    if (!t) return;
+    const tokens = t.split(/[\s,;]+/).filter(Boolean);
+    if (tokens.length < 4) { skipped++; return; }
+    const y = parseFloat(tokens[1].replace(',', '.'));
+    const x = parseFloat(tokens[2].replace(',', '.'));
+    const z = parseFloat(tokens[3].replace(',', '.'));
+    if (isNaN(y) || isNaN(x) || isNaN(z)) { skipped++; return; }
+    points.push({ cislo: tokens[0], y, x, z, kod: tokens.slice(4).join(' ') || '' });
+  });
+
+  document.getElementById('settingsCard').style.display = 'block';
+  document.getElementById('previewCard').style.display = 'block';
+  document.getElementById('actionCard').style.display = 'block';
+
+  document.getElementById('stat').innerHTML =
+    `<b>${points.length}</b> bodov načítaných` + (skipped ? `, <span style="color:var(--red)">${skipped} riadkov preskočených</span> (nerozpoznaný formát)` : '');
+
+  computeOffset();
+  render();
+}
+
+function computeOffset() {
+  if (!points.length) return;
+  const minX = Math.min(...points.map(p => p.x));
+  const minY = Math.min(...points.map(p => p.y));
+  const offX = Math.floor(minX / 100) * 100;
+  const offY = Math.floor(minY / 100) * 100;
+  document.getElementById('offsetBox').innerHTML =
+    `Posun, ktorý sa odčíta od všetkých bodov: <b>X −${offX}</b>, <b>Y −${offY}</b><br>
+     Tento posun (offset) si pozname — v Reviteste ho nastavíš na Survey Point / Shared Coordinates, aby model sedel na skutočnú polohu.`;
+  computeOffset._x = offX; computeOffset._y = offY;
+}
+
+function render() {
+  const swap = document.getElementById('swapYX').checked;
+  const useOffset = document.getElementById('useOffset').checked;
+  document.getElementById('offsetBox').style.display = useOffset ? 'block' : 'none';
+  const dec = parseInt(document.getElementById('decimals').value, 10);
+  const offX = useOffset ? computeOffset._x : 0;
+  const offY = useOffset ? computeOffset._y : 0;
+
+  const head = swap
+    ? `<tr><th>č. bodu</th><th>Y (pôvodné)</th><th>X (pôvodné)</th><th>Z</th><th>kód</th><th>→ Revit X</th><th>→ Revit Y</th><th>→ Revit Z</th></tr>`
+    : `<tr><th>č. bodu</th><th>Y</th><th>X</th><th>Z</th><th>kód</th><th>→ Revit X</th><th>→ Revit Y</th><th>→ Revit Z</th></tr>`;
+
+  const rows = points.slice(0, 12).map(p => {
+    const rx = (swap ? p.x : p.y) - offX;
+    const ry = (swap ? p.y : p.x) - offY;
+    const rz = p.z;
+    return `<tr>
+      <td class="col-drop">${p.cislo}</td>
+      <td class="col-drop">${p.y.toFixed(dec)}</td>
+      <td class="col-drop">${p.x.toFixed(dec)}</td>
+      <td class="col-keep">${p.z.toFixed(dec)}</td>
+      <td class="col-drop">${p.kod}</td>
+      <td class="col-keep"><b>${rx.toFixed(dec)}</b></td>
+      <td class="col-keep"><b>${ry.toFixed(dec)}</b></td>
+      <td class="col-keep"><b>${rz.toFixed(dec)}</b></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('previewTable').innerHTML = head + rows +
+    (points.length > 12 ? `<tr><td colspan="8" style="text-align:center;color:var(--text3);padding-top:8px">… a ďalších ${points.length - 12} bodov</td></tr>` : '');
+}
+
+document.getElementById('swapYX').addEventListener('change', render);
+document.getElementById('useOffset').addEventListener('change', render);
+document.getElementById('decimals').addEventListener('change', render);
+document.getElementById('outSep').addEventListener('change', render);
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  if (!points.length) return;
+  const swap = document.getElementById('swapYX').checked;
+  const useOffset = document.getElementById('useOffset').checked;
+  const dec = parseInt(document.getElementById('decimals').value, 10);
+  const sep = document.getElementById('outSep').value === '\\t' ? '\t' : document.getElementById('outSep').value;
+  const offX = useOffset ? computeOffset._x : 0;
+  const offY = useOffset ? computeOffset._y : 0;
+
+  const lines = points.map(p => {
+    const rx = ((swap ? p.x : p.y) - offX).toFixed(dec);
+    const ry = ((swap ? p.y : p.x) - offY).toFixed(dec);
+    const rz = p.z.toFixed(dec);
+    return [rx, ry, rz].join(sep);
+  });
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileBaseName + '_revit.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  const toast = document.getElementById('toast');
+  toast.textContent = '✓ Stiahnuté: ' + a.download;
+  setTimeout(() => toast.textContent = '', 4000);
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  points = [];
+  fileEl.value = '';
+  document.getElementById('settingsCard').style.display = 'none';
+  document.getElementById('previewCard').style.display = 'none';
+  document.getElementById('actionCard').style.display = 'none';
+});
+</script>
+</body>
+</html>
