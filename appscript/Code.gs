@@ -475,23 +475,30 @@ var VZOR_ZOZNAM_ID = '1J2GzotOVyr-n7Tf315naJjPQszWA1FG2i4RN5j4n9v8';
 var VZOR_SUHRN_ID  = '17u-hXwikZGL-ZVElmGIp7TKB0ToaiR1uULU81jllNZE';
 var PROJECTS_DRIVE_ROOT_ID = '0AAim-BTmMDGAUk9PVA'; // Shared Drive "1_PROJEKTY" – projektové priečinky sú jeho priami potomkovia
 
+// Spoločný helper: "26-026" (2-číslicový rok, dashboard formát) → priečinok na Drive
+// "2026-026-..." (4-číslicový rok) hľadaný prefix-zhodou na priamych potomkoch root-u
+// (rovnaká konvencia ako sync-fazy.ps1). Zdieľané medzi findKoordinaciaFolder/
+// findProjectFolderName/findIfcFile/sledujPrilohy - predtým bola táto logika 3x nezávisle skopírovaná.
+function najdiProjektFolder(root, cislo) {
+  var m = String(cislo).match(/^(\d{2})-(\d{3})$/);
+  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
+  var fi = root.getFolders();
+  while (fi.hasNext()) {
+    var f = fi.next();
+    if (f.getName().indexOf(prefix) === 0) return f;
+  }
+  return null;
+}
+
 // ── HĽADANIE PRIEČINKA 20_KOORDINACIA (pre batch dopytov) ─────────────────────
 
 function akcia_findKoordinaciaFolder(req) {
   var cislo = String(req.cislo || '').trim();
   if (!cislo) return { ok: false, error: 'Chýba cislo' };
-  // Dashboard: "26-026" (2-číslicový rok) → priečinok na Drive: "2026-026-..." (4-číslicový rok)
-  var m = cislo.match(/^(\d{2})-(\d{3})$/);
-  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
   try {
     var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
-    var fi = root.getFolders();
-    var projFolder = null;
-    while (fi.hasNext()) {
-      var f = fi.next();
-      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
-    }
-    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
     var ki = projFolder.getFoldersByName('20_KOORDINACIA');
     if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
     var kFolder = ki.next();
@@ -508,17 +515,10 @@ function akcia_findKoordinaciaFolder(req) {
 function akcia_findProjectFolderName(req) {
   var cislo = String(req.cislo || '').trim();
   if (!cislo) return { ok: false, error: 'Chýba cislo' };
-  var m = cislo.match(/^(\d{2})-(\d{3})$/);
-  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
   try {
     var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
-    var fi = root.getFolders();
-    var projFolder = null;
-    while (fi.hasNext()) {
-      var f = fi.next();
-      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
-    }
-    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
     return { ok: true, name: projFolder.getName() };
   } catch(e) {
     return { ok: false, error: e.message };
@@ -535,17 +535,10 @@ function akcia_findProjectFolderName(req) {
 function akcia_findIfcFile(req) {
   var cislo = String(req.cislo || '').trim();
   if (!cislo) return { ok: false, error: 'Chýba cislo' };
-  var m = cislo.match(/^(\d{2})-(\d{3})$/);
-  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
   try {
     var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
-    var fi = root.getFolders();
-    var projFolder = null;
-    while (fi.hasNext()) {
-      var f = fi.next();
-      if (f.getName().indexOf(prefix) === 0) { projFolder = f; break; }
-    }
-    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + prefix + ' sa na Drive nenašiel' };
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
     var ki = projFolder.getFoldersByName('20_KOORDINACIA');
     if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
     var ai = ki.next().getFoldersByName('ARCHITEKTURA');
@@ -565,6 +558,180 @@ function akcia_findIfcFile(req) {
   } catch(e) {
     return { ok: false, error: e.message };
   }
+}
+
+// ── AUTOMATICKÉ UKLADANIE PRÍLOH OD PROFESISTOV DO 20_KOORDINACIA (2026-09-15) ──
+// Trigger: time-driven, treba nastaviť ručne (Triggers → Add Trigger → sledujPrilohy →
+// Time-driven), rovnaký postup ako sledujMaily/sledujKomentare. Sleduje Jozefovu schránku
+// (účet, pod ktorým beží Apps Script) — hľadá maily s prílohou od profesistov, ktorí sú
+// v Supabase `specialists` tabuľke, a ukladá prílohy do správneho podpriečinka v
+// 20_KOORDINACIA projektu, ktorý sa nájde podľa kódu v predmete mailu.
+//
+// Profesia sa určí PRIMÁRNE podľa odosielateľa (specialists.profession) — ak má len
+// jednu, hotovo. Ak má viac (napr. Maroš Salva: ELI+PLYN+ZTI), doplní sa zhodou skratky
+// v predmete mailu. Kód projektu sa VŽDY číta len z predmetu — obe reálne používané
+// formáty, "24-032" aj "2025-020" (4-číslicový rok), viď najdiKodProjektuVPredmete.
+//
+// Ak sa nepodarí jednoznačne určiť profesiu AJ kód projektu, mail sa NEUKLADÁ
+// automaticky — len sa označí Gmail štítkom "PM/Neroztriedene", nech si ho Jozef
+// nájde a založí ručne (zámerne žiadna push notifikácia, len štítok — Jozef si to
+// vie sám občas preskenovať, netreba na to ďalšiu infraštruktúru).
+//
+// Cursor je zoznam už spracovaných message ID v PropertiesService (rovnaký vzor ako
+// sledujMaily) — NIE Gmail štítok na vylúčenie z vyhľadávania, lebo to by ignorovalo
+// nové prílohy prišlé ako odpoveď v už raz spracovanom vlákne (bežné pri revíziách).
+
+var LABEL_PRILOHY_SPRACOVANE = 'PM/Spracovane';
+var LABEL_PRILOHY_NEROZTRIEDENE = 'PM/Neroztriedene';
+
+// skratka profesie (specialists.profession) → cesta podpriečinka v 20_KOORDINACIA.
+// ELI/VN → ELEKTRO, STATIKA(_A+) → STATIKA, UK/VZT/ZTI/PLYN → vlastný podpriečinok v TZB
+// (Jozef, 2026-09-15: "TZB ešte roztriediť do podpriečinkov" — pôvodne bol TZB jeden
+// plochý priečinok). PBS/DOPRAVA/technologie/"specialne profesie" nemajú v šablóne
+// vlastný priečinok vôbec (overené naživo na 2 projektoch) — fallback nižšie im založí
+// nový priamo v 20_KOORDINACIA pod názvom profesie, na Jozefovo rozhodnutie.
+var PROFESIA_FOLDER_MAP = {
+  'ELI': ['ELEKTRO'], 'VN': ['ELEKTRO'],
+  'STATIKA': ['STATIKA'], 'STATIKA_A+': ['STATIKA'],
+  'UK': ['TZB', 'UK'], 'VZT': ['TZB', 'VZT'], 'ZTI': ['TZB', 'ZTI'], 'PLYN': ['TZB', 'PLYN']
+};
+
+function sledujPrilohy() {
+  var props = PropertiesService.getScriptProperties();
+  var spracovane = JSON.parse(props.getProperty('spracovane_prilohy') || '[]');
+  var spracovaneSet = {};
+  spracovane.forEach(function(id) { spracovaneSet[id] = true; });
+
+  var specialisti = nacitajSpecialistov();
+  if (!Object.keys(specialisti).length) { Logger.log('Žiadni profesisti so zadaným emailom v Supabase'); return; }
+
+  var labelSpracovane = ziskajAlebaVytvorLabel(LABEL_PRILOHY_SPRACOVANE);
+  var labelNeroztriedene = ziskajAlebaVytvorLabel(LABEL_PRILOHY_NEROZTRIEDENE);
+  var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+
+  var threads = GmailApp.search('has:attachment newer_than:7d', 0, 200);
+  Logger.log('Vlákien na kontrolu: ' + threads.length);
+
+  threads.forEach(function(thread) {
+    thread.getMessages().forEach(function(msg) {
+      var id = msg.getId();
+      if (spracovaneSet[id]) return;
+      spracovane.push(id);
+      spracovaneSet[id] = true;
+
+      var attachments = (msg.getAttachments({ includeInlineImages: false, includeAttachments: true }) || [])
+        .filter(jePrilohaRelevantna);
+      if (!attachments.length) return;
+
+      var fromEmail = extractEmail(msg.getFrom()).toLowerCase();
+      var profesie = specialisti[fromEmail];
+      if (!profesie) return; // odosielateľ nie je v evidencii profesistov, netýka sa appky
+
+      var subject = msg.getSubject() || '';
+      var profesia = profesie.length === 1 ? profesie[0] : najdiProfesiuVPredmete(subject, profesie);
+      var cislo = najdiKodProjektuVPredmete(subject);
+
+      if (!profesia || !cislo) {
+        thread.addLabel(labelNeroztriedene);
+        Logger.log('Neroztriedené ("' + subject + '" od ' + fromEmail + '): profesia=' + profesia + ', cislo=' + cislo);
+        return;
+      }
+
+      var cielovyPriecinok = najdiCielovyPriecinokPreProfesiu(root, cislo, profesia);
+      if (!cielovyPriecinok) {
+        thread.addLabel(labelNeroztriedene);
+        Logger.log('Priečinok projektu ' + cislo + ' sa nenašiel pre mail: "' + subject + '"');
+        return;
+      }
+
+      attachments.forEach(function(att) { cielovyPriecinok.createFile(att); });
+      thread.addLabel(labelSpracovane);
+      Logger.log('Uložené (' + attachments.length + ' príloh) "' + subject + '" → ' + cielovyPriecinok.getName());
+    });
+  });
+
+  if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
+  props.setProperty('spracovane_prilohy', JSON.stringify(spracovane));
+}
+
+// Vynecháva typické embedded logá/ikonky z mailových podpisov, ktoré Gmail niekedy
+// vráti ako bežnú prílohu aj pri includeInlineImages:false (napr. Outlook signatures).
+function jePrilohaRelevantna(att) {
+  var nazov = att.getName() || '';
+  if (/^image\d+\.(png|jpe?g|gif)$/i.test(nazov)) return false;
+  if (att.getSize() < 5000) return false;
+  return true;
+}
+
+function nacitajSpecialistov() {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/specialists?select=email,profession&email=neq.', {
+    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY },
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() >= 300) { Logger.log('Chyba načítania specialists: ' + resp.getContentText()); return {}; }
+  var rows = JSON.parse(resp.getContentText());
+  var map = {};
+  rows.forEach(function(r) {
+    if (!r.email || !r.profession) return;
+    var profesie = r.profession.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+    if (profesie.length) map[String(r.email).toLowerCase()] = profesie;
+  });
+  return map;
+}
+
+function extractEmail(fromHeader) {
+  var m = String(fromHeader || '').match(/<([^>]+)>/);
+  return m ? m[1] : String(fromHeader || '').trim();
+}
+
+// Hľadá zhodu profesijnej skratky (len z tých, ktoré má daný odosielateľ v Supabase,
+// nie z celého globálneho zoznamu) niekde v predmete mailu, ako celé slovo.
+function najdiProfesiuVPredmete(predmet, moznosti) {
+  var horny = ' ' + String(predmet || '').toUpperCase() + ' ';
+  for (var i = 0; i < moznosti.length; i++) {
+    var skratka = moznosti[i].toUpperCase();
+    var regex = new RegExp('[^A-Z0-9]' + skratka.replace(/[+]/g, '\\+') + '[^A-Z0-9]');
+    if (regex.test(horny)) return moznosti[i];
+  }
+  return null;
+}
+
+// Kód projektu v predmete môže byť v dvoch reálne používaných formátoch:
+// "24-032" (2-číslicový rok) alebo "2025-020" (4-číslicový) — vracia vždy dashboard
+// formát "YY-NNN" pre najdiProjektFolder (ten si 4-číslicový rok dopočíta sám).
+function najdiKodProjektuVPredmete(predmet) {
+  var s = String(predmet || '');
+  var m = s.match(/(?:^|[^0-9])20(\d{2})-(\d{3})(?!\d)/);
+  if (m) return m[1] + '-' + m[2];
+  m = s.match(/(?:^|[^0-9])(\d{2})-(\d{3})(?!\d)/);
+  if (m) return m[1] + '-' + m[2];
+  return null;
+}
+
+function najdiCielovyPriecinokPreProfesiu(root, cislo, profesiaSkratka) {
+  var projFolder = najdiProjektFolder(root, cislo);
+  if (!projFolder) return null;
+  var ki = projFolder.getFoldersByName('20_KOORDINACIA');
+  if (!ki.hasNext()) return null;
+  var aktualny = ki.next();
+  var cesta = PROFESIA_FOLDER_MAP[profesiaSkratka.toUpperCase()];
+  if (cesta) {
+    cesta.forEach(function(segment) { aktualny = ziskajAlebaVytvorPodpriecinok(aktualny, segment); });
+  } else {
+    // PBS, DOPRAVA, technologie, "specialne profesie" — vlastný priečinok podľa názvu profesie
+    aktualny = ziskajAlebaVytvorPodpriecinok(aktualny, profesiaSkratka);
+  }
+  return aktualny;
+}
+
+function ziskajAlebaVytvorPodpriecinok(parent, nazov) {
+  var it = parent.getFoldersByName(nazov);
+  return it.hasNext() ? it.next() : parent.createFolder(nazov);
+}
+
+function ziskajAlebaVytvorLabel(nazov) {
+  var label = GmailApp.getUserLabelByName(nazov);
+  return label || GmailApp.createLabel(nazov);
 }
 
 // ── ZOZNAM SÚBOROV V PRIEČINKU ────────────────────────────────────────────────

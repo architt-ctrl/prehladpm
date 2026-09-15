@@ -466,6 +466,32 @@ Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri
 
 **Apps Script — `akcia_findIfcFile`** (`Code.gs`, vzor `akcia_findKoordinaciaFolder`): nájde koreňový priečinok projektu (rovnaká prefix-zhoda `20YY-NNN`), v ňom `20_KOORDINACIA/ARCHITEKTURA`, najnovšie upravený `.ifc` súbor, nastaví zdieľanie, vráti `{fileId, name}`. Existujúci `drive` OAuth scope appky (`https://www.googleapis.com/auth/drive`) pokrýva aj `setSharing()`, netreba nový scope ani redeploy s novými permissions (redeploy je ale potrebný pri zmene samotného kódu akcie, ako pri opravách vyššie).
 
+### Automatické ukladanie príloh od profesistov (`sledujPrilohy`, 2026-09-15)
+
+**Cieľ (Jozef):** prílohy od profesistov (podklady, revízie) prichádzajúce mailom sa majú automaticky uložiť do správneho podpriečinka `20_KOORDINACIA` daného projektu, bez ručného preklikávania/sťahovania/ukladania.
+
+**Zdroj dát na identifikáciu — žiadne nové zadávanie, appka si to sama ťahá zo Supabase `specialists`** (tá istá tabuľka čo `ponuky.html`/Dopyty): email odosielateľa → `profession` (môže byť viac naraz, čiarkou oddelené, napr. `"ELI, PLYN, ZTI"`).
+
+**Trigger `sledujPrilohy`** (`Code.gs`, time-driven, treba nastaviť ručne rovnako ako `sledujMaily`/`sledujKomentare`) sleduje **Jozefovu vlastnú schránku** (účet, pod ktorým beží Apps Script):
+1. **Profesia** — primárne podľa odosielateľa (`specialists.email → profession`). Ak má len jednu, hotovo. Ak viac naraz, hľadá sa zhoda skratky v predmete mailu (`najdiProfesiuVPredmete`, len medzi profesiami, ktoré má daný odosielateľ — nie celý globálny zoznam).
+2. **Kód projektu** — VŽDY len z predmetu mailu (`najdiKodProjektuVPredmete`), akceptuje oba reálne používané formáty: `24-032` aj `2025-020` (4-číslicový rok), oba sa normalizujú na dashboard `YY-NNN` formát pre `najdiProjektFolder`.
+3. Ak sa podarí určiť oboje → priečinok sa nájde/mapuje (`PROFESIA_FOLDER_MAP`) a všetky prílohy mailu sa tam uložia (`folder.createFile(attachment)`), vlákno sa označí Gmail štítkom `PM/Spracovane`.
+4. Ak sa nepodarí (chýba profesia alebo kód, alebo sa nenašiel priečinok projektu) → **mail sa NEUKLADÁ automaticky**, len sa označí štítkom `PM/Neroztriedene` — Jozef si ho nájde a založí ručne. Zámerne žiadna push notifikácia (Jozef, 2026-09-15: "len Gmail štítok, jednoduchšie") — netreba ďalšiu infraštruktúru len na toto.
+
+**Mapovanie profesia → priečinok (`PROFESIA_FOLDER_MAP`)** — overené naživo na 2 reálnych projektoch (`mcp__claude_ai_Google_Drive__search_files`), `20_KOORDINACIA` má vždy rovnakú pevnú šablónu 5 podpriečinkov: `00_PODKLADY`, `ARCHITEKTURA`, `ELEKTRO`, `STATIKA`, `TZB` (TZB bol pôvodne jeden plochý priečinok pre UK+VZT+ZTI+PLYN dohromady):
+- `ELI`, `VN` → `ELEKTRO`
+- `STATIKA`, `STATIKA_A+` → `STATIKA`
+- `UK` → `TZB/UK`, `VZT` → `TZB/VZT`, `ZTI` → `TZB/ZTI`, `PLYN` → `TZB/PLYN` — **rozdelené na podpriečinky (2026-09-15, Jozef)**, pôvodne by boli spolu v jednom TZB priečinku
+- `PBS`, `DOPRAVA`, `technologie`, `"specialne profesie"` — **nemajú v šablóne vlastný priečinok vôbec** — `najdiCielovyPriecinokPreProfesiu` im pri prvom výskyte založí nový priamo v `20_KOORDINACIA` pod názvom profesie (Jozef, 2026-09-15: rozhodol sa pre auto-vytvorenie, nie presun do `00_PODKLADY` ani len upozornenie)
+
+**Cursor — zoznam message ID, nie Gmail štítok na vylúčenie z vyhľadávania** (rovnaký vzor ako `sledujMaily`, `PropertiesService`, kľúč `spracovane_prilohy`, orezáva sa na posledných 1000): štítok slúži LEN na vizuálne triedenie pre Jozefa, nie ako mechanizmus "už spracované, nehľadaj znova" — keby sa použil štítok na vylúčenie z `GmailApp.search()`, appka by ignorovala nové prílohy prišlé ako odpoveď v už raz spracovanom vlákne (bežné pri revíziách podkladov, keď profesista odpovedá do rovnakého vlákna).
+
+**Filter na irelevantné prílohy (`jePrilohaRelevantna`)** — vynecháva typické vzory embedded loga/ikonky z mailového podpisu (`image001.png` a pod., aj súbory pod 5 KB), ktoré Gmail niekedy vráti ako bežnú prílohu aj pri `includeInlineImages:false`.
+
+**Zdieľaný helper `najdiProjektFolder(root, cislo)`** — pri tejto príležitosti vytiahnutý z 3× nezávisle skopírovanej prefix-hľadajúcej slučky (`akcia_findKoordinaciaFolder`, `akcia_findProjectFolderName`, `akcia_findIfcFile`), teraz zdieľaný aj so `sledujPrilohy`.
+
+**Netreba nová SQL migrácia** — číta sa len existujúca `specialists` tabuľka (read-only, anon key). **Netreba nový OAuth scope** — `https://mail.google.com/` a `https://www.googleapis.com/auth/drive` appka už má.
+
 ## Other files
 
 ### harmonogram-logic.js (ROZPRACOVANÉ — len logika, žiadne UI)
