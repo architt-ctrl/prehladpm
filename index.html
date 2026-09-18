@@ -4333,6 +4333,7 @@ function buildCaflouTasksHtml(cislo) {
       </div>` : ''}
       ${notesOpen ? `<div onclick="event.stopPropagation()" style="padding:0 0 5px 0">${buildTaskNotesHtml(cislo, t.id)}</div>` : ''}
       <div id="te-${editKey}" style="display:${editOpen?'flex':'none'};gap:6px;padding:4px 0 8px 0;flex-direction:column" onclick="event.stopPropagation()">
+        ${t.description ? `<div style="font-size:12px;color:var(--text2);line-height:1.5;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 10px;max-height:200px;overflow-y:auto">${t.description}</div>` : ''}
         <input id="tn-${editKey}" value="${safeName}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box">
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <select id="tu-${editKey}" class="pd-sel" style="flex:1;min-width:120px;font-size:12px">${selOpts}</select>

@@ -206,6 +206,8 @@ CAFLOU_USERS             // user_id → meno
 - **Automatické — "Spustiť komunikáciu" (2026-07-29):** klik na neprideleného ✉️ → `toggleTaskMailForm(editKey)` otvorí `#tmail-{editKey}` panel (adresát predvyplnený z `specialistsList` emailu priradeného špecialistu, predmet `SKRATKA_PROFESIE ČÍSLO - NÁZOV`, textarea na text) → `sendOfficialMail(cislo, task_id, editKey)` zavolá Apps Script akciu `sendOfficialMail` (`GmailApp.sendEmail` + dohľadanie vzniknutého vlákna), výsledný `permalink` sa hneď uloží do `taskEmailCache` + `task_email_threads` bez ručného kopírovania URL
 - **Vyžaduje redeploy Apps Scriptu** (zmena `doPost`) — pozri "Apps Script gotchas"
 
+**Popis úlohy z Caflou (2026-09-18):** Caflou `/tasks` už v bežnom fetchi (`loadCaflouTasks`) vracia aj pole `description` (rich-text HTML, presne to čo je v Caflou na karte úlohy) — netreba extra API volanie. Zobrazuje sa read-only (žiadny input, needituje sa cez appku) v edit forme (`te-{editKey}`), hneď nad poľom na názov, len keď `t.description` nie je prázdne — vykreslené priamo ako HTML (`innerHTML`), keďže to obsahuje odseky/formátovanie z Caflou/Wordu.
+
 **Functions:** `loadCaflouTasks`, `buildCaflouTasksHtml`, `setCaflouTaskStatus`, `finishCaflouTask`, `unfinishCaflouTask`, `toggleFinishedTasks`, `createCaflouTask`, `toggleTaskEdit`, `toggleTaskExtBtn`, `saveCaflouTaskEdit`, `deleteCaflouTask`, `loadSpecialists`, `filterSpecDropdown`, `preloadTaskNotes`, `buildTaskNotesHtml`, `toggleTaskNotes`, `addTaskNote`, `bulkSetDeadline`, `toggleTaskMailForm`, `sendOfficialMail`
 
 ### Fáza-tag na úlohách (`TASK_FAZA_TAGS`) — nezávislé od projektovej fázy
