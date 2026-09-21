@@ -714,6 +714,7 @@ nav {
   <a href="ponuky.html" class="mnav-a">Ponuky profesií</a>
   <a href="suhrn.html" class="mnav-a">Správy</a>
   <a href="harmonogram.html" class="mnav-a">Harmonogram</a>
+  <a href="planovanie.html" class="mnav-a">Plánovanie práce</a>
 </nav>
 
 <!-- HEADER -->
@@ -743,6 +744,13 @@ nav {
       <line x1="3" y1="10" x2="21" y2="10"></line>
     </svg>
     <span class="hbtn-lbl">Harmonogram</span>
+  </a>
+  <a href="planovanie.html" class="hbtn" style="text-decoration:none" title="Plánovanie práce – kto na čom kedy robí (úlohy s tagom harmon)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line>
+      <line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>
+    </svg>
+    <span class="hbtn-lbl">Plánovanie</span>
   </a>
   <button class="hbtn" onclick="openChronoModal()" title="Zápisky – chronologický prehľad">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
@@ -4097,6 +4105,10 @@ async function bulkSetStatus(cislo, statusName) {
     body: JSON.stringify({ task: { task_status_id: CAFLOU_TASK_STATUS_IDS[statusName] } })
   }).catch(() => {})));
 }
+// Tagy úlohy, ktoré appka sama nespravuje (napr. 'harmon' na plánovanie) — pri prepisovaní tagov ext/fáza
+// sa musia zachovať, inak by ich každé uloženie úlohy potichu zmazalo.
+const otherTaskTags = t => (t.tags || []).filter(x => x !== 'ext' && !TASK_FAZA_TAGS.includes(x));
+
 async function bulkSetFaza(cislo, tag) {
   const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
   const tasks = caflouTasksCache[cislo]; if (!tasks) return;
@@ -4104,7 +4116,7 @@ async function bulkSetFaza(cislo, tag) {
   const ids = [...selSet];
   ids.forEach(id => {
     const t = tasks.find(x => x.id === id); if (!t) return;
-    t.tags = [(t.tags||[]).includes('ext') ? 'ext' : null, newFaza].filter(Boolean);
+    t.tags = [(t.tags||[]).includes('ext') ? 'ext' : null, newFaza, ...otherTaskTags(t)].filter(Boolean);
   });
   refreshUlohy(cislo);
   const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
@@ -4124,7 +4136,7 @@ async function bulkSetExtInt(cislo, isExt) {
   ids.forEach(id => {
     const t = tasks.find(x => x.id === id); if (!t) return;
     const fazaTag = getTaskFazaTag(t);
-    t.tags = [isExt ? 'ext' : null, fazaTag || null].filter(Boolean);
+    t.tags = [isExt ? 'ext' : null, fazaTag || null, ...otherTaskTags(t)].filter(Boolean);
   });
   refreshUlohy(cislo);
   const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
@@ -4286,6 +4298,7 @@ function buildCaflouTasksHtml(cislo) {
     const safeName = t.name.replace(/"/g, '&quot;');
     const specName = extSpecOverride[String(t.id)] || (extSpecCache[cislo]||{})[t.name] || '';
     const isExt = (t.tags||[]).includes('ext');
+    const isHarmon = (t.tags||[]).includes('harmon');
     const specRowForMail = specName ? (specialistsList||[]).find(s => s.name === specName) : null;
     const mailToEsc = (specRowForMail?.email || '').replace(/"/g, '&quot;');
     const mailProf = specRowForMail ? (specRowForMail.profession||'').split(',')[0].trim() : '';
@@ -4329,6 +4342,7 @@ function buildCaflouTasksHtml(cislo) {
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
+        ${isHarmon ? `<span title="Úloha je v Plánovaní práce (tag harmon)" style="font-size:11px;flex-shrink:0">📅</span>` : ''}
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
@@ -4360,6 +4374,9 @@ function buildCaflouTasksHtml(cislo) {
           <input id="td-${editKey}" type="date" value="${curDate}" class="pd-sel" style="font-size:12px;flex:1;min-width:110px">
           <button id="ttype-${editKey}" data-ext="${isExt?'1':'0'}" onclick="event.stopPropagation();toggleTaskExtBtn('${editKey}')"
             style="background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text3);white-space:nowrap">${isExt?'Externé ✓':'Interné ✓'}</button>
+          <button id="tharmon-${editKey}" data-on="${isHarmon?'1':'0'}" onclick="event.stopPropagation();toggleTaskHarmonBtn('${editKey}')"
+            title="Zaradiť úlohu do Plánovania práce (tag harmon v Caflou)"
+            style="background:${isHarmon?'var(--blu-bg)':'none'};border:1px solid ${isHarmon?'var(--blue)':'var(--border)'};border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:${isHarmon?'var(--blue)':'var(--text3)'};white-space:nowrap">${isHarmon?'📅 Plánovať ✓':'📅 Plánovať'}</button>
           <select id="tfaza-${editKey}" class="pd-sel" style="font-size:11px;flex-shrink:0" onclick="event.stopPropagation()">${fazaOpts}</select>
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
@@ -4596,7 +4613,10 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   if (name) t.name = name;
   t.target_user_id = uid ? parseInt(uid) : null;
   t.end_time = date ? date + 'T17:00:00+02:00' : null;
-  t.tags = [newExt ? 'ext' : null, fazaVal || null].filter(Boolean);
+  const harmBtn = document.getElementById('tharmon-' + key);
+  const newHarmon = harmBtn ? harmBtn.dataset.on === '1' : (t.tags || []).includes('harmon');
+  t.tags = [newExt ? 'ext' : null, fazaVal || null, newHarmon ? 'harmon' : null,
+    ...otherTaskTags(t).filter(x => x !== 'harmon')].filter(Boolean);
   if (descHtml !== undefined) t.description = descHtml;
   caflouTaskEditSet.delete(key);
   refreshUlohy(cislo);
@@ -4614,6 +4634,16 @@ async function saveCaflouTaskEdit(cislo, task_id) {
     });
     showToast('Uložené ✓', 'ok');
   } catch(e) { showToast('Chyba ukladania', 'err'); }
+}
+
+function toggleTaskHarmonBtn(editKey) {
+  const btn = document.getElementById('tharmon-' + editKey); if (!btn) return;
+  const on = btn.dataset.on !== '1';
+  btn.dataset.on = on ? '1' : '0';
+  btn.textContent = on ? '📅 Plánovať ✓' : '📅 Plánovať';
+  btn.style.background = on ? 'var(--blu-bg)' : 'none';
+  btn.style.borderColor = on ? 'var(--blue)' : 'var(--border)';
+  btn.style.color = on ? 'var(--blue)' : 'var(--text3)';
 }
 
 function toggleTaskExtBtn(editKey) {

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plánovanie práce</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      --bg:#f5f3ef; --bg2:#fff; --bg3:#f0ede8;
+      --border:#e4dfd8; --text:#2c2825; --text2:#6b6460; --text3:#9e9590;
+      --green:#1e7a4a; --grn-bg:#f0faf5; --grn-bd:#b8e6cc;
+      --blue:#1a5fa0; --blu-bg:#f0f6fd; --blu-bd:#b8d4f0;
+      --red:#c0392b; --red-bg:#fdf2f1; --red-bd:#f5c6c2;
+      --sans:'DM Sans',system-ui,sans-serif; --r:10px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+    .module-nav{background:var(--text);display:flex;padding:0 12px;overflow-x:auto;scrollbar-width:none}
+    .mnav-a{color:rgba(245,243,239,.45);text-decoration:none;padding:9px 10px;font-size:12px;font-weight:500;white-space:nowrap;border-bottom:2px solid transparent}
+    .mnav-a.cur,.mnav-a:hover{color:#f5f3ef}
+    .mnav-a.cur{border-bottom-color:rgba(245,243,239,.55)}
+
+    .page-hdr{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 16px;display:flex;align-items:center;height:52px;gap:10px;position:sticky;top:0;z-index:50}
+    .page-hdr h1{font-size:16px;font-weight:600;flex:1}
+    .main{max-width:1000px;margin:0 auto;padding:20px 16px 60px}
+    .sec-title{font-size:14px;font-weight:600;margin:24px 0 8px}
+    .sec-title:first-child{margin-top:0}
+    .note{font-size:12px;color:var(--text3);margin-bottom:12px}
+
+    .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:7px;border:none;font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer}
+    .btn-p{background:var(--text);color:#f5f3ef}
+    .btn-g{background:transparent;color:var(--text2);border:1px solid var(--border)}
+    .btn-g:hover{background:var(--bg3)}
+    .btn:disabled{opacity:.5;cursor:default}
+    .ibtn{background:none;border:1px solid var(--border);cursor:pointer;font-size:11px;width:24px;height:24px;color:var(--text2);border-radius:5px}
+    .ibtn:hover:not(:disabled){background:var(--bg3)}
+    .ibtn:disabled{opacity:.3;cursor:default}
+
+    /* prihlásenie len pre úpravy; zobrazenie je pre každého */
+    body:not(.is-editor) .editor-only{display:none!important}
+    body.is-editor .viewer-only{display:none!important}
+    .hidden{display:none!important}
+    #loginWrap{max-width:380px;margin:60px auto;padding:0 16px}
+    .login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:26px}
+    .login-card h2{font-size:18px;margin-bottom:6px}
+    .login-card p{color:var(--text2);font-size:13px;margin-bottom:18px}
+    .finput{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:8px 11px;font-size:14px;font-family:var(--sans);outline:none;margin-bottom:10px}
+    .alert{padding:10px 13px;border-radius:7px;font-size:13px;margin-bottom:12px}
+    .alert-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .alert-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+
+    .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+    .card+.card{margin-top:12px}
+    .empty{padding:26px 16px;color:var(--text2);font-size:13px;text-align:center;line-height:1.6}
+
+    /* časová os — jeden riadok na kolegu, úlohy idú za sebou (nikdy sa neprekrývajú) */
+    .gantt-flex{display:flex;align-items:flex-start}
+    .gantt-names{flex:0 0 130px;width:130px;background:var(--bg2);border-right:1px solid var(--border)}
+    .gantt-names-head{height:39px;display:flex;align-items:center;padding:0 12px;font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;border-bottom:1px solid var(--border)}
+    .gantt-name{display:flex;align-items:center;padding:0 12px;font-weight:600;font-size:13px;border-bottom:1px solid var(--border);height:46px}
+    .gantt-name:last-child{border-bottom:none}
+    .gantt-scroll{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden}
+    .gantt-months,.gantt-days{display:flex}
+    .gantt-months{height:22px}
+    .gantt-days{height:17px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+    /* bunky hlavičky sa nesmú zmršťovať, inak sa stlačia do šírky viditeľného okna */
+    .gantt-month,.gantt-day{flex:0 0 auto}
+    .gantt-month{font-size:12px;font-weight:600;color:var(--text2);border-left:1px solid var(--border);padding-left:5px;line-height:22px;white-space:nowrap;overflow:hidden;text-transform:capitalize}
+    .gantt-day{font-size:9px;color:var(--text3);text-align:center;line-height:17px}
+    .gantt-day.we{background:rgba(44,40,37,.05)}
+    .gantt-track{position:relative;height:46px;border-bottom:1px solid var(--border)}
+    .gantt-track:last-child{border-bottom:none}
+    .gbar{position:absolute;top:8px;height:30px;border-radius:6px;display:flex;align-items:center;padding:0 7px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.18)}
+    .gbar.late{outline:2px solid var(--red);outline-offset:-1px}
+    .gbar span{color:#fff;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 1px rgba(0,0,0,.25)}
+    .gtoday{position:absolute;top:0;bottom:0;width:2px;background:var(--red);z-index:2;pointer-events:none}
+    .legend{display:flex;gap:16px;padding:8px 14px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);flex-wrap:wrap}
+
+    /* zoznamy poradia po kolegoch */
+    .person-hdr{padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .person-hdr b{font-size:14px}
+    .person-hdr .sub{font-size:12px;color:var(--text2);flex:1}
+    .badge-late{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd);padding:2px 8px;border-radius:8px;font-size:11px;font-weight:500}
+    .trow{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+    .trow:last-child{border-bottom:none}
+    .trow .no{width:18px;color:var(--text3);font-size:12px;text-align:right}
+    .trow .arrows{display:flex;gap:3px}
+    .trow .grow{flex:1;min-width:190px}
+    .trow .nm{font-weight:500}
+    .trow .pj{font-size:12px;color:var(--text2);margin-top:1px}
+    .trow .when{font-size:12px;color:var(--text2);white-space:nowrap;min-width:110px;text-align:right}
+    .trow .term{font-size:12px;white-space:nowrap;min-width:150px;text-align:right;color:var(--text2)}
+    .trow .term.late{color:var(--red);font-weight:600}
+    .est{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);white-space:nowrap}
+    .est input{width:62px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-family:var(--sans);font-size:13px;background:var(--bg2)}
+
+    .toast{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:14px;font-weight:500;z-index:9999;max-width:90vw}
+    .toast-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
+    .toast-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-bd)}
+  </style>
+</head>
+<body>
+<div class="toast" id="toast"></div>
+
+<nav class="module-nav">
+  <a href="index.html" class="mnav-a">Projekty</a>
+  <a href="ponuky.html" class="mnav-a">Ponuky profesií</a>
+  <a href="suhrn.html" class="mnav-a">Správy</a>
+  <a href="harmonogram.html" class="mnav-a">Harmonogram</a>
+  <a href="planovanie.html" class="mnav-a cur">Plánovanie práce</a>
+</nav>
+
+<div id="loginWrap" class="hidden">
+  <div class="login-card">
+    <h2>Plánovanie práce — úpravy</h2>
+    <p>Plán vidí každý bez prihlásenia. Prihlásenie je potrebné len na jeho úpravu.</p>
+    <input class="finput" type="email" id="loginEmail" placeholder="vas@email.com">
+    <div id="loginMsg"></div>
+    <button class="btn btn-p" style="width:100%;justify-content:center" onclick="sendMagicLink()">Poslať prihlasovací link</button>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="hideLogin()">Späť na plán</button>
+  </div>
+</div>
+
+<div id="mainWrap">
+  <div class="page-hdr">
+    <h1>Plánovanie práce</h1>
+    <span style="font-size:12px;color:var(--text3)" id="navEmail" class="editor-only"></span>
+    <button class="btn btn-p editor-only" id="btnSync" onclick="syncFromCaflou()">↻ Načítať z Caflou</button>
+    <button class="btn btn-g editor-only" onclick="sb.auth.signOut()">Odhlásiť</button>
+    <button class="btn btn-g viewer-only" onclick="showLogin()" title="Len na úpravu plánu">🔒 Prihlásiť (úpravy)</button>
+  </div>
+  <div class="main">
+    <div class="note" id="statusLine">Načítavam…</div>
+
+    <div class="sec-title">Časová os</div>
+    <div class="card" id="timeline"><div class="empty">Načítavam…</div></div>
+
+    <div class="sec-title">Poradie a odhady</div>
+    <div class="note editor-only">Poradie meníš šípkami, do „zostáva“ napíš, koľko pracovných dní práce na úlohe ešte ostáva. Os sa prepočíta hneď. Riešiteľa a termín úlohy mení v Caflou (alebo v prehľade projektov), potom klikni „Načítať z Caflou“.</div>
+    <div id="lists"><div class="card"><div class="empty">Načítavam…</div></div></div>
+  </div>
+</div>
+
+<script>
+const SB_URL = 'https://cfjkomqxzqflotrqxfyl.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmamtvbXF4enFmbG90cnF4ZnlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5NTM1NjksImV4cCI6MjA5MzUyOTU2OX0.GUnw0I0wDrkIwaJ15TnpF_8zghW_8yIM_MZlyLF1dH8';
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
+
+// Interný tím — rovnaké mená/ID ako CAFLOU_USERS v index.html
+const CAFLOU_USER_IDS = { 'Alexandra':49418, 'Tomáš':49419, 'Lenka':50217, 'Miroslava':50218, 'Jozef':50219, 'Ivan':50357, 'Soňa':51092, 'Andrea':52049, 'Erik':52890, 'Veronika':57218, 'Lucia':63559 };
+const CAFLOU_ID_TO_NAME = Object.fromEntries(Object.entries(CAFLOU_USER_IDS).map(([n, id]) => [id, n]));
+const TEAM = Object.keys(CAFLOU_USER_IDS);
+const PLAN_TAG = 'harmon';
+const DW = 30; // px na deň
+
+let rows = [];        // riadky plan_ulohy
+let isEditor = false;
+let _loaded = false;
+let syncNote = '';    // hláška z poslednej synchronizácie (napr. úlohy bez riešiteľa)
+let autoSyncTried = false;
+
+// ── ČISTÁ LOGIKA ROZVRHU ─────────────────────────────────────────────────────
+// Deň na osi = index od pondelka aktuálneho týždňa (index % 7 >= 5 je víkend). Kurzor je desatinné číslo:
+// celá časť = deň, desatinná = koľko z dňa už je obsadené. Práca sa počíta len v pracovných dňoch.
+function isWeekendIdx(i) { return ((i % 7) + 7) % 7 >= 5; }
+
+function skipWeekend(c) {
+  while (isWeekendIdx(Math.floor(c + 1e-9))) c = Math.floor(c + 1e-9) + 1;
+  return c;
+}
+
+function advance(c, n) {
+  let left = n;
+  while (left > 1e-9) {
+    c = skipWeekend(c);
+    const day = Math.floor(c + 1e-9);
+    const use = Math.min(day + 1 - c, left);
+    c += use; left -= use;
+  }
+  return c;
+}
+
+// úlohy jedného kolegu (už zoradené podľa poradia) -> pruhy za sebou od `startIdx`
+function layoutQueue(items, startIdx) {
+  let c = startIdx;
+  return items.map(it => {
+    const s = skipWeekend(c);
+    const e = advance(s, Number(it.odhad_dni) || 1);
+    c = e;
+    return { it, s, e, lastDay: Math.ceil(e - 1e-9) - 1 };
+  });
+}
+
+// ── DÁTUMY ───────────────────────────────────────────────────────────────────
+function pad2(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function parseYmd(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function fmt(d) { return d ? `${d.getDate()}.${d.getMonth() + 1}.` : '—'; }
+function diffDays(a, b) { return Math.round((b - a) / 86400000); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function mondayOf(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x;
+}
+
+function projColor(key) {
+  let h = 0;
+  const s = String(key || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  // odtiene 40–320 °, aby farba projektu nebola červená (červená = nestíha termín)
+  return `hsl(${40 + (h % 280)},52%,42%)`;
+}
+
+// ── PRIHLÁSENIE (zobrazenie pre všetkých, úpravy len prihlásený) ─────────────
+function setEditor(on, email) {
+  isEditor = !!on;
+  document.body.classList.toggle('is-editor', isEditor);
+  document.getElementById('navEmail').textContent = email || '';
+  if (isEditor) hideLogin();
+  if (_loaded) render();
+}
+function showLogin() { document.getElementById('loginWrap').classList.remove('hidden'); document.getElementById('mainWrap').classList.add('hidden'); }
+function hideLogin() { document.getElementById('loginWrap').classList.add('hidden'); document.getElementById('mainWrap').classList.remove('hidden'); }
+
+async function sendMagicLink() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: 'https://architt-ctrl.github.io/prehladpm/planovanie.html' } });
+  const el = document.getElementById('loginMsg');
+  el.innerHTML = error ? `<div class="alert alert-err">${esc(error.message)}</div>`
+    : `<div class="alert alert-ok">Link odoslaný na <strong>${esc(email)}</strong>. Skontrolujte e-mail.</div>`;
+}
+
+(async function() {
+  try {
+    const raw = localStorage.getItem('sb-cfjkomqxzqflotrqxfyl-auth-token');
+    const s = raw ? JSON.parse(raw) : null;
+    if (s?.user?.email) setEditor(true, s.user.email);
+  } catch(e) {}
+  await loadAll();
+})();
+
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') { setEditor(false); return; }
+  if (session) setEditor(true, session.user.email);
+});
+
+// ── DÁTA ─────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  const { data, error } = await sb.from('plan_ulohy').select('*');
+  if (error) {
+    const chybaTabulka = /plan_ulohy|relation|schema cache/i.test(error.message || '');
+    document.getElementById('statusLine').textContent = '';
+    document.getElementById('timeline').innerHTML = `<div class="empty">${chybaTabulka
+      ? 'Chýba tabuľka <b>plan_ulohy</b> — spusti <code>supabase/plan-ulohy-setup.sql</code> v Supabase SQL Editore.'
+      : 'Chyba: ' + esc(error.message)}</div>`;
+    document.getElementById('lists').innerHTML = '';
+    return;
+  }
+  rows = data || [];
+  _loaded = true;
+  render();
+  // prázdny plán + prihlásený editor s Caflou prístupom -> rovno načítaj úlohy
+  if (isEditor && !rows.length && !autoSyncTried && cfg.caflou_key && cfg.caflou_id) { autoSyncTried = true; syncFromCaflou(); }
+}
+
+function byPerson() {
+  const map = {};
+  rows.forEach(r => { (map[r.projektant] = map[r.projektant] || []).push(r); });
+  Object.values(map).forEach(a => a.sort((x, y) => x.poradie - y.poradie || x.task_id - y.task_id));
+  const names = TEAM.filter(n => map[n]).concat(Object.keys(map).filter(n => !TEAM.includes(n)));
+  return { map, names };
+}
+
+// ── VYKRESLENIE ──────────────────────────────────────────────────────────────
+function render() {
+  const dnes = new Date(); dnes.setHours(0, 0, 0, 0);
+  const axisStart = mondayOf(dnes);
+  const todayIdx = diffDays(axisStart, dnes);
+  const dateOf = i => new Date(axisStart.getFullYear(), axisStart.getMonth(), axisStart.getDate() + i);
+
+  const { map, names } = byPerson();
+  const plan = {};   // meno -> [{it,s,e,lastDay,late,lateDays}]
+  names.forEach(n => {
+    plan[n] = layoutQueue(map[n], todayIdx).map(p => {
+      const endDate = dateOf(p.lastDay);
+      const late = !!(p.it.termin && ymd(endDate) > p.it.termin);
+      return Object.assign(p, { endDate, startDate: dateOf(Math.floor(p.s + 1e-9)), late, lateDays: late ? diffDays(parseYmd(p.it.termin), endDate) : 0 });
+    });
+  });
+
+  // stavový riadok
+  const last = rows.reduce((m, r) => r.updated_at && r.updated_at > m ? r.updated_at : m, '');
+  const lastTxt = last ? new Date(last).toLocaleString('sk', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  document.getElementById('statusLine').innerHTML = rows.length
+    ? `${rows.length} úloh · ${names.length} ${names.length === 1 ? 'kolega' : 'kolegov'}${lastTxt ? ' · z Caflou aktualizované ' + esc(lastTxt) : ''}${syncNote ? ' · ' + syncNote : ''}`
+    : '';
+
+  if (!rows.length) {
+    const msg = isEditor
+      ? 'Zatiaľ žiadne úlohy na plánovanie.<br>V prehľade projektov otvor úlohu a zapni <b>📅 Plánovať</b> (alebo daj úlohe v Caflou tag <b>harmon</b>), potom klikni <b>Načítať z Caflou</b>.'
+      : 'Zatiaľ nie je nič naplánované.';
+    document.getElementById('timeline').innerHTML = `<div class="empty">${msg}</div>`;
+    document.getElementById('lists').innerHTML = '';
+    return;
+  }
+
+  // ── časová os ──
+  let maxIdx = todayIdx;
+  names.forEach(n => plan[n].forEach(p => {
+    maxIdx = Math.max(maxIdx, p.e);
+    if (p.it.termin) maxIdx = Math.max(maxIdx, diffDays(axisStart, parseYmd(p.it.termin)));
+  }));
+  const totalDays = Math.min(Math.max(56, Math.ceil(maxIdx) + 8), 730);
+  const W = totalDays * DW;
+
+  let monthCells = '', chunkStart = 0;
+  for (let d = 1; d <= totalDays; d++) {
+    const cur = dateOf(d - 1), nxt = dateOf(d);
+    if (d === totalDays || nxt.getMonth() !== cur.getMonth()) {
+      monthCells += `<div class="gantt-month" style="width:${(d - chunkStart) * DW}px">${dateOf(chunkStart).toLocaleDateString('sk', { month: 'long', year: 'numeric' })}</div>`;
+      chunkStart = d;
+    }
+  }
+  let dayCells = '';
+  for (let d = 0; d < totalDays; d++) {
+    dayCells += `<div class="gantt-day${isWeekendIdx(d) ? ' we' : ''}" style="width:${DW}px">${dateOf(d).getDate()}</div>`;
+  }
+  const trackBg = `background-image:repeating-linear-gradient(to right,var(--border) 0,var(--border) 1px,transparent 1px,transparent ${DW}px),repeating-linear-gradient(to right,transparent 0,transparent ${5 * DW}px,rgba(44,40,37,.05) ${5 * DW}px,rgba(44,40,37,.05) ${7 * DW}px)`;
+
+  const tracks = names.map(n => {
+    const bars = plan[n].map(p => {
+      const left = p.s * DW, width = Math.max((p.e - p.s) * DW, 6);
+      const tip = `${p.it.nazov}\n${[p.it.cislo, p.it.projekt].filter(Boolean).join(' – ')}\n${fmt(p.startDate)} – ${fmt(p.endDate)} (${p.it.odhad_dni} d)${p.it.termin ? '\ntermín ' + fmt(parseYmd(p.it.termin)) : ''}${p.late ? '\nNESTÍHA o ' + p.lateDays + ' d' : ''}`;
+      return `<div class="gbar${p.late ? ' late' : ''}" style="left:${left}px;width:${width}px;background:${projColor(p.it.cislo || p.it.projekt)}" title="${esc(tip)}"><span>${p.late ? '⚠ ' : ''}${esc(p.it.nazov)}</span></div>`;
+    }).join('');
+    return `<div class="gantt-track" style="width:${W}px;${trackBg}"><div class="gtoday" style="left:${todayIdx * DW}px"></div>${bars}</div>`;
+  }).join('');
+
+  document.getElementById('timeline').innerHTML = `
+    <div class="gantt-flex">
+      <div class="gantt-names"><div class="gantt-names-head">Kolega</div>${names.map(n => `<div class="gantt-name">${esc(n)}</div>`).join('')}</div>
+      <div class="gantt-scroll" id="ganttScroll">
+        <div style="width:${W}px"><div class="gantt-months">${monthCells}</div><div class="gantt-days">${dayCells}</div></div>
+        <div style="width:${W}px">${tracks}</div>
+      </div>
+    </div>
+    <div class="legend"><span>farba pruhu = projekt</span><span style="color:var(--red)">⚠ červený obrys = nestíha termín</span><span>šedé = víkend</span><span style="color:var(--red)">┃ červená čiara = dnes</span></div>`;
+
+  // ── zoznamy poradia ──
+  document.getElementById('lists').innerHTML = names.map(n => {
+    const list = plan[n];
+    const nLate = list.filter(p => p.late).length;
+    const head = `<div class="person-hdr"><b>${esc(n)}</b><span class="sub">${list.length} ${list.length === 1 ? 'úloha' : list.length < 5 ? 'úlohy' : 'úloh'} · práca do ${fmt(list[list.length - 1].endDate)}</span>${nLate ? `<span class="badge-late">⚠ ${nLate} nestíha termín</span>` : ''}</div>`;
+    const body = list.map((p, i) => {
+      const it = p.it;
+      const arrows = isEditor
+        ? `<div class="arrows"><button class="ibtn" title="Skôr" ${i === 0 ? 'disabled' : ''} onclick="moveTask(${it.task_id},-1)">▲</button><button class="ibtn" title="Neskôr" ${i === list.length - 1 ? 'disabled' : ''} onclick="moveTask(${it.task_id},1)">▼</button></div>` : '';
+      const est = isEditor
+        ? `<label class="est">zostáva <input type="number" min="0.5" step="0.5" value="${it.odhad_dni}" onchange="setOdhad(${it.task_id}, this.value)"> dní</label>`
+        : `<span class="est">zostáva ${it.odhad_dni} d</span>`;
+      const termTxt = it.termin
+        ? (p.late ? `termín ${fmt(parseYmd(it.termin))} · ⚠ o ${p.lateDays} d neskôr` : `termín ${fmt(parseYmd(it.termin))}`)
+        : 'bez termínu';
+      return `<div class="trow">
+        <span class="no">${i + 1}.</span>${arrows}
+        <div class="grow"><div class="nm">${esc(it.nazov)}</div><div class="pj">${esc([it.cislo, it.projekt].filter(Boolean).join(' – '))}</div></div>
+        ${est}
+        <span class="when">${fmt(p.startDate)} – ${fmt(p.endDate)}</span>
+        <span class="term${p.late ? ' late' : ''}">${termTxt}</span>
+      </div>`;
+    }).join('');
+    return `<div class="card">${head}${body}</div>`;
+  }).join('');
+}
+
+// ── ÚPRAVY PLÁNU (len editor) ────────────────────────────────────────────────
+async function moveTask(taskId, dir) {
+  if (!isEditor) return;
+  const { map } = byPerson();
+  const r = rows.find(x => x.task_id === taskId); if (!r) return;
+  const list = map[r.projektant];
+  const i = list.findIndex(x => x.task_id === taskId);
+  const j = i + dir;
+  if (j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  const changed = [];
+  list.forEach((x, idx) => { if (x.poradie !== idx) { x.poradie = idx; changed.push(x); } });
+  render();
+  const res = await Promise.all(changed.map(x => sb.from('plan_ulohy').update({ poradie: x.poradie }).eq('task_id', x.task_id)));
+  if (res.some(q => q.error)) { showToast('Zmenu poradia sa nepodarilo uložiť', 'err'); loadAll(); }
+}
+
+async function setOdhad(taskId, val) {
+  if (!isEditor) return;
+  const v = parseFloat(String(val).replace(',', '.'));
+  const r = rows.find(x => x.task_id === taskId); if (!r) return;
+  if (!v || v <= 0) { showToast('Odhad musí byť kladné číslo', 'err'); render(); return; }
+  r.odhad_dni = v;
+  render();
+  const { error } = await sb.from('plan_ulohy').update({ odhad_dni: v }).eq('task_id', taskId);
+  if (error) { showToast('Odhad sa nepodarilo uložiť: ' + error.message, 'err'); loadAll(); }
+}
+
+// ── NAČÍTANIE Z CAFLOU ───────────────────────────────────────────────────────
+// Úlohy s tagom harmon (nedokončené) -> kópia do plan_ulohy. Poradie a odhad dní ostávajú, čo už v pláne je;
+// nové úlohy sa pridajú na koniec radu riešiteľa (odhad 1 deň), zmizli/dokončené/odtagované sa odstránia.
+async function caflouGetAll(path, onPage) {
+  let all = [], page = 1, total = 1;
+  while (page <= total) {
+    const r = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/${path}${path.includes('?') ? '&' : '?'}per=100&page=${page}`,
+      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    all = all.concat(d.results || []);
+    total = d.total_pages || 1;
+    if (onPage) onPage(page, total);
+    page++;
+  }
+  return all;
+}
+
+async function syncFromCaflou() {
+  if (!isEditor) return;
+  if (!cfg.caflou_key || !cfg.caflou_id) { showToast('Chýba prístup ku Caflou — najprv otvor prehľad projektov (index.html)', 'err'); return; }
+  const btn = document.getElementById('btnSync');
+  btn.disabled = true;
+  try {
+    const tasks = await caflouGetAll('tasks', (p, t) => { btn.textContent = `↻ Úlohy ${p}/${t}…`; });
+    const tagged = tasks.filter(t => !t.trash && !t.finished && (t.tags || []).includes(PLAN_TAG));
+    btn.textContent = '↻ Projekty…';
+    const projects = await caflouGetAll('projects');
+    const projById = {};
+    projects.forEach(p => { projById[p.id] = p; });
+
+    const snap = {}, bezRiesitela = [];
+    tagged.forEach(t => {
+      const kto = CAFLOU_ID_TO_NAME[t.target_user_id];
+      if (!kto) { bezRiesitela.push(t.name); return; }
+      const p = projById[t.project_id];
+      snap[t.id] = {
+        task_id: t.id, projektant: kto, nazov: t.name || '(bez názvu)',
+        cislo: p ? (p.order_number || null) : null,
+        projekt: p ? (p.name || null) : (t.project_name || null),
+        termin: t.end_time ? t.end_time.substring(0, 10) : null,
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const existing = {};
+    rows.forEach(r => { existing[r.task_id] = r; });
+    const nextPos = {};   // meno -> ďalšie voľné poradie
+    rows.forEach(r => { nextPos[r.projektant] = Math.max(nextPos[r.projektant] ?? -1, r.poradie); });
+
+    const inserts = [], updates = [];
+    Object.values(snap).forEach(s => {
+      const old = existing[s.task_id];
+      if (!old) {
+        nextPos[s.projektant] = (nextPos[s.projektant] ?? -1) + 1;
+        inserts.push(Object.assign({}, s, { poradie: nextPos[s.projektant], odhad_dni: 1 }));
+      } else if (old.projektant !== s.projektant) {
+        nextPos[s.projektant] = (nextPos[s.projektant] ?? -1) + 1;
+        updates.push(Object.assign({}, s, { poradie: nextPos[s.projektant] }));
+      } else {
+        updates.push(s);
+      }
+    });
+    const toDelete = rows.filter(r => !snap[r.task_id]).map(r => r.task_id);
+
+    btn.textContent = '↻ Ukladám…';
+    const results = [];
+    if (inserts.length) results.push(await sb.from('plan_ulohy').insert(inserts));
+    for (const u of updates) { const { task_id, ...rest } = u; results.push(await sb.from('plan_ulohy').update(rest).eq('task_id', task_id)); }
+    if (toDelete.length) results.push(await sb.from('plan_ulohy').delete().in('task_id', toDelete));
+    const err = results.find(q => q.error);
+    if (err) throw new Error(err.error.message);
+
+    syncNote = bezRiesitela.length ? `<span style="color:var(--red)">bez riešiteľa (nezaradené): ${bezRiesitela.map(esc).join(', ')}</span>` : '';
+    await loadAll();
+    showToast(`Načítané z Caflou: ${Object.keys(snap).length} úloh (nové ${inserts.length}, odstránené ${toDelete.length})`);
+  } catch(e) {
+    showToast('Chyba pri načítaní z Caflou: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '↻ Načítať z Caflou';
+  }
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (type === 'err' ? 'toast-err' : 'toast-ok');
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 4500);
+}
+</script>
+</body>
+</html>

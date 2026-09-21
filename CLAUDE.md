@@ -498,6 +498,23 @@ Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri
 
 **Netreba nová SQL migrácia** — číta sa len existujúca `specialists` tabuľka (read-only, anon key). **Netreba nový OAuth scope** — `https://mail.google.com/` a `https://www.googleapis.com/auth/drive` appka už má.
 
+### Plánovanie práce kolegov (, 2026-09-21)
+
+**Prečo vzniklo:** Jozef uznal, že rozdelenie na fázy/bloky s alokáciou v  je zbytočne zložité — reálna potreba je **jednoduchá**: kolegovia už majú v Caflou zadané úlohy a treba určiť, **čo budú kedy robiť** (poradie + odhad). Začalo sa "od piky" novou stránkou; starý  (fázy, ⚡ automatický plánovač, prideľovanie) **zatiaľ ostáva nedotknutý** — nerozhodnuté, či sa zruší.
+
+**Rozhodnutia (Jozef):** (1) plánuje sa **poradie + odhad dní**, nie voľné ťahanie pruhov; (2) plánujú sa **len úlohy s tagom **; (3) má to byť **jednoduché a prehľadné**; (4) plán vidia všetci kolegovia, upravuje len prihlásený (rovnaký model ako harmonogram: zobrazenie bez prihlásenia, /, magic link, UI-only ochrana).
+
+**Ako to funguje:**
+- Tag: v prehľade projektov je v edit forme úlohy tlačidlo **📅 Plánovať** (pridá/odoberie tag ), úloha s tagom má v riadku ikonu 📅. **Dôležité:** ,  aj  predtým prepisovali  len z  + fáza-tagu, čím by každé uloženie úlohy potichu zmazalo  (a akýkoľvek iný cudzí tag) — teraz sa cez  zachovávajú všetky tagy okrem /fáza-tagov.
+- Tabuľka  (SQL , **treba spustiť ručne**):  (PK, Caflou ID), , ,  (= **zostáva** pracovných dní), a **kópia** z Caflou (, , , ) aby plán videli aj kolegovia bez Caflou prístupu v prehliadači (Caflou kľúč je len v localStorage). Vlastné dáta plánu sú len poradie a odhad.
+- **Tlačidlo "↻ Načítať z Caflou"** (, len editor s Caflou prístupom ): prejde všetky Caflou úlohy (, ~16 strán) a projekty, vyberie  s riešiteľom z tímu. Existujúce zachová (poradie aj odhad), nové pridá na **koniec radu riešiteľa s odhadom 1 deň**, pri zmene riešiteľa v Caflou úlohu presunie na koniec radu nového kolegu, zmiznuté/dokončené/odtagované zmaže a úlohy **bez riešiteľa** vypíše v stavovom riadku (nezaraďuje). Pri prázdnom pláne sa spustí samo (raz, , aby nevznikla slučka).
+- **Rozvrh (//):** os začína pondelkom aktuálneho týždňa (deň = index,  je víkend); pre každého kolegu sa úlohy skladajú **za sebou od dnes** v poradí , práca sa počíta len v pracovných dňoch (víkendy sa preskakujú, sviatky **nie**), odhad môže byť aj 0,5 dňa. Pruhy jedného kolegu sa preto **nikdy neprekrývajú** (žiadne lane-y ako v starom harmonograme).  je "zostáva" — bez sledovania postupu ho treba ručne znižovať, inak sa rad každý deň posúva od nového "dnes".
+- **Nestíha termín:** ak posledný deň práce >  z Caflou, pruh má červený obrys a ⚠, v zozname "termín … · ⚠ o N d neskôr" a pri kolegovi odznak "N nestíha termín". Farby projektov sú zámerne v odtieňoch 40–320 ° (nie červené), aby sa nepomýlili s výstrahou.
+- UI: stavový riadok (počet úloh, kedy naposledy z Caflou), **Časová os** (riadok na kolegu, dnešok červená čiara, víkendy šedé; hlavička s pevnými šírkami  — rovnaké poučenie ako pri harmonograme) a **Poradie a odhady** (karta na kolegu: ▲▼ na zmenu poradia =  prečísluje rad, políčko "zostáva N dní" = , plánované dátumy, termín). Kolegovia vidia všetko okrem ovládacích prvkov.
+- Navigácia: odkaz "Plánovanie práce" v module-nav všetkých stránok + tlačidlo "Plánovanie" v hlavičke prehľadu projektov.
+- **Neimplementované / vedome vynechané:** zmena riešiteľa/termínu/názvu úlohy z tejto stránky (robí sa v Caflou alebo v prehľade projektov a potom "Načítať z Caflou"), zápis plánovaných dátumov späť do Caflou, slovenské sviatky, sledovanie postupu práce, automatické pravidelné načítavanie (dáta sú z posledného kliknutia editora).
+- Overené headless testami s podvrhnutými / (žiadny reálny zápis): rozvrh (štart cez víkend, polovice dňa), ▲▼ a odhad, viewer bez ovládacích prvkov, celá synchronizácia (nové/existujúce/preradené/zmazané/bez riešiteľa). Reálna tabuľka  zatiaľ v Supabase **neexistuje** (bez SQL stránka zobrazí výzvu na jeho spustenie).
+
 ## Other files
 
 ### harmonogram-logic.js (ROZPRACOVANÉ — len logika, žiadne UI)
