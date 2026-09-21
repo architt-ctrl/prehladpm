@@ -123,6 +123,9 @@
     .suggest-item:hover{background:var(--bg3)}
 
     .hidden{display:none!important}
+    /* Kolegovia harmonogram len vidia (bez prihlásenia); úpravy a prideľovanie sú len pre prihláseného (Jozef) */
+    body:not(.is-editor) .editor-only{display:none!important}
+    body.is-editor .viewer-only{display:none!important}
     .empty{padding:24px 16px;color:var(--text2);font-size:13px;text-align:center}
     .toast{display:none;position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:8px;font-size:14px;font-weight:500;z-index:9999;white-space:nowrap}
     .toast-ok{background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
@@ -139,31 +142,31 @@
   <a href="harmonogram.html" class="mnav-a cur">Harmonogram</a>
 </nav>
 
-<div id="authLoading" style="text-align:center;padding:60px 16px;color:var(--text2);font-size:13px">Načítavam…</div>
-
-<!-- LOGIN -->
+<!-- LOGIN (len pre úpravy - zobrazí sa na požiadanie tlačidlom "Prihlásiť") -->
 <div id="loginWrap" class="hidden">
   <div class="login-card">
-    <h2>Harmonogram</h2>
-    <p>Prihláste sa pomocou e-mailovej adresy.</p>
+    <h2>Harmonogram — úpravy</h2>
+    <p>Harmonogram vidí každý bez prihlásenia. Prihlásenie je potrebné len na jeho úpravu.</p>
     <div class="frow">
       <label>E-mail</label>
       <input class="finput" type="email" id="loginEmail" placeholder="vas@email.com">
     </div>
     <div id="loginMsg"></div>
     <button class="btn btn-p" style="width:100%;justify-content:center" onclick="sendMagicLink()">Poslať prihlasovací link</button>
+    <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:8px" onclick="hideLogin()">Späť na harmonogram</button>
   </div>
 </div>
 
-<!-- ADMIN -->
-<div id="adminWrap" class="hidden">
+<!-- HLAVNÝ OBSAH (viditeľný pre všetkých; úpravy len pre prihláseného) -->
+<div id="adminWrap">
   <div class="page-hdr">
     <h1>Harmonogram</h1>
-    <span style="font-size:12px;color:var(--text3)" id="navEmail"></span>
-    <button class="btn btn-g btn-sm" onclick="sb.auth.signOut()">Odhlásiť</button>
+    <span style="font-size:12px;color:var(--text3)" id="navEmail" class="editor-only"></span>
+    <button class="btn btn-g btn-sm editor-only" onclick="sb.auth.signOut()">Odhlásiť</button>
+    <button class="btn btn-g btn-sm viewer-only" onclick="showLogin()" title="Len na úpravu harmonogramu">🔒 Prihlásiť (úpravy)</button>
   </div>
   <div class="main">
-    <div class="btn-row" style="margin-bottom:16px">
+    <div class="btn-row editor-only" style="margin-bottom:16px">
       <button class="btn btn-p btn-sm" onclick="openFazaModal()">+ Pridať fázu</button>
       <button class="btn btn-grn btn-sm" id="btnPlan" onclick="naplanovat()">⚡ Naplánovať čakajúce</button>
     </div>
@@ -277,6 +280,28 @@
 </div>
 </div>
 
+<!-- MODAL: prideliť ako úlohu v Caflou -->
+<div class="overlay hidden" id="modalTask">
+<div class="modal">
+  <h3>Prideliť ako úlohu</h3>
+  <div id="mTInfo" class="alert alert-ok"></div>
+  <div class="frow"><label>Názov úlohy v Caflou</label><input class="finput" id="mTName"></div>
+  <div class="frow-2">
+    <div class="frow"><label>Kto na tom bude robiť</label><select class="finput" id="mTKto"></select></div>
+    <div class="frow"><label>Trvanie (týždne)</label><input class="finput" type="number" id="mTTrv" step="0.5" min="0.5" oninput="taskCalcEnd()"></div>
+  </div>
+  <div class="frow-2">
+    <div class="frow"><label>Začiatok</label><input class="finput" type="date" id="mTStart" oninput="taskCalcEnd()"></div>
+    <div class="frow"><label>Termín (dokedy má byť hotové)</label><input class="finput" type="date" id="mTEnd" oninput="taskCalcStart()"></div>
+  </div>
+  <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Zmena začiatku alebo trvania prepočíta termín, zmena termínu posunie začiatok. Termín sa prenesie do úlohy v Caflou a fáza sa zaradí do harmonogramu.</div>
+  <div class="btn-row" style="justify-content:flex-end">
+    <button class="btn btn-g" onclick="closeTaskModal()">Zrušiť</button>
+    <button class="btn btn-p" id="mTSave" onclick="saveTaskAssign()">Prideliť a vytvoriť úlohu</button>
+  </div>
+</div>
+</div>
+
 <!-- MODAL: výsledok plánovania -->
 <div class="overlay hidden" id="modalPlan">
 <div class="modal">
@@ -305,47 +330,56 @@ let rows = [];          // logic-tvar riadky (Date objekty, koniec_datum dopoč�
 let rawById = {};       // id -> surový DB riadok (pre edit formulár)
 let simById = {};       // id -> {realny_koniec, spomalene} zo simulácie reálneho priebehu (prekryvy nad 100 %)
 let caflouProjects = [];
-let caflouNames = {};   // cislo -> názov projektu (len na zobrazenie)
+let caflouNames = {};   // cislo -> názov projektu z Caflou (len ak má prehliadač Caflou prístup)
+let rowNames = {};      // cislo -> názov projektu uložený v harmonogram.nazov (vidia ho aj kolegovia bez Caflou prístupu)
+let hasNazovCol = false; // stĺpec harmonogram.nazov existuje až po spustení supabase/harmonogram-nazov-setup.sql
 let editFazaId = null;
+let taskModalId = null;
 
-// ── AUTH (rovnaký vzor ako ponuky.html) ──────────────────────────────────────
-let _initialLoadDone = false;
+// Prideľovanie ako Caflou úloha — rovnaké ID ako CAFLOU_USERS / CAFLOU_TASK_STATUS_IDS v index.html
+const CAFLOU_USER_IDS = { 'Alexandra':49418, 'Tomáš':49419, 'Lenka':50217, 'Miroslava':50218, 'Jozef':50219, 'Ivan':50357, 'Soňa':51092, 'Andrea':52049, 'Erik':52890, 'Veronika':57218, 'Lucia':63559 };
+const CAFLOU_TASK_STATUS_NOVE = 1377380;
+const CAFLOU_WEB = 'https://app.caflou.com/tornyos';
+const FAZA_TO_TASK_TAG = { 'Studia':'AŠ', 'SZ':'SZ', 'RP':'RP', 'Inziniering':'INŽ' };
+
+// ── ZOBRAZENIE PRE VŠETKÝCH, ÚPRAVY LEN PRE PRIHLÁSENÉHO ─────────────────────
+// Harmonogram vidí každý (aj kolegovia) bez prihlásenia — RLS na tabuľke `harmonogram` je otvorená
+// (supabase/harmonogram-setup.sql), takže čítanie funguje s anon kľúčom. Prihlásenie (magic link,
+// rovnaký vzor ako ponuky.html) len prepne "editor" režim: tlačidlá na úpravu/prideľovanie sa
+// zobrazia len tam. Je to ochrana na úrovni UI, nie skutočná autorizácia (RLS je otvorená).
+let isEditor = false;
+let _dataLoaded = false;
+
+function setEditor(on, email) {
+  isEditor = !!on;
+  document.body.classList.toggle('is-editor', isEditor);
+  document.getElementById('navEmail').textContent = email || '';
+  if (isEditor) hideLogin();
+  if (_dataLoaded) { renderAll(); backfillNazvy(); }
+}
+function showLogin() {
+  document.getElementById('loginWrap').classList.remove('hidden');
+  document.getElementById('adminWrap').classList.add('hidden');
+}
+function hideLogin() {
+  document.getElementById('loginWrap').classList.add('hidden');
+  document.getElementById('adminWrap').classList.remove('hidden');
+}
+
 (async function() {
   try {
+    // optimistic: ak je v prehliadači uložená session, zobraz editor režim hneď (bez čakania na token refresh)
     const raw = localStorage.getItem('sb-cfjkomqxzqflotrqxfyl-auth-token');
     const s = raw ? JSON.parse(raw) : null;
-    if (s?.user?.email) {
-      document.getElementById('authLoading').classList.add('hidden');
-      document.getElementById('adminWrap').classList.remove('hidden');
-      document.getElementById('navEmail').textContent = s.user.email;
-      _initialLoadDone = true;
-      await loadAll();
-      loadCaflouProjects();
-    }
+    if (s?.user?.email) setEditor(true, s.user.email);
   } catch(e) {}
+  await loadAll();
+  loadCaflouProjects();
 })();
 
-sb.auth.onAuthStateChange(async (event, session) => {
-  document.getElementById('authLoading').classList.add('hidden');
-  if (event === 'SIGNED_OUT') {
-    _initialLoadDone = false;
-    document.getElementById('loginWrap').classList.remove('hidden');
-    document.getElementById('adminWrap').classList.add('hidden');
-    return;
-  }
-  if (session) {
-    document.getElementById('loginWrap').classList.add('hidden');
-    document.getElementById('adminWrap').classList.remove('hidden');
-    document.getElementById('navEmail').textContent = session.user.email;
-    if (!_initialLoadDone) {
-      _initialLoadDone = true;
-      await loadAll();
-      loadCaflouProjects();
-    }
-  } else if (!_initialLoadDone) {
-    document.getElementById('loginWrap').classList.remove('hidden');
-    document.getElementById('adminWrap').classList.add('hidden');
-  }
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') { setEditor(false); return; }
+  if (session) setEditor(true, session.user.email);
 });
 
 async function sendMagicLink() {
@@ -364,13 +398,30 @@ async function loadAll() {
     return;
   }
   rawById = {};
-  (data || []).forEach(r => { rawById[r.id] = r; });
+  rowNames = {};
+  (data || []).forEach(r => { rawById[r.id] = r; if (r.nazov) rowNames[r.cislo] = r.nazov; });
+  hasNazovCol = (data || []).length > 0 && ('nazov' in data[0]);
   rows = (data || []).map(harmRowToLogic);
   // reálny priebeh: pri ručných prekryvoch nad 100 % sa práce spomalia a konce posunú
   simById = {};
   harmSimulujRealne(rows.filter(r => r.start_datum)).priradenia
     .forEach(p => { simById[p.id] = { realny_koniec: p.realny_koniec, spomalene: p.spomalene }; });
+  _dataLoaded = true;
   renderAll();
+  backfillNazvy();
+}
+
+// Editor s Caflou prístupom doplní názvy projektov do harmonogram.nazov, aby ich videli aj kolegovia
+// bez Caflou prístupu (inak by videli len čísla projektov). Nič nerobí, kým nie je spustená SQL migrácia.
+function backfillNazvy() {
+  if (!isEditor || !hasNazovCol) return;
+  [...new Set(Object.values(rawById).map(r => r.cislo))].forEach(c => {
+    const n = caflouNames[c];
+    if (n && rowNames[c] !== n) {
+      rowNames[c] = n;
+      sb.from('harmonogram').update({ nazov: n }).eq('cislo', c).then(null, () => {});
+    }
+  });
 }
 
 function fmtD(d) {
@@ -383,7 +434,7 @@ function esc(s) {
 }
 
 function projLabel(cislo) {
-  const n = caflouNames[cislo];
+  const n = caflouNames[cislo] || rowNames[cislo];
   return n ? `${cislo} – ${n}` : cislo;
 }
 
@@ -496,7 +547,8 @@ function renderTimeline() {
       const label = `${projLabel(r.cislo)} · ${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' · ' + (POD_SKRATKA[r.podpodfaza] || '') : ''}`;
       const tip = `${projLabel(r.cislo)}\n${FAZA_LABEL[r.faza_kod] || r.faza_kod}${r.podpodfaza ? ' – ' + r.podpodfaza : ''}\n${fmtD(r.start_datum)} – ${fmtD(r.koniec_datum)}${spomalene ? ` (reálne do ${fmtD(realEnd)})` : ''}\n${r.alokacia_percent}% kapacity${r.poznamka ? '\n' + r.poznamka : ''}`;
       const extra = spomalene ? `<div class="gantt-bar-extra" style="width:${totalW - nominalW}px"></div>` : '';
-      return `<div class="gantt-bar" style="left:${left}px;width:${totalW}px;top:${lane * ROWH + 3}px;background:${color}" title="${esc(tip)}" onclick="openFazaModal('${r.id}')">
+      const barClick = isEditor ? ` onclick="openFazaModal('${r.id}')"` : '';
+      return `<div class="gantt-bar" style="left:${left}px;width:${totalW}px;top:${lane * ROWH + 3}px;background:${color};cursor:${isEditor ? 'pointer' : 'default'}" title="${esc(tip)}"${barClick}>
         <span class="gantt-bar-lbl">${esc(label)}</span>${extra}
       </div>`;
     }).join('');
@@ -537,7 +589,16 @@ function renderTimeline() {
   }
 }
 
+// Prepojenie s Caflou úlohou: kolegovia vidia odkaz na úlohu, editor (Jozef) vie vec pridelením úlohu vytvoriť
+function taskChip(r) {
+  if (r.caflou_task_id) {
+    return `<a class="badge b-ready" style="text-decoration:none" target="_blank" rel="noopener" href="${CAFLOU_WEB}/tasks/${r.caflou_task_id}" title="Otvoriť úlohu v Caflou">📌 úloha v Caflou</a>`;
+  }
+  return isEditor ? `<button class="btn btn-g btn-sm" onclick="openTaskModal('${r.id}')">📌 Prideliť ako úlohu</button>` : '';
+}
+
 function rowActions(r) {
+  if (!isEditor) return '';
   let h = `<button class="ibtn" title="Upraviť" onclick="openFazaModal('${r.id}')">✎</button>`;
   if (r.start_datum) h += `<button class="ibtn" title="Zrušiť naplánovanie" onclick="zrusStart('${r.id}')">↺</button>`;
   h += `<button class="ibtn" title="Vymazať" onclick="deleteFaza('${r.id}')">✕</button>`;
@@ -568,6 +629,7 @@ function renderPlanned() {
             <div class="sub">${fazaBadges(r)}${spomalene ? ' <span class="badge b-wait">spomalené — súbeh prác</span>' : ''}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
           </div>
           <span class="dates">${datumy} · ${r.alokacia_percent}%</span>
+          ${taskChip(r)}
           ${rowActions(r)}
         </div>`;
       }).join('');
@@ -588,7 +650,8 @@ function renderWaiting() {
         <div class="nm">${esc(projLabel(r.cislo))}</div>
         <div class="sub">${fazaBadges(r)} · ${esc(r.projektant)} · ${r.trvanie_tyzdne} týž. · ${r.alokacia_percent}%${r.najskor_od ? ' · najskôr od ' + fmtD(r.najskor_od) : ''}${r.poznamka ? ' · ' + esc(r.poznamka) : ''}</div>
       </div>
-      <button class="btn btn-g btn-sm" onclick="toggleReady('${r.id}', ${r.pripravene_pokracovat ? 'false' : 'true'})">${r.pripravene_pokracovat ? '⏸ pozastaviť' : '▶ pripravené'}</button>
+      ${taskChip(r)}
+      ${isEditor ? `<button class="btn btn-g btn-sm" onclick="toggleReady('${r.id}', ${r.pripravene_pokracovat ? 'false' : 'true'})">${r.pripravene_pokracovat ? '⏸ pozastaviť' : '▶ pripravené'}</button>` : ''}
       ${rowActions(r)}
     </div>`;
 
@@ -600,6 +663,7 @@ function renderWaiting() {
 
 // ── AKCIE ─────────────────────────────────────────────────────────────────────
 async function naplanovat() {
+  if (!isEditor) return;
   const btn = document.getElementById('btnPlan');
   btn.disabled = true; btn.textContent = '⚡ Plánujem…';
   try {
@@ -636,6 +700,7 @@ async function naplanovat() {
 }
 
 async function zrusStart(id) {
+  if (!isEditor) return;
   if (!confirm('Zrušiť naplánovanie? Fáza sa vráti medzi čakajúce.')) return;
   const { error } = await sb.from('harmonogram').update({ start_datum: null }).eq('id', id);
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
@@ -644,12 +709,14 @@ async function zrusStart(id) {
 }
 
 async function toggleReady(id, val) {
+  if (!isEditor) return;
   const { error } = await sb.from('harmonogram').update({ pripravene_pokracovat: val }).eq('id', id);
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
   loadAll();
 }
 
 async function deleteFaza(id) {
+  if (!isEditor) return;
   const r = rawById[id];
   if (!confirm(`Vymazať fázu ${r ? r.cislo + ' ' + r.faza_kod : ''}?`)) return;
   const { error } = await sb.from('harmonogram').delete().eq('id', id);
@@ -683,6 +750,7 @@ function syncStavVisibility() {
 }
 
 function openFazaModal(id) {
+  if (!isEditor) return;
   editFazaId = id || null;
   const r = id ? rawById[id] : null;
   document.getElementById('mFTitle').textContent = r ? 'Upraviť blok fázy' : 'Nová fáza';
@@ -725,6 +793,7 @@ function closeFazaModal() {
 }
 
 async function saveFaza() {
+  if (!isEditor) return;
   const cislo = document.getElementById('mFCislo').value.trim();
   if (!cislo) { showToast('Chýba číslo projektu', 'err'); return; }
 
@@ -744,6 +813,8 @@ async function saveFaza() {
     ozvali_sa_datum: document.getElementById('mFOzvali').value || new Date().toISOString().slice(0, 10),
     poznamka: document.getElementById('mFPozn').value.trim() || null,
   };
+  // názov projektu sa ukladá len ak už existuje stĺpec (po SQL migrácii) — inak by insert/update zlyhal
+  if (hasNazovCol) spolocne.nazov = caflouNames[cislo] || document.getElementById('mFNazov').value.trim() || rowNames[cislo] || null;
 
   const cistaAlokacia = v => Math.min(100, Math.max(1, parseInt(v) || 100));
   let q;
@@ -785,9 +856,150 @@ async function saveFaza() {
 
   const { error } = await q;
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  const upravenyId = editFazaId;
   showToast(editFazaId ? 'Blok upravený' : 'Fáza pridaná');
   closeFazaModal();
-  loadAll();
+  await loadAll();
+  if (upravenyId) syncLinkedTask(upravenyId);
+}
+
+// Ak je riadok prepojený s Caflou úlohou, drží sa jej riešiteľ a termín v súlade s harmonogramom
+// (termín = reálny koniec zo simulácie, ak je práca spomalená súbehom). Best-effort — chyba len upozorní.
+async function syncLinkedTask(id) {
+  const r = rows.find(x => x.id === id);
+  if (!r || !r.caflou_task_id || !cfg.caflou_key || !cfg.caflou_id) return;
+  const userId = CAFLOU_USER_IDS[r.projektant];
+  const koniec = r.start_datum ? ((simById[r.id] && simById[r.id].realny_koniec) || r.koniec_datum) : null;
+  const task = {
+    ...(userId ? { target_user_id: userId } : {}),
+    ...(koniec ? { end_time: harmFormatDate(koniec) + 'T17:00:00+02:00' } : {}),
+  };
+  if (!Object.keys(task).length) return;
+  try {
+    const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${r.caflou_task_id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task })
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    showToast('Termín a riešiteľ prenesené do úlohy v Caflou');
+  } catch(e) {
+    showToast('Úlohu v Caflou sa nepodarilo aktualizovať: ' + e.message, 'err');
+  }
+}
+
+// ── PRIDELIŤ AKO ÚLOHU V CAFLOU ──────────────────────────────────────────────
+function taskFazaTag(r) {
+  if (FAZA_TO_TASK_TAG[r.faza_kod]) return FAZA_TO_TASK_TAG[r.faza_kod];
+  if (r.faza_kod === 'DSP/PS') {
+    const p = caflouProjects.find(x => x.order_number === r.cislo);
+    return p && p.project_status_name === '3_DSP' ? 'DSP' : 'PS';
+  }
+  return null;
+}
+
+function dnesStr() { return harmFormatDate(new Date()); }
+
+function addDaysStr(dateStr, days) {
+  const d = harmParseDate(dateStr);
+  if (!d) return '';
+  // zložky dátumu (nie milisekundy), aby posun cez zmenu letného času neposunul výsledok o deň
+  return harmFormatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days));
+}
+
+function taskCalcEnd() {
+  const start = document.getElementById('mTStart').value;
+  const trv = parseFloat(document.getElementById('mTTrv').value);
+  if (!start || !trv) return;
+  document.getElementById('mTEnd').value = addDaysStr(start, Math.round(trv * 7));
+}
+
+function taskCalcStart() {
+  const end = document.getElementById('mTEnd').value;
+  const trv = parseFloat(document.getElementById('mTTrv').value);
+  if (!end || !trv) return;
+  document.getElementById('mTStart').value = addDaysStr(end, -Math.round(trv * 7));
+}
+
+function openTaskModal(id) {
+  if (!isEditor) return;
+  const r = rawById[id]; if (!r) return;
+  taskModalId = id;
+  const lr = rows.find(x => x.id === id);
+  document.getElementById('mTInfo').innerHTML = `<strong>${esc(projLabel(r.cislo))}</strong> · ${esc(FAZA_LABEL[r.faza_kod] || r.faza_kod)}${r.podpodfaza ? ' – ' + esc(r.podpodfaza) : ''}`;
+  document.getElementById('mTName').value = (FAZA_LABEL[r.faza_kod] || r.faza_kod) + (r.podpodfaza ? ' – ' + r.podpodfaza : '');
+  document.getElementById('mTKto').innerHTML = HARM_PROJEKTANTI.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  document.getElementById('mTKto').value = HARM_PROJEKTANTI.includes(r.projektant) ? r.projektant : 'Jozef';
+  document.getElementById('mTTrv').value = r.trvanie_tyzdne;
+  // už naplánovaná fáza si nechá svoj začiatok; čakajúca začne dnes (alebo najskôr od dátumu, ak je zadaný)
+  const dnes = dnesStr();
+  const najskor = r.najskor_od && r.najskor_od > dnes ? r.najskor_od : dnes;
+  document.getElementById('mTStart').value = r.start_datum || najskor;
+  taskCalcEnd();
+  document.getElementById('modalTask').classList.remove('hidden');
+}
+
+function closeTaskModal() {
+  document.getElementById('modalTask').classList.add('hidden');
+  taskModalId = null;
+}
+
+async function saveTaskAssign() {
+  if (!isEditor) return;
+  const r = rawById[taskModalId]; if (!r) return;
+  const name = document.getElementById('mTName').value.trim();
+  const kto = document.getElementById('mTKto').value;
+  const trv = parseFloat(document.getElementById('mTTrv').value);
+  const start = document.getElementById('mTStart').value;
+  const end = document.getElementById('mTEnd').value;
+  if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
+  if (!trv || trv <= 0) { showToast('Chýba trvanie', 'err'); return; }
+  if (!start || !end) { showToast('Zadaj začiatok a termín', 'err'); return; }
+  if (end < start) { showToast('Termín nemôže byť pred začiatkom', 'err'); return; }
+  const userId = CAFLOU_USER_IDS[kto];
+  if (!userId) { showToast('Neznámy člen tímu: ' + kto, 'err'); return; }
+  if (!cfg.caflou_key || !cfg.caflou_id) { showToast('Chýba prístup ku Caflou — najprv otvor prehľad projektov (index.html)', 'err'); return; }
+
+  const btn = document.getElementById('mTSave');
+  btn.disabled = true; btn.textContent = 'Vytváram…';
+  try {
+    await loadCaflouProjects();
+    const proj = caflouProjects.find(p => p.order_number === r.cislo);
+    if (!proj) throw new Error('Projekt ' + r.cislo + ' sa v Caflou nenašiel');
+    const tag = taskFazaTag(r);
+    const body = { task: {
+      name, project_id: proj.id,
+      task_status_id: CAFLOU_TASK_STATUS_NOVE,
+      target_user_id: userId,
+      end_time: end + 'T17:00:00+02:00',
+      ...(tag ? { tags: [tag] } : {}),
+    }};
+    const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const rd = await resp.json();
+    const taskId = (rd.result && rd.result.id) || rd.id;
+    if (!taskId) throw new Error('Caflou nevrátil ID úlohy');
+
+    const { error } = await sb.from('harmonogram').update({
+      projektant: kto, start_datum: start, trvanie_tyzdne: trv,
+      pripravene_pokracovat: true, caflou_task_id: taskId,
+    }).eq('id', r.id);
+    if (error) {
+      showToast('Úloha je v Caflou vytvorená (ID ' + taskId + '), ale zápis do harmonogramu zlyhal: ' + error.message, 'err');
+    } else {
+      showToast('Úloha pridelená (' + kto + ', termín ' + end.split('-').reverse().join('.') + ')');
+    }
+    closeTaskModal();
+    loadAll();
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Prideliť a vytvoriť úlohu';
+  }
 }
 
 // ── CAFLOU AUTOCOMPLETE (rovnaký vzor ako ponuky.html) ────────────────────────
@@ -809,6 +1021,7 @@ async function loadCaflouProjects() {
     caflouNames = {};
     all.forEach(p => { if (p.order_number) caflouNames[p.order_number] = p.name || ''; });
     renderAll(); // doplň názvy projektov do už vykreslených riadkov
+    backfillNazvy();
   } catch(e) {}
 }
 
