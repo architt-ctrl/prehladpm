@@ -285,7 +285,16 @@
 <div class="modal">
   <h3>Prideliť ako úlohu</h3>
   <div id="mTInfo" class="alert alert-ok"></div>
-  <div class="frow"><label>Názov úlohy v Caflou</label><input class="finput" id="mTName"></div>
+  <div class="frow" style="display:flex;flex-direction:column;gap:6px">
+    <label class="chk-lbl"><input type="radio" name="mTMode" value="new" checked onchange="syncTaskMode()"> 🆕 Vytvoriť novú úlohu v Caflou</label>
+    <label class="chk-lbl"><input type="radio" name="mTMode" value="existing" onchange="syncTaskMode()"> 🔗 Prepojiť s už existujúcou úlohou</label>
+  </div>
+  <div class="frow" id="mTNewWrap"><label>Názov úlohy v Caflou</label><input class="finput" id="mTName"></div>
+  <div class="frow" id="mTExistWrap" style="display:none">
+    <label>Úloha v Caflou (interné, nedokončené, ešte neprepojené)</label>
+    <select class="finput" id="mTExisting" onchange="taskPickExisting()"></select>
+    <div id="mTExistMsg" style="font-size:12px;color:var(--text3);margin-top:5px"></div>
+  </div>
   <div class="frow-2">
     <div class="frow"><label>Kto na tom bude robiť</label><select class="finput" id="mTKto"></select></div>
     <div class="frow"><label>Trvanie (týždne)</label><input class="finput" type="number" id="mTTrv" step="0.5" min="0.5" oninput="taskCalcEnd()"></div>
@@ -294,7 +303,7 @@
     <div class="frow"><label>Začiatok</label><input class="finput" type="date" id="mTStart" oninput="taskCalcEnd()"></div>
     <div class="frow"><label>Termín (dokedy má byť hotové)</label><input class="finput" type="date" id="mTEnd" oninput="taskCalcStart()"></div>
   </div>
-  <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Zmena začiatku alebo trvania prepočíta termín, zmena termínu posunie začiatok. Termín sa prenesie do úlohy v Caflou a fáza sa zaradí do harmonogramu.</div>
+  <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Zmena začiatku alebo trvania prepočíta termín, zmena termínu posunie začiatok. Termín sa prenesie do úlohy v Caflou a fáza sa zaradí do harmonogramu. <span id="mTExistNote" style="display:none"><strong>Pri prepojení sa riešiteľ a termín existujúcej úlohy v Caflou prepíšu podľa tohto formulára.</strong></span></div>
   <div class="btn-row" style="justify-content:flex-end">
     <button class="btn btn-g" onclick="closeTaskModal()">Zrušiť</button>
     <button class="btn btn-p" id="mTSave" onclick="saveTaskAssign()">Prideliť a vytvoriť úlohu</button>
@@ -339,6 +348,8 @@ let taskModalId = null;
 // Prideľovanie ako Caflou úloha — rovnaké ID ako CAFLOU_USERS / CAFLOU_TASK_STATUS_IDS v index.html
 const CAFLOU_USER_IDS = { 'Alexandra':49418, 'Tomáš':49419, 'Lenka':50217, 'Miroslava':50218, 'Jozef':50219, 'Ivan':50357, 'Soňa':51092, 'Andrea':52049, 'Erik':52890, 'Veronika':57218, 'Lucia':63559 };
 const CAFLOU_TASK_STATUS_NOVE = 1377380;
+const CAFLOU_ID_TO_NAME = Object.fromEntries(Object.entries(CAFLOU_USER_IDS).map(([n, id]) => [id, n]));
+const projTasksCache = {}; // cislo -> úlohy projektu z Caflou (pre prepojenie s existujúcou úlohou)
 const CAFLOU_WEB = 'https://app.caflou.com/tornyos';
 const FAZA_TO_TASK_TAG = { 'Studia':'AŠ', 'SZ':'SZ', 'RP':'RP', 'Inziniering':'INŽ' };
 
@@ -592,7 +603,8 @@ function renderTimeline() {
 // Prepojenie s Caflou úlohou: kolegovia vidia odkaz na úlohu, editor (Jozef) vie vec pridelením úlohu vytvoriť
 function taskChip(r) {
   if (r.caflou_task_id) {
-    return `<a class="badge b-ready" style="text-decoration:none" target="_blank" rel="noopener" href="${CAFLOU_WEB}/tasks/${r.caflou_task_id}" title="Otvoriť úlohu v Caflou">📌 úloha v Caflou</a>`;
+    const unlink = isEditor ? `<button class="ibtn" style="font-size:11px" title="Odpojiť od úlohy (úloha v Caflou ostane)" onclick="unlinkTask('${r.id}')">odpojiť</button>` : '';
+    return `<a class="badge b-ready" style="text-decoration:none" target="_blank" rel="noopener" href="${CAFLOU_WEB}/tasks/${r.caflou_task_id}" title="Otvoriť úlohu v Caflou">📌 úloha v Caflou</a>${unlink}`;
   }
   return isEditor ? `<button class="btn btn-g btn-sm" onclick="openTaskModal('${r.id}')">📌 Prideliť ako úlohu</button>` : '';
 }
@@ -936,7 +948,94 @@ function openTaskModal(id) {
   const najskor = r.najskor_od && r.najskor_od > dnes ? r.najskor_od : dnes;
   document.getElementById('mTStart').value = r.start_datum || najskor;
   taskCalcEnd();
+  document.querySelector('input[name="mTMode"][value="new"]').checked = true;
+  syncTaskMode();
   document.getElementById('modalTask').classList.remove('hidden');
+}
+
+function taskMode() {
+  return (document.querySelector('input[name="mTMode"]:checked') || {}).value || 'new';
+}
+
+function syncTaskMode() {
+  const existing = taskMode() === 'existing';
+  document.getElementById('mTNewWrap').style.display = existing ? 'none' : '';
+  document.getElementById('mTExistWrap').style.display = existing ? '' : 'none';
+  document.getElementById('mTExistNote').style.display = existing ? '' : 'none';
+  document.getElementById('mTSave').textContent = existing ? 'Prepojiť s úlohou' : 'Prideliť a vytvoriť úlohu';
+  if (existing) loadExistingOptions();
+}
+
+// Úlohy projektu z Caflou — filter project_id na /tasks server ignoruje (viď CLAUDE.md), preto sa prechádzajú
+// stránky a berú sa len ID z projektu (task_ids z API projektov), koniec keď sú nájdené všetky.
+async function loadProjectTasks(cislo) {
+  if (projTasksCache[cislo]) return projTasksCache[cislo];
+  await loadCaflouProjects();
+  const proj = caflouProjects.find(p => p.order_number === cislo);
+  if (!proj) throw new Error('Projekt ' + cislo + ' sa v Caflou nenašiel');
+  const idSet = new Set((proj.task_ids || []).map(Number));
+  let all = [], page = 1, totalPages = 1;
+  while (idSet.size && page <= totalPages) {
+    const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${cfg.caflou_key}` }
+    });
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error);
+    all = all.concat((d.results || []).filter(t => idSet.has(Number(t.id))));
+    if (all.length >= idSet.size) break;
+    totalPages = d.total_pages || 1;
+    page++;
+  }
+  projTasksCache[cislo] = all;
+  return all;
+}
+
+async function loadExistingOptions() {
+  const r = rawById[taskModalId]; if (!r) return;
+  const sel = document.getElementById('mTExisting');
+  const msg = document.getElementById('mTExistMsg');
+  if (!cfg.caflou_key || !cfg.caflou_id) { msg.textContent = 'Chýba prístup ku Caflou — najprv otvor prehľad projektov (index.html).'; sel.innerHTML = ''; return; }
+  sel.innerHTML = '<option value="">Načítavam…</option>';
+  msg.textContent = '';
+  try {
+    const tasks = await loadProjectTasks(r.cislo);
+    const uzPrepojene = new Set(rows.filter(x => x.caflou_task_id).map(x => Number(x.caflou_task_id)));
+    const volne = tasks
+      .filter(t => !t.finished && !t.trash && !(t.tags || []).includes('ext') && !uzPrepojene.has(Number(t.id)))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'sk'));
+    sel.innerHTML = '<option value="">— vyber úlohu —</option>' + volne.map(t => {
+      const kto = CAFLOU_ID_TO_NAME[t.target_user_id] || 'bez riešiteľa';
+      const dokedy = t.end_time ? ' · do ' + fmtD(harmParseDate(t.end_time.substring(0, 10))) : '';
+      return `<option value="${t.id}">${esc(t.name)} · ${esc(kto)}${dokedy}</option>`;
+    }).join('');
+    msg.textContent = volne.length ? '' : 'V projekte nie je žiadna voľná interná úloha na prepojenie.';
+  } catch(e) {
+    sel.innerHTML = '';
+    msg.textContent = 'Úlohy sa nepodarilo načítať: ' + e.message;
+  }
+}
+
+// Po výbere existujúcej úlohy sa formulár predvyplní jej riešiteľom a termínom (dá sa ešte upraviť)
+function taskPickExisting() {
+  const r = rawById[taskModalId]; if (!r) return;
+  const id = document.getElementById('mTExisting').value;
+  const t = ((projTasksCache[r.cislo]) || []).find(x => String(x.id) === String(id));
+  if (!t) return;
+  const kto = CAFLOU_ID_TO_NAME[t.target_user_id];
+  if (kto && HARM_PROJEKTANTI.includes(kto)) document.getElementById('mTKto').value = kto;
+  if (t.end_time) {
+    document.getElementById('mTEnd').value = t.end_time.substring(0, 10);
+    taskCalcStart();
+  }
+}
+
+async function unlinkTask(id) {
+  if (!isEditor) return;
+  if (!confirm('Odpojiť fázu od úlohy v Caflou? Úloha v Caflou ostane, len sa preruší prepojenie.')) return;
+  const { error } = await sb.from('harmonogram').update({ caflou_task_id: null }).eq('id', id);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  showToast('Prepojenie zrušené');
+  loadAll();
 }
 
 function closeTaskModal() {
@@ -947,12 +1046,15 @@ function closeTaskModal() {
 async function saveTaskAssign() {
   if (!isEditor) return;
   const r = rawById[taskModalId]; if (!r) return;
+  const mode = taskMode();
+  const existingId = document.getElementById('mTExisting').value;
   const name = document.getElementById('mTName').value.trim();
   const kto = document.getElementById('mTKto').value;
   const trv = parseFloat(document.getElementById('mTTrv').value);
   const start = document.getElementById('mTStart').value;
   const end = document.getElementById('mTEnd').value;
-  if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
+  if (mode === 'existing' && !existingId) { showToast('Vyber úlohu, s ktorou sa má fáza prepojiť', 'err'); return; }
+  if (mode === 'new' && !name) { showToast('Zadaj názov úlohy', 'err'); return; }
   if (!trv || trv <= 0) { showToast('Chýba trvanie', 'err'); return; }
   if (!start || !end) { showToast('Zadaj začiatok a termín', 'err'); return; }
   if (end < start) { showToast('Termín nemôže byť pred začiatkom', 'err'); return; }
@@ -961,44 +1063,55 @@ async function saveTaskAssign() {
   if (!cfg.caflou_key || !cfg.caflou_id) { showToast('Chýba prístup ku Caflou — najprv otvor prehľad projektov (index.html)', 'err'); return; }
 
   const btn = document.getElementById('mTSave');
-  btn.disabled = true; btn.textContent = 'Vytváram…';
+  btn.disabled = true; btn.textContent = mode === 'existing' ? 'Prepájam…' : 'Vytváram…';
   try {
-    await loadCaflouProjects();
-    const proj = caflouProjects.find(p => p.order_number === r.cislo);
-    if (!proj) throw new Error('Projekt ' + r.cislo + ' sa v Caflou nenašiel');
-    const tag = taskFazaTag(r);
-    const body = { task: {
-      name, project_id: proj.id,
-      task_status_id: CAFLOU_TASK_STATUS_NOVE,
-      target_user_id: userId,
-      end_time: end + 'T17:00:00+02:00',
-      ...(tag ? { tags: [tag] } : {}),
-    }};
-    const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!resp.ok) throw new Error(await resp.text());
-    const rd = await resp.json();
-    const taskId = (rd.result && rd.result.id) || rd.id;
-    if (!taskId) throw new Error('Caflou nevrátil ID úlohy');
+    const hdrs = { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' };
+    let taskId;
+    if (mode === 'existing') {
+      // existujúca úloha: nič sa nevytvára, len sa jej nastaví riešiteľ a termín podľa formulára
+      const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${existingId}`, {
+        method: 'PATCH', headers: hdrs,
+        body: JSON.stringify({ task: { target_user_id: userId, end_time: end + 'T17:00:00+02:00' } })
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      taskId = Number(existingId);
+    } else {
+      await loadCaflouProjects();
+      const proj = caflouProjects.find(p => p.order_number === r.cislo);
+      if (!proj) throw new Error('Projekt ' + r.cislo + ' sa v Caflou nenašiel');
+      const tag = taskFazaTag(r);
+      const body = { task: {
+        name, project_id: proj.id,
+        task_status_id: CAFLOU_TASK_STATUS_NOVE,
+        target_user_id: userId,
+        end_time: end + 'T17:00:00+02:00',
+        ...(tag ? { tags: [tag] } : {}),
+      }};
+      const resp = await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks`, {
+        method: 'POST', headers: hdrs, body: JSON.stringify(body)
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const rd = await resp.json();
+      taskId = (rd.result && rd.result.id) || rd.id;
+      if (!taskId) throw new Error('Caflou nevrátil ID úlohy');
+      delete projTasksCache[r.cislo]; // nová úloha musí byť v zozname pri ďalšom prepájaní
+    }
 
     const { error } = await sb.from('harmonogram').update({
       projektant: kto, start_datum: start, trvanie_tyzdne: trv,
       pripravene_pokracovat: true, caflou_task_id: taskId,
     }).eq('id', r.id);
     if (error) {
-      showToast('Úloha je v Caflou vytvorená (ID ' + taskId + '), ale zápis do harmonogramu zlyhal: ' + error.message, 'err');
+      showToast('Úloha v Caflou je hotová (ID ' + taskId + '), ale zápis do harmonogramu zlyhal: ' + error.message, 'err');
     } else {
-      showToast('Úloha pridelená (' + kto + ', termín ' + end.split('-').reverse().join('.') + ')');
+      showToast((mode === 'existing' ? 'Fáza prepojená s úlohou (' : 'Úloha pridelená (') + kto + ', termín ' + end.split('-').reverse().join('.') + ')');
     }
     closeTaskModal();
     loadAll();
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
   } finally {
-    btn.disabled = false; btn.textContent = 'Prideliť a vytvoriť úlohu';
+    btn.disabled = false; btn.textContent = mode === 'existing' ? 'Prepojiť s úlohou' : 'Prideliť a vytvoriť úlohu';
   }
 }
 
@@ -1014,7 +1127,9 @@ async function loadCaflouProjects() {
       const d = await r.json();
       const items = (d.results || []).filter(p => !p.trash && !p.template);
       all = all.concat(items);
-      if (items.length < 100) break;
+      // stránkovanie podľa surovej odpovede, nie podľa prefiltrovaných položiek — inak by sa pri jedinom
+      // koši/šablóne na 1. stránke druhá stránka projektov nikdy nenačítala
+      if ((d.results || []).length < 100 || page >= (d.total_pages || 1)) break;
       page++;
     }
     caflouProjects = all;
