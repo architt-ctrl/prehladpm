@@ -518,6 +518,14 @@ Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri
 
 ## Other files
 
+### harmonogram.html + harmonogram-logic.js/harmonogram-data.js — VYRADENÉ (2026-09-22), nahradené `planovanie.html`
+
+**Rozhodnutie (Jozef, 2026-09-22):** celý starý harmonogram (fázy/bloky, alokácia %, ⚡ automatický plánovač, Gantt so simuláciou súbehu, prideľovanie/prepájanie na Caflou úlohy) sa **už nepoužíva** — nahradil ho jednoduchší `planovanie.html` (pozri nižšie), postavený priamo nad Caflou úlohami s tagom `harmon` namiesto samostatnej fáza/blok evidencie.
+
+**Čo bolo spravené:** odkazy na `harmonogram.html` odstránené zo **všetkých** `module-nav` (`index.html`, `ponuky.html`, `suhrn.html`, `planovanie.html`) aj z tlačidla v hlavičke `index.html`. **Súbory `harmonogram.html`, `harmonogram-logic.js`, `harmonogram-data.js` ostávajú v repe nezmazané** (rovnako Supabase tabuľka `harmonogram` a jej dáta) — nikto ich nikde neodkazuje, ale zostávajú dostupné priamo cez URL/repo, keby bolo treba k nim ešte niekedy siahnuť (napr. pozrieť si históriu, alebo ak by sa niektorá myšlienka z algoritmu — ⚡ plánovanie do voľných kapacít, reťazenie blokov, simulácia súbehu — v budúcnosti zišla). **Zámerne nezmazané, len odpojené** — zmazanie by bolo zbytočne nevratné.
+
+Celá dokumentácia nižšie (harmonogram-logic.js, harmonogram-data.js, harmonogram.html HOTOVO, "Harmonogram viditeľný pre kolegov...", "Gantt — hlavička sa zmršťovala") je preto **len historická** — popisuje nástroj, ktorý sa reálne prestal používať, ponechaná pre prípad, že sa k nej bude treba vrátiť.
+
 ### harmonogram-logic.js (ROZPRACOVANÉ — len logika, žiadne UI)
 
 Kapacitné plánovanie interného tímu — rieši "kedy zaradiť čakajúci projekt", keď neviem koho a kedy naň priradiť. Zámerne postavené najprv ako čistá, samostatne testovateľná logika bez DOM/UI (Jozef: "najprv to vyriešme aby to správne fungovalo, potom budeme riešiť zobrazenie") — UI zatiaľ neexistuje, treba doriešiť v ďalšej session.
