@@ -4022,21 +4022,30 @@ async function loadCaflouTasks(cislo, caflou_id) {
       rest.forEach(d => { all = all.concat((d.results || []).filter(t => taskIdSet.has(Number(t.id)))); });
     }
     caflouTasksCache[cislo] = all;
-    try {
-      const { data: ts } = await sb.from('task_specialists').select('task_id,specialist_name').eq('project_cislo', cislo);
-      (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
-      if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
-    } catch(e) {}
-    try {
-      const taskIds = all.map(t => t.id).filter(Boolean);
-      if (taskIds.length) {
+    const taskIds = all.map(t => t.id).filter(Boolean);
+
+    // Tieto 4 Supabase dotazy sú na sebe nezávislé (líšia sa len tým, čo dopĺňajú do cache), predtým
+    // sa čakalo na každý zvlášť za sebou (`await` jeden po druhom) - to bola druhá príčina pomalého
+    // otvárania detailu projektu popri sekvenčnom stránkovaní Caflou vyššie. Teraz bežia naraz.
+    const loadSpecOverrides = (async () => {
+      try {
+        const { data: ts } = await sb.from('task_specialists').select('task_id,specialist_name').eq('project_cislo', cislo);
+        (ts||[]).forEach(row => { extSpecOverride[String(row.task_id)] = row.specialist_name; });
+        if (ts?.length) localStorage.setItem('pmExtSpecOverride', JSON.stringify(extSpecOverride));
+      } catch(e) {}
+    })();
+
+    const loadEmailThreads = (async () => {
+      if (!taskIds.length) return;
+      try {
         const { data: emails } = await sb.from('task_email_threads').select('task_id,thread_url').in('task_id', taskIds);
         (emails||[]).forEach(row => { taskEmailCache[String(row.task_id)] = row.thread_url; });
-      }
-    } catch(e) {}
-    try {
-      const taskIds = all.map(t => t.id).filter(Boolean);
-      if (taskIds.length) {
+      } catch(e) {}
+    })();
+
+    const loadNotes = (async () => {
+      if (!taskIds.length) return;
+      try {
         const { data: notes, error } = await sb.from('task_notes')
           .select('id,task_id,text,created_at').in('task_id', taskIds).order('created_at', { ascending: false });
         if (error) throw error;
@@ -4045,12 +4054,13 @@ async function loadCaflouTasks(cislo, caflou_id) {
           taskNotesCache[n.task_id].push(formatTaskNote(n));
         });
         taskIds.forEach(tid => { if (taskNotesCache[tid] === undefined) taskNotesCache[tid] = []; });
-      }
-    } catch(e) {}
+      } catch(e) {}
+    })();
+
     // Aktualizuj taskPonukySet pre tieto úlohy (čerstvé dáta)
-    try {
-      const taskIds = all.map(t => t.id).filter(Boolean);
-      if (taskIds.length) {
+    const loadPonukyStatus = (async () => {
+      if (!taskIds.length) return;
+      try {
         const { data: pendingReqs } = await sb.from('requests')
           .select('id, caflou_task_id').in('caflou_task_id', taskIds);
         if (pendingReqs?.length) {
@@ -4063,8 +4073,10 @@ async function loadCaflouTasks(cislo, caflou_id) {
             else taskPonukySet.delete(r.caflou_task_id);
           });
         }
-      }
-    } catch(e) {}
+      } catch(e) {}
+    })();
+
+    await Promise.all([loadSpecOverrides, loadEmailThreads, loadNotes, loadPonukyStatus]);
     el.innerHTML = buildCaflouTasksHtml(cislo);
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
