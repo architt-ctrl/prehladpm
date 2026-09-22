@@ -1415,6 +1415,7 @@ let dennikThreadOpen = new Set(); // id-čka zápisov, ktorých podvlákno odpov
 let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo: ISO_timestamp} — kedy user naposledy otvoril projekt
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
+let planBadgeSet   = new Set();  // cisl projektov, ktoré majú aspoň jednu úlohu v planovanie.html (plan_ulohy) — odznak 📅 pri projekte
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
 let projectFolderNameMap = {};   // {cislo: presný názov priečinka na Drive} — pre kopírovanie lokálnej cesty (search-ms nefunguje)
@@ -2868,6 +2869,12 @@ async function syncData() {
       }
     } catch(e) {}
 
+    // Odznak 📅 pri projekte, ktorý má aspoň jednu úlohu v Plánovaní práce (planovanie.html)
+    try {
+      const { data: planRows } = await sb.from('plan_ulohy').select('cislo');
+      planBadgeSet = new Set((planRows || []).map(r => r.cislo).filter(Boolean));
+    } catch(e) { planBadgeSet = new Set(); }
+
     // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
     try {
       const { data: folders } = await sb.from('project_folders').select('cislo,koordinacia_url,ifc_file_id,ifc_file_name,folder_name');
@@ -3133,7 +3140,7 @@ function renderProjects() {
             <div class="prow" onclick="toggleProjDetail('${p.cislo}',event)">
               <div class="prow-num">${p.cislo}</div>
               <div class="prow-body">
-                <div class="prow-name">${p.nazov}</div>
+                <div class="prow-name">${p.nazov}${planBadgeHtml(p.cislo)}</div>
                 <div class="prow-podfaza">${fazaBadge}${p.podfaza ? ' · ' + p.podfaza : ''}</div>
               </div>
               ${folderPathIconHtml(p.cislo)}
@@ -3158,7 +3165,7 @@ function renderProjects() {
         <div class="archiv-row" onclick="toggleProjDetail('${p.cislo}',event)">
           <div class="prow-num">${p.cislo}</div>
           <div class="prow-body">
-            <div class="prow-name">${p.nazov}</div>
+            <div class="prow-name">${p.nazov}${planBadgeHtml(p.cislo)}</div>
             ${p.projektant?`<div class="prow-podfaza">${p.projektant}</div>`:''}
           </div>
           ${folderPathIconHtml(p.cislo)}
@@ -3314,6 +3321,14 @@ async function copyProjectFolderPath(cislo) {
   document.querySelectorAll(`#fpath-${cislo}`).forEach(el => el.outerHTML = folderPathIconHtml(cislo));
 }
 
+// Odznak pri projekte, ktorý má aspoň jednu úlohu v Plánovaní práce (planovanie.html) — rovnaká
+// 📅 ikona ako pri úlohe samotnej v detaile (toggleTaskHarmonBtn), aby bola súvislosť hneď jasná.
+function planBadgeHtml(cislo) {
+  return planBadgeSet.has(cislo)
+    ? `<span title="Má úlohu v Plánovaní práce" style="margin-left:5px;font-size:11px;vertical-align:middle">📅</span>`
+    : '';
+}
+
 function projRowHtml(p) {
   const dlCls = p.deadline ? (p.dniDead < 0 ? 'red' : p.dniDead <= 14 ? 'orange' : 'muted') : '';
   const dlStr = p.deadline ? `${p.deadline.getDate()}.${p.deadline.getMonth()+1}.` : '';
@@ -3321,7 +3336,8 @@ function projRowHtml(p) {
   const hasDennikBadge = seenTs && (dennikMap[p.cislo] || []).some(e => e.created_at && new Date(e.created_at).getTime() > seenTs);
   const hasPonukyBadge = ponukyBadgeSet.has(p.cislo);
   const badges = (hasDennikBadge ? `<span class="nbadge" style="background:var(--blue)" title="Nový zápis v denníku"></span>` : '')
-               + (hasPonukyBadge ? `<span class="nbadge" style="background:var(--green)" title="Čaká cenová ponuka"></span>` : '');
+               + (hasPonukyBadge ? `<span class="nbadge" style="background:var(--green)" title="Čaká cenová ponuka"></span>` : '')
+               + planBadgeHtml(p.cislo);
   return `<div class="prow-wrap">
     <div class="prow" onclick="toggleProjDetail('${p.cislo}',event)">
       <div class="prow-num">${p.cislo}</div>
