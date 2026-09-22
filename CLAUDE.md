@@ -128,6 +128,8 @@ const taskIdSet = new Set(proj.caflou_task_ids);
 batch.filter(t => taskIdSet.has(t.id))
 ```
 
+**Výkon — sekvenčné stránkovanie bolo pomalé (opravené 2026-09-22):** keďže `project_id` filter treba obchádzať prechádzaním celého účtu (~16 strán pri súčasnom objeme úloh), `loadCaflouTasks` pôvodne čakalo na každú stránku `await` **jednu po druhej** — Jozef nahlásil, že otvorenie detailu projektu trvá dlho. Ak boli úlohy projektu roztrúsené až na neskorších stránkach (poradie strán z Caflou nie je nič, na čo sa dá spoľahnúť), to znamenalo až ~16 sekvenčných round-tripov. Opravené: natiahne sa 1. strana (kvôli `total_pages`), a ak sa na nej nenašli ešte všetky očakávané úlohy (`caflou_task_ids`), zvyšné strany sa natiahnu **naraz paralelne** (`Promise.all`) namiesto postupne. Overené synteticky (16 strán × 150ms umelej latencie, hľadaná úloha až na poslednej strane): pôvodne ~2,4s, po oprave ~320ms.
+
 **Status constants:**
 ```javascript
 CAFLOU_TASK_STATUS_IDS   // name → Caflou status ID (interné úlohy)

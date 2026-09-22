@@ -3985,19 +3985,25 @@ async function loadCaflouTasks(cislo, caflou_id) {
   const proj = projects.find(x => x.cislo === cislo);
   const taskIdSet = new Set((proj?.caflou_task_ids || []).map(Number));
   try {
-    let all = [], page = 1, tp = 1;
-    while (page <= tp) {
-      const r = await fetch(
-        `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${caflou_id}&per=100&page=${page}`,
-        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+    // `project_id` filter na /tasks ignoruje server-side (viď "API filter caveat" v CLAUDE.md) -
+    // úlohy projektu môžu byť roztrúsené kdekoľvek naprieč všetkými stránkami celého účtu.
+    // Namiesto sekvenčného prehľadávania strana po strane (až ~16 čakaní za sebou pri súčasnom
+    // objeme úloh - priama príčina pomalého otvárania detailu projektu) sa 1. strana natiahne
+    // sama (kvôli total_pages), a ak sa na nej nenašli ešte všetky očakávané úlohy, zvyšné strany
+    // sa natiahnu naraz paralelne (Promise.all) namiesto jedna po druhej.
+    const fetchTasksPage = page => fetch(
+      `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${caflou_id}&per=100&page=${page}`,
+      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+    ).then(r => r.json());
+    const first = await fetchTasksPage(1);
+    if (first.error) throw new Error(first.error);
+    let all = (first.results || []).filter(t => taskIdSet.has(Number(t.id)));
+    const totalPages = first.total_pages || 1;
+    if (totalPages > 1 && !(taskIdSet.size > 0 && all.length >= taskIdSet.size)) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, i) => fetchTasksPage(i + 2))
       );
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      const batch = (d.results || []).filter(t => taskIdSet.has(Number(t.id)));
-      all = all.concat(batch);
-      if (taskIdSet.size > 0 && all.length >= taskIdSet.size) break;
-      tp = d.total_pages || 1;
-      page++;
+      rest.forEach(d => { all = all.concat((d.results || []).filter(t => taskIdSet.has(Number(t.id)))); });
     }
     caflouTasksCache[cislo] = all;
     try {
