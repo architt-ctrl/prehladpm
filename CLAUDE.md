@@ -143,6 +143,8 @@ CAFLOU_USERS             // user_id → meno
 //  a spustiť PowerShell query: všetky tasky → group by task_status_id)
 ```
 
+**Gotcha — `CAFLOU_USERS` je ručne udržiavaný zoznam, nie odvodený z Caflou (2026-09-23):** Caflou API nemá endpoint na "tím firmy", len `GET /api/v1/{account}/users` (zoznam všetkých userov s menom/emailom). `CAFLOU_USERS` je preto natvrdo napísaná mapa `{user_id: meno}` v `index.html` (~riadok 1385) — keď pribudne nový kolega, treba ho **ručne doplniť**, inak sa nezobrazí v Int tíme, priraďovaní úloh a pod. (necháva prázdne/„—"). Rovnaká mapa (opačným smerom, `{meno: user_id}`) je duplicitne v `planovanie.html` ako `CAFLOU_USER_IDS` — `TEAM` (zoznam kolegov v Plánovaní práce) sa odvodzuje z jej kľúčov. **Oba zoznamy treba dopĺňať spolu**, inak nový kolega pribudne do Int tímu, ale nie do Plánovania práce (alebo naopak). Zistenie ID nového kolegu: `GET /api/v1/{account}/users` s Bearer tokenom z `caflou.env` (gitignored). Dominika Fiťmová (`71182`) doplnená 2026-09-23.
+
 **Caflou API nemá endpoint pre zoznam statusov** — IDs sa zistia len z úloh ktoré daný status používajú.
 
 **Important distinction:**
