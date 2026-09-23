@@ -4001,25 +4001,34 @@ async function loadCaflouTasks(cislo, caflou_id) {
   const proj = projects.find(x => x.cislo === cislo);
   const taskIdSet = new Set((proj?.caflou_task_ids || []).map(Number));
   try {
-    // `project_id` filter na /tasks ignoruje server-side (viď "API filter caveat" v CLAUDE.md) -
-    // úlohy projektu môžu byť roztrúsené kdekoľvek naprieč všetkými stránkami celého účtu.
-    // Namiesto sekvenčného prehľadávania strana po strane (až ~16 čakaní za sebou pri súčasnom
-    // objeme úloh - priama príčina pomalého otvárania detailu projektu) sa 1. strana natiahne
-    // sama (kvôli total_pages), a ak sa na nej nenašli ešte všetky očakávané úlohy, zvyšné strany
-    // sa natiahnu naraz paralelne (Promise.all) namiesto jedna po druhej.
-    const fetchTasksPage = page => fetch(
-      `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?project_id=${caflou_id}&per=100&page=${page}`,
-      { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
-    ).then(r => r.json());
-    const first = await fetchTasksPage(1);
-    if (first.error) throw new Error(first.error);
-    let all = (first.results || []).filter(t => taskIdSet.has(Number(t.id)));
-    const totalPages = first.total_pages || 1;
-    if (totalPages > 1 && !(taskIdSet.size > 0 && all.length >= taskIdSet.size)) {
-      const rest = await Promise.all(
-        Array.from({ length: totalPages - 1 }, (_, i) => fetchTasksPage(i + 2))
-      );
-      rest.forEach(d => { all = all.concat((d.results || []).filter(t => taskIdSet.has(Number(t.id)))); });
+    let all;
+    if (taskIdSet.size) {
+      // Priame GET na konkrétne známe task ID (z proj.caflou_task_ids) - overené naostro (2026-09-23),
+      // Caflou toto zvláda plne paralelne bez problému. NEPOUŽÍVAŤ stránkovaný zoznam
+      // (/tasks?per=100&page=N) paralelne - Caflou súbežné volania tohto konkrétneho endpointu ticho
+      // odmieta ("Rate limit exceeded - same request is processing already", zlyhávalo už pri
+      // súbežnosti 2), čo predtým spôsobovalo že časť/všetky úlohy projektu zmizli z prehľadu bez
+      // akejkoľvek chybovej hlášky (`d.results || []` na zlyhanej stránke ticho vrátilo [] a pokračovalo).
+      const results = await Promise.all([...taskIdSet].map(id => fetch(
+        `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`,
+        { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+      ).then(r => r.json())));
+      all = results.filter(t => t && t.id && !t.message);
+    } else {
+      // Fallback keď projekt nemá známe caflou_task_ids (napr. Caflou ešte nestihlo priradiť task_ids
+      // pri poslednom syncData, alebo projekt reálne nemá žiadne úlohy) - sekvenčné stránkovanie
+      // celého účtu, pomalšie ale bezpečné (paralelne by to trafilo rovnaký rate-limit problém vyššie).
+      let page = 1, hasMore = true; all = [];
+      while (hasMore) {
+        const d = await fetch(
+          `https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks?per=100&page=${page}`,
+          { headers: { Authorization: `Bearer ${cfg.caflou_key}` } }
+        ).then(r => r.json());
+        if (d.error) throw new Error(d.error);
+        all = all.concat((d.results || []).filter(t => t.project_id === caflou_id));
+        hasMore = !!d.next_page;
+        page++;
+      }
     }
     caflouTasksCache[cislo] = all;
     const taskIds = all.map(t => t.id).filter(Boolean);
