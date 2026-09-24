@@ -3522,8 +3522,8 @@ function buildDennikRepliesHtml(cislo, parentId) {
   const replies = dennikRepliesFor(cislo, parentId);
   return `${replies.map(r => renderDennikReplyRow(cislo, r)).join('')}
     <div class="dennik-reply-add">
-      <input class="dennik-input" id="ri-${parentId}" placeholder="Odpovedať…" onkeydown="if(event.key==='Enter')addDennikReply('${cislo}','${parentId}')">
-      <button class="btn-add-zaz" onclick="addDennikReply('${cislo}','${parentId}')">Pridať</button>
+      <input class="dennik-input" placeholder="Odpovedať…" onkeydown="if(event.key==='Enter')addDennikReply('${cislo}','${parentId}',this)">
+      <button class="btn-add-zaz" onclick="addDennikReply('${cislo}','${parentId}',this)">Pridať</button>
     </div>`;
 }
 
@@ -3543,8 +3543,10 @@ function toggleDennikThread(cislo, id) {
   buildChronoContent();
 }
 
-async function addDennikReply(cislo, parentId) {
-  const inp = document.getElementById('ri-' + parentId);
+async function addDennikReply(cislo, parentId, src) {
+  // Rovnaké vlákno sa kreslí naraz v detaile projektu aj v modáli Zápisky — vstup sa preto hľadá
+  // podľa prvku, z ktorého prišiel klik/Enter, nie podľa id (to by našlo vždy len prvý, prázdny).
+  const inp = src && (src.tagName === 'INPUT' ? src : src.parentElement.querySelector('input'));
   if (!inp) return;
   const text = inp.value.trim();
   if (!text) return;
