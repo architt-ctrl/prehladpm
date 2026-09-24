@@ -1416,7 +1416,9 @@ let dennikThreadOpen = new Set(); // id-čka zápisov, ktorých podvlákno odpov
 let pmSeenAt = JSON.parse(localStorage.getItem('pmSeenAt') || '{}');   // {cislo: ISO_timestamp} — kedy user naposledy otvoril projekt
 let ponukyBadgeSet = new Set();  // cisl projektov s čakajúcimi submitted ponukami
 let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted ponukami
-let planBadgeSet   = new Set();  // cisl projektov, ktoré majú aspoň jednu úlohu v planovanie.html (plan_ulohy) — odznak 📅 pri projekte
+let planBadgeSet   = new Set();  // cisl projektov, ktoré majú aspoň jednu úlohu v planovanie.html (plan_ulohy) — odznak „P" pri projekte
+let planLateSet    = new Set();  // cisl projektov, kde aspoň jedna úloha v pláne nestíha termín (červené P)
+let planTaskLate   = {};         // {task_id: true|false} — nestíha termín (true) / stíha (false), len úlohy v plan_ulohy
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
 let projectFolderNameMap = {};   // {cislo: presný názov priečinka na Drive} — pre kopírovanie lokálnej cesty (search-ms nefunguje)
@@ -2870,11 +2872,11 @@ async function syncData() {
       }
     } catch(e) {}
 
-    // Odznak 📅 pri projekte, ktorý má aspoň jednu úlohu v Plánovaní práce (planovanie.html)
+    // Odznak „P" pri projekte/úlohe v Plánovaní práce (planovanie.html) — zelené = stíha termín, červené = nie
     try {
-      const { data: planRows } = await sb.from('plan_ulohy').select('cislo');
-      planBadgeSet = new Set((planRows || []).map(r => r.cislo).filter(Boolean));
-    } catch(e) { planBadgeSet = new Set(); }
+      const { data: planRows } = await sb.from('plan_ulohy').select('task_id,cislo,projektant,poradie,odhad_dni,termin');
+      computePlanStatus(planRows || []);
+    } catch(e) { planBadgeSet = new Set(); planLateSet = new Set(); planTaskLate = {}; }
 
     // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
     try {
@@ -3322,12 +3324,46 @@ async function copyProjectFolderPath(cislo) {
   document.querySelectorAll(`#fpath-${cislo}`).forEach(el => el.outerHTML = folderPathIconHtml(cislo));
 }
 
-// Odznak pri projekte, ktorý má aspoň jednu úlohu v Plánovaní práce (planovanie.html) — rovnaká
-// 📅 ikona ako pri úlohe samotnej v detaile (toggleTaskHarmonBtn), aby bola súvislosť hneď jasná.
+// Rozvrh z planovanie.html (layoutQueue) — MUSÍ ostať zhodný s ním: os začína pondelkom aktuálneho týždňa,
+// úlohy kolegu idú za sebou od dnes v poradí `poradie`, počítajú sa len pracovné dni, `odhad_dni` = zostáva.
+function computePlanStatus(rows) {
+  const isWe = i => ((i % 7) + 7) % 7 >= 5;
+  const skipWe = c => { while (isWe(Math.floor(c + 1e-9))) c = Math.floor(c + 1e-9) + 1; return c; };
+  const adv = (c, n) => {
+    let left = n;
+    while (left > 1e-9) { c = skipWe(c); const day = Math.floor(c + 1e-9); const use = Math.min(day + 1 - c, left); c += use; left -= use; }
+    return c;
+  };
+  const pad = n => String(n).padStart(2, '0');
+  const dnes = new Date(); dnes.setHours(0, 0, 0, 0);
+  const axis = new Date(dnes.getFullYear(), dnes.getMonth(), dnes.getDate() - ((dnes.getDay() + 6) % 7));
+  const todayIdx = Math.round((dnes - axis) / 86400000);
+  const byPerson = {};
+  rows.forEach(r => { (byPerson[r.projektant] = byPerson[r.projektant] || []).push(r); });
+  planBadgeSet = new Set(); planLateSet = new Set(); planTaskLate = {};
+  Object.values(byPerson).forEach(list => {
+    list.sort((a, b) => a.poradie - b.poradie || a.task_id - b.task_id);
+    let c = todayIdx;
+    list.forEach(r => {
+      const s = skipWe(c); const e = adv(s, Number(r.odhad_dni) || 1); c = e;
+      const lastDay = Math.ceil(e - 1e-9) - 1;
+      const end = new Date(axis.getFullYear(), axis.getMonth(), axis.getDate() + lastDay);
+      const late = !!(r.termin && `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}` > r.termin);
+      planTaskLate[r.task_id] = late;
+      if (r.cislo) { planBadgeSet.add(r.cislo); if (late) planLateSet.add(r.cislo); }
+    });
+  });
+}
+
+// Veľké hrubé „P" = úloha/projekt je v Plánovaní práce; zelené = stíha termín, červené = nestíha, sivé = ešte nenačítané
+function planPHtml(state, title, margin) {
+  const col = state === 'late' ? 'var(--red)' : state === 'ok' ? 'var(--green)' : 'var(--text3)';
+  return `<span title="${title}" style="${margin ? 'margin-left:5px;' : ''}font-size:14px;font-weight:800;line-height:1;color:${col};flex-shrink:0;vertical-align:middle">P</span>`;
+}
 function planBadgeHtml(cislo) {
-  return planBadgeSet.has(cislo)
-    ? `<span title="Má úlohu v Plánovaní práce" style="margin-left:5px;font-size:11px;vertical-align:middle">📅</span>`
-    : '';
+  if (!planBadgeSet.has(cislo)) return '';
+  return planLateSet.has(cislo) ? planPHtml('late', 'V Plánovaní práce — aspoň jedna úloha nestíha termín', true)
+                                : planPHtml('ok', 'V Plánovaní práce — všetky úlohy stíhajú termín', true);
 }
 
 function projRowHtml(p) {
@@ -4377,7 +4413,9 @@ function buildCaflouTasksHtml(cislo) {
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
-        ${isHarmon ? `<span title="Úloha je v Plánovaní práce (tag harmon)" style="font-size:11px;flex-shrink:0">📅</span>` : ''}
+        ${isHarmon ? (t.id in planTaskLate
+          ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
+          : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
@@ -4411,7 +4449,7 @@ function buildCaflouTasksHtml(cislo) {
             style="background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text3);white-space:nowrap">${isExt?'Externé ✓':'Interné ✓'}</button>
           <button id="tharmon-${editKey}" data-on="${isHarmon?'1':'0'}" onclick="event.stopPropagation();toggleTaskHarmonBtn('${editKey}')"
             title="Zaradiť úlohu do Plánovania práce (tag harmon v Caflou)"
-            style="background:${isHarmon?'var(--blu-bg)':'none'};border:1px solid ${isHarmon?'var(--blue)':'var(--border)'};border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:${isHarmon?'var(--blue)':'var(--text3)'};white-space:nowrap">${isHarmon?'📅 Plánovať ✓':'📅 Plánovať'}</button>
+            style="background:${isHarmon?'var(--blu-bg)':'none'};border:1px solid ${isHarmon?'var(--blue)':'var(--border)'};border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:${isHarmon?'var(--blue)':'var(--text3)'};white-space:nowrap"><b style="font-weight:800;font-size:13px">P</b> ${isHarmon?'Plánovať ✓':'Plánovať'}</button>
           <select id="tfaza-${editKey}" class="pd-sel" style="font-size:11px;flex-shrink:0" onclick="event.stopPropagation()">${fazaOpts}</select>
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
@@ -4675,7 +4713,7 @@ function toggleTaskHarmonBtn(editKey) {
   const btn = document.getElementById('tharmon-' + editKey); if (!btn) return;
   const on = btn.dataset.on !== '1';
   btn.dataset.on = on ? '1' : '0';
-  btn.textContent = on ? '📅 Plánovať ✓' : '📅 Plánovať';
+  btn.innerHTML = `<b style="font-weight:800;font-size:13px">P</b> ${on ? 'Plánovať ✓' : 'Plánovať'}`;
   btn.style.background = on ? 'var(--blu-bg)' : 'none';
   btn.style.borderColor = on ? 'var(--blue)' : 'var(--border)';
   btn.style.color = on ? 'var(--blue)' : 'var(--text3)';
