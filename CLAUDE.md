@@ -535,6 +535,25 @@ Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri
 - **Ikona zmenená z 📅 na veľké hrubé „P" (2026-09-24, Jozef):** zelené = úloha/projekt stíha termín, červené = nestíha, sivé = úloha má tag `harmon`, ale ešte nie je v `plan_ulohy` (pred „Načítať z Caflou"). Stav sa **počíta v `index.html`** (`computePlanStatus(rows)`, volá sa v `syncData()`) z `plan_ulohy` (`task_id,cislo,projektant,poradie,odhad_dni,termin`) rovnakým rozvrhom ako `layoutQueue` v `planovanie.html` — **oba musia ostať zhodné**, pri zmene logiky rozvrhu treba upraviť oboje. Výsledok: `planTaskLate {task_id: bool}`, `planLateSet` (projekty s aspoň jednou nestíhajúcou úlohou → červené P pri projekte), `planBadgeSet`. `planPHtml(state,title,margin)` je zdieľaný render P. Úloha bez `termin` sa berie ako stíhajúca. Tlačidlo v edit forme úlohy má tiež „P" namiesto 📅. Farby sú odraz posledného „Načítať z Caflou" (snapshot), nie live.
 - **Gotcha pri práci s CLAUDE.md z shellu:** text s backtickami nikdy nevkladať cez `node -e "..."` v dvojitých úvodzovkách — bash ich berie ako command substitution a potichu ich vymaže (stalo sa pri prvom zápise tejto sekcie). Dlhší text zapísať nástrojom Write/Edit.
 
+### Termíny úloh, plán a cashflow — filozofia (2026-09-24, ROZPRACOVANÉ, nič neimplementované)
+
+Vzniklo z otázky „keď nastavím termín v pláne, zmení sa aj v úlohe?" — odpoveď dnes **nie**: `planovanie.html` len číta `termin` (kópia Caflou `end_time`, `syncFromCaflou`), nič nezapisuje späť (ani termín, ani plánovaný koniec). Červené/zelené P porovnáva vypočítaný koniec (poradie + odhad dní) s týmto termínom. Jozef upozornil, že filozofia je nedotiahnutá — zhrnutie zistení:
+
+- **Termíny sa zadávajú len v prehľade projektov**, Caflou ich len preberá. Termín úlohy je väčšinou **odhad**, len niekedy záväzok.
+- **Príjmy/výdavky (Caflou `transfers`) majú vlastný dátum**, nesúvisia s termínom úlohy (hoci transfer nesie `task_id`). Tri dátumy pre „kedy bude hotové/zaplatené" (termín úlohy, plánovaný koniec, dátum transferu) sú nešťastné.
+- **Zistenie:** `createCaflouExpense` (`ponuky.html`, pri výbere víťaza) zakladá výdavok s dátumom **„dnes"** — nesedí s reálnou platbou.
+- **Profesisti (externé úlohy):** platí sa **po dokončení externej úlohy, do ~2 týždňov**; **zmluvy s profesistami nie sú**, lehota je čisto na dohode (14 dní je len predvolená hodnota, môže sa líšiť).
+- **Príjmy** idú podľa ZoD, môžu byť na viac splátok počas projektu (míľniky/etapy, nie jednotlivé úlohy) → zostávajú samostatné, ručne zadané.
+- **Interné úlohy:** termín nemá peňažný dopad, je to odhad → plán ho môže navrhovať/posúvať bez rizika pre cashflow.
+
+**Navrhovaný smer (dohodnutý s Jozefom len ako smer, bez finálneho súhlasu na implementáciu):**
+1. Pri výbere víťaza v `ponuky.html`/Dopytoch pole **„splatnosť (dní po odovzdaní)"**, predvyplnené 14; výdavok dostane dátum = **termín externej úlohy + splatnosť** (namiesto „dnes"); počet dní sa uloží k úlohe/výdavku.
+2. Pri zmene termínu externej úlohy v prehľade sa posunie dátum jej výdavku (s potvrdením).
+3. Úloha bez termínu → výdavok ako doteraz + upozornenie, že termín chýba.
+4. Interné úlohy/plán a príjmy až potom (možnosť: „prevziať plánovaný koniec ako termín" jedným klikom v prehľade).
+
+**Otvorené otázky:** čo s už zaplateným výdavkom (označený hotový v Caflou) pri posune termínu — nechať dátum? Kam ukladať dohodnutú splatnosť (Supabase tabuľka vs. Caflou pole)? Má sa plánovaný koniec interných úloh zapisovať do termínu automaticky, alebo len na klik?
+
 ## Other files
 
 ### harmonogram.html + harmonogram-logic.js/harmonogram-data.js — VYRADENÉ (2026-09-22), nahradené `planovanie.html`
