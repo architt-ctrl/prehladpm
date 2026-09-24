@@ -429,6 +429,10 @@ Tlačidlo **„📨 Dopyty"** pri projekte (vedľa „📋 Šablóna") → `open
 
 Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlíšiteľné (všetky "Prehľad"). `toggleProjDetail(cislo)` preto pri otvorení detailu nastaví `document.title = p.nazov`; pri zatvorení sa vráti na `DEFAULT_TITLE` (pôvodný `<title>`, zachytený raz pri načítaní skriptu) — alebo na názov iného projektu, ak ostal otvorený iný `.proj-detail.open`.
 
+### Favicon karty prehliadača (2026-09-24)
+
+`index.html` mal v `<head>` len `apple-touch-icon` (iOS, „PM"), bežná favicon chýbala, takže v Chrome karta splývala s pozadím. Pridaný `<link rel="icon" type="image/svg+xml">` s inline SVG data URI: tmavý zaoblený štvorec `#2c2825` + tučný monogram „TA" (Georgia serif, `#f5f3ef`), overené renderom v 16/32/128 px. Na stránke neexistuje obrázkové logo (`.logo` v hlavičke je len text „Tornyos Architects"), preto monogram. Ostatné stránky (`ponuky.html`, `planovanie.html`...) favicon zatiaľ nemajú.
+
 ### Odkaz na projektový priečinok (📁, 2026-07-20, prerobené 2026-09-14)
 
 **Pôvodné riešenie (`search-ms:` URI otvárajúce Windows Search) bolo nefunkčné a je odstránené.** Dôvod (potvrdené 2026-08-31 Jozefom — "otvorí Explorer ale nič nenájde", diagnostikované 2026-09-14): `H:\Spoločné disky\...` je Google Drive for Desktop mount v "Stream" režime — virtuálny súborový systém bez lokálneho change journalu, ktorý Windows Search **principiálne** nevie indexovať. Overené priamo: PowerShell dopyt cez `Search.CollatorDSO` (ADODB) na daný path vrátil 0 výsledkov; registry `HKLM:\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` nikdy neobsahoval H:; v Indexing Options (`control.exe /name Microsoft.IndexingOptions`) sa H: nedá pridať ako zdroj vôbec (len C: a D: sú ponúkané) — nie je to teda otázka konfigurácie, len permanentné obmedzenie Drive Stream disku.
