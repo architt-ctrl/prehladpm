@@ -433,7 +433,8 @@ async function syncFromCaflou() {
   btn.disabled = true;
   try {
     const tasks = await caflouGetAll('tasks', (p, t) => { btn.textContent = `↻ Úlohy ${p}/${t}…`; });
-    const tagged = tasks.filter(t => !t.trash && !t.finished && (t.tags || []).includes(PLAN_TAG));
+    // Hotová úloha (stav „Hotové", aj keď ešte nie je ukončená) sa do plánu nepočíta — inak by zaberala čas a „nestíhala"
+    const tagged = tasks.filter(t => !t.trash && !t.finished && t.task_status_name !== 'Hotové' && (t.tags || []).includes(PLAN_TAG));
     btn.textContent = '↻ Projekty…';
     const projects = await caflouGetAll('projects');
     const projById = {};

@@ -1419,6 +1419,7 @@ let taskPonukySet  = new Set();  // caflou task_ids s čakajúcimi submitted pon
 let planBadgeSet   = new Set();  // cisl projektov, ktoré majú aspoň jednu úlohu v planovanie.html (plan_ulohy) — odznak „P" pri projekte
 let planLateSet    = new Set();  // cisl projektov, kde aspoň jedna úloha v pláne nestíha termín (červené P)
 let planTaskLate   = {};         // {task_id: true|false} — nestíha termín (true) / stíha (false), len úlohy v plan_ulohy
+let planRowsCache  = [];         // riadky plan_ulohy z posledného syncData — na okamžité prepočítanie, keď sa úloha označí ako Hotové
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
 let projectFolderNameMap = {};   // {cislo: presný názov priečinka na Drive} — pre kopírovanie lokálnej cesty (search-ms nefunguje)
@@ -2875,8 +2876,9 @@ async function syncData() {
     // Odznak „P" pri projekte/úlohe v Plánovaní práce (planovanie.html) — zelené = stíha termín, červené = nie
     try {
       const { data: planRows } = await sb.from('plan_ulohy').select('task_id,cislo,projektant,poradie,odhad_dni,termin');
-      computePlanStatus(planRows || []);
-    } catch(e) { planBadgeSet = new Set(); planLateSet = new Set(); planTaskLate = {}; }
+      planRowsCache = planRows || [];
+      computePlanStatus(planRowsCache);
+    } catch(e) { planRowsCache = []; planBadgeSet = new Set(); planLateSet = new Set(); planTaskLate = {}; }
 
     // Odkazy na priečinok s podkladmi (20_KOORDINACIA) — len pre projekty s novou štruktúrou priečinka
     try {
@@ -3358,7 +3360,7 @@ function computePlanStatus(rows) {
 // Veľké hrubé „P" = úloha/projekt je v Plánovaní práce; zelené = stíha termín, červené = nestíha, sivé = ešte nenačítané
 function planPHtml(state, title, margin) {
   const col = state === 'late' ? 'var(--red)' : state === 'ok' ? 'var(--green)' : 'var(--text3)';
-  return `<span title="${title}" style="${margin ? 'margin-left:5px;' : ''}font-size:14px;font-weight:800;line-height:1;color:${col};flex-shrink:0;vertical-align:middle">P</span>`;
+  return `<span class="plan-p" title="${title}" style="${margin ? 'margin-left:5px;' : ''}font-size:14px;font-weight:800;line-height:1;color:${col};flex-shrink:0;vertical-align:middle">P</span>`;
 }
 function planBadgeHtml(cislo) {
   if (!planBadgeSet.has(cislo)) return '';
@@ -4415,9 +4417,11 @@ function buildCaflouTasksHtml(cislo) {
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
-        ${isHarmon ? (t.id in planTaskLate
-          ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
-          : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
+        ${isHarmon ? (t.task_status_name === 'Hotové'
+          ? planPHtml('none', 'Hotová úloha — v Plánovaní práce sa nepočíta')
+          : t.id in planTaskLate
+            ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
+            : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
@@ -4559,11 +4563,26 @@ function buildCaflouTasksHtml(cislo) {
   return html + doneHtml;
 }
 
+// Hotová úloha už nemá zaberať čas v Plánovaní práce (inak by ďalej „nestíhala termín") — vyradí sa z plan_ulohy
+// hneď, nielen pri najbližšom „Načítať z Caflou". Po vrátení zo stavu Hotové sa do plánu vráti až pri ďalšom načítaní.
+function dropDoneTaskFromPlan(cislo, task_id) {
+  if (!planRowsCache.some(r => String(r.task_id) === String(task_id))) return;
+  planRowsCache = planRowsCache.filter(r => String(r.task_id) !== String(task_id));
+  computePlanStatus(planRowsCache);
+  try { sb.from('plan_ulohy').delete().eq('task_id', task_id).then(null, () => {}); } catch(e) {}
+  const nameEl = document.querySelector(`#detail-${cislo}`)?.previousElementSibling?.querySelector('.prow-name');
+  if (nameEl) {
+    nameEl.querySelectorAll('.plan-p').forEach(el => el.remove());
+    nameEl.insertAdjacentHTML('beforeend', planBadgeHtml(cislo));
+  }
+}
+
 async function setCaflouTaskStatus(cislo, task_id, statusName) {
   const tasks = caflouTasksCache[cislo]; if (!tasks) return;
   const t = tasks.find(x => x.id === task_id); if (!t) return;
   t.task_status_name = statusName;
   t.task_status_id = CAFLOU_TASK_STATUS_IDS[statusName];
+  if (statusName === 'Hotové') dropDoneTaskFromPlan(cislo, task_id);
   refreshUlohy(cislo);
   try {
     await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
@@ -4580,6 +4599,7 @@ async function finishCaflouTask(cislo, task_id) {
   t.task_status_name = 'Hotové';
   t.task_status_id = CAFLOU_TASK_STATUS_IDS['Hotové'];
   t.finished = true;
+  dropDoneTaskFromPlan(cislo, task_id);
   refreshUlohy(cislo);
   try {
     await fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${task_id}`, {
