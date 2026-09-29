@@ -502,13 +502,64 @@ function najdiProjektFolder(root, cislo) {
 // len .keep placeholder súbory na udržanie prázdnych priečinkov v Drive UI, tie sa
 // nekopírujú, novovytvorené priečinky ich nepotrebujú). Idempotentné - ak priečinok
 // s daným číslom už existuje, nič nevytvára a vráti existujúci.
-function skopirujStromPriecinkov(sablona, ciel) {
-  var fi = sablona.getFolders();
-  while (fi.hasNext()) {
-    var f = fi.next();
-    var novy = ciel.createFolder(f.getName());
-    skopirujStromPriecinkov(f, novy);
+//
+// Výkon (2026-09-29, Jozef nahlásil "vytváranie trvá dlho"): šablóna má ~40 priečinkov
+// vo vetvenej štruktúre - pôvodná verzia ich vytvárala jeden po druhom cez DriveApp
+// (~40 sekvenčných round-tripov). Teraz sa priečinky vytvárajú PO ÚROVNIACH (BFS) cez
+// priamy Drive API v3 s Bearer tokenom (rovnaký vzor ako PDF OCR upload, viď CLAUDE.md
+// "Apps Script gotchas"): na každej úrovni sa najprv JEDNÝM volaním zistia deti VŠETKÝCH
+// uzlov danej úrovne naraz (files.list s `'id1' in parents or 'id2' in parents ...`), potom
+// sa všetky vytvoria NARAZ paralelne cez UrlFetchApp.fetchAll (rovnaký princíp ako paralelné
+// GET /tasks/{id} v index.html - Drive API na rozdiel od Caflou súbežnosť toleruje bez
+// problému). Namiesto ~40 sekvenčných volaní tak stačí cca 2×(hĺbka stromu) = cca 8-10.
+function driveApiListDeti(parentIds, token) {
+  if (!parentIds.length) return [];
+  var q = '(' + parentIds.map(function(id) { return "'" + id + "' in parents"; }).join(' or ') +
+    ") and mimeType='application/vnd.google-apps.folder' and trashed=false";
+  var url = 'https://www.googleapis.com/drive/v3/files?q=' + encodeURIComponent(q) +
+    '&fields=files(id,name,parents)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=1000';
+  var resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true });
+  var d = JSON.parse(resp.getContentText());
+  return d.files || [];
+}
+
+function driveApiVytvorPriecinky(polozky, token) {
+  // polozky: [{name, parentId}] - vráti pole {id} (alebo {error}) v rovnakom poradí
+  var requests = polozky.map(function(p) {
+    return {
+      url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id',
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: JSON.stringify({ name: p.name, mimeType: 'application/vnd.google-apps.folder', parents: [p.parentId] }),
+      muteHttpExceptions: true
+    };
+  });
+  var responses = UrlFetchApp.fetchAll(requests);
+  return responses.map(function(r) { return JSON.parse(r.getContentText()); });
+}
+
+function skopirujStromPriecinkovParalelne(sablonaId, cielId) {
+  var token = ScriptApp.getOAuthToken();
+  var uroven = [{ templateId: sablonaId, cielId: cielId }]; // BFS front - uzly, ktorých deti treba spracovať
+  var chyby = [];
+  while (uroven.length) {
+    var deti = driveApiListDeti(uroven.map(function(n) { return n.templateId; }), token);
+    if (!deti.length) break;
+    var cielPodlaTemplateId = {};
+    uroven.forEach(function(n) { cielPodlaTemplateId[n.templateId] = n.cielId; });
+    var naVytvorenie = deti.map(function(d) {
+      var templateParentId = d.parents.filter(function(pid) { return cielPodlaTemplateId[pid] !== undefined; })[0];
+      return { name: d.name, parentId: cielPodlaTemplateId[templateParentId], templateId: d.id };
+    });
+    var vytvorene = driveApiVytvorPriecinky(naVytvorenie, token);
+    uroven = [];
+    naVytvorenie.forEach(function(d, i) {
+      if (vytvorene[i] && vytvorene[i].id) uroven.push({ templateId: d.templateId, cielId: vytvorene[i].id });
+      else chyby.push(d.name + ': ' + JSON.stringify(vytvorene[i]));
+    });
   }
+  return chyby;
 }
 
 function akcia_createProjectFolder(req) {
@@ -521,9 +572,8 @@ function akcia_createProjectFolder(req) {
     if (existujuci) return { ok: true, existed: true, folderName: existujuci.getName() };
     var nazovPriecinka = cisloNaPrefix(cislo) + (nazov ? ('-' + nazov) : '');
     var novy = root.createFolder(nazovPriecinka);
-    var sablona = DriveApp.getFolderById(TEMPLATE_FOLDER_ID);
-    skopirujStromPriecinkov(sablona, novy);
-    return { ok: true, existed: false, folderName: nazovPriecinka };
+    var chyby = skopirujStromPriecinkovParalelne(TEMPLATE_FOLDER_ID, novy.getId());
+    return { ok: true, existed: false, folderName: nazovPriecinka, warnings: chyby.length ? chyby : undefined };
   } catch(e) {
     return { ok: false, error: e.message };
   }

@@ -3327,7 +3327,8 @@ async function createProjectFolderFromTemplate(cislo) {
     if (d.ok) {
       projectFolderNameMap[cislo] = d.folderName;
       sb.from('project_folders').upsert({ cislo, folder_name: d.folderName, updated_at: new Date().toISOString() }).then(null, () => {});
-      showToast(d.existed ? `Priečinok už existoval: ${d.folderName}` : `Priečinok vytvorený podľa šablóny: ${d.folderName}`, 'ok');
+      const warn = d.warnings && d.warnings.length ? ` (⚠ ${d.warnings.length} podpriečinkov sa nepodarilo vytvoriť, over v Drive)` : '';
+      showToast((d.existed ? `Priečinok už existoval: ${d.folderName}` : `Priečinok vytvorený podľa šablóny: ${d.folderName}`) + warn, warn ? 'err' : 'ok');
     } else {
       showToast(d.error || 'Vytvorenie priečinka zlyhalo', 'err');
     }
