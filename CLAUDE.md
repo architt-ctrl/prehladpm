@@ -435,6 +435,38 @@ Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlí
 
 `index.html` mal v `<head>` len `apple-touch-icon` (iOS, „PM"), bežná favicon chýbala, takže v Chrome karta splývala s pozadím. Pridaný `<link rel="icon" type="image/svg+xml">` s inline SVG data URI: tmavý zaoblený štvorec `#2c2825` + tučný monogram „TA" (`#f5f3ef`) vo firemnom písme **Geomanist Bold** (nainštalované v `C:\Windows\Fonts\Geomanist-*.otf`; SVG favicon nevie načítať vlastné písmo, preto sú písmená prevedené na krivky cez `opentype.js` — `getPath('TA')` → `toPathData`, `fill-rule='evenodd'` kvôli otvoru v „A"), overené renderom v 16/32/128 px. Pôvodná verzia bola Georgia serif. Ak sa má favicon inde alebo v inej farbe, treba krivky vygenerovať znova. Na stránke neexistuje obrázkové logo (`.logo` v hlavičke je len text „Tornyos Architects"), preto monogram. Rovnaký `<link rel="icon">` (identický riadok) je aj v `ponuky.html`, `portal.html`, `suhrn.html`, `harmonogram.html`, `ifc-viewer.html`, `geodet-revit.html` a `planovanie.html`, hneď pod `<title>` — pri **novej HTML stránke** ho treba skopírovať z `index.html`. `archiv/index.html` (stará kópia) ho nemá.
 
+### Vytváranie projektového priečinka zo šablóny + kontrola priečinkov (🌳, „Priečinky", 2026-09-29)
+
+**Kontext:** projekty dovtedy vznikali len v Caflou, priečinok na Drive si Jozef zakladal ručne — overené naživo cez Google Drive: nový projekt vznikol pár minút pred touto zmenou a jeho podpriečinky mali presne rovnaké `modifiedTime` ako zodpovedajúce podpriečinky šablóny `__strom_suborov` (id `1fkTbATRtHIj4zQHuIsuEHQ1GZkPAYviY`, priamy potomok `PROJECTS_DRIVE_ROOT_ID`) — teda ju niečím doslovne duplikoval. Appka teraz vie (a) vytvoriť rovnaký priečinok jedným klikom a (b) skontrolovať naprieč všetkými projektmi, či priečinok existuje a sedí mu číslo/názov s Caflou.
+
+**Zistená štruktúra šablóny** (overené rekurzívnym prechodom cez Google Drive MCP — listy obsahujú len `.keep` 0 B placeholder súbory, tie sa nekopírujú; v `30_FAZY` je aj jeden cudzí `.lnk` shortcut, zjavne omylom, tiež ignorovaný):
+```
+00_RIADENIE/                (prázdny)
+10_MODEL/  01_BIM/ 03_DOCS/ 04_VIZ/
+20_KOORDINACIA/
+  00_PODKLADY/  01_GEODEZIA/ 02_PRIESKUMY/ 03_SIETE/ 04_UZEMIE_A_PRAVO/ 05_OD_KLIENTA/ 06_FOTO/ 07_INSPIRACIA/
+  ARCHITEKTURA/ ELEKTRO/ STATIKA/ TZB/   (TZB tu plochý — rozdelenie na UK/VZT/ZTI/PLYN robí až sledujPrilohy za behu)
+30_FAZY/
+  FS2A_STUDIA/
+  FS3A_ZAMER_STAVBY/     01_PROJEKT/(R001/ R002/)  02_INZINIERING/(01_ZIADOST/ 02_VYJADRENIA/)
+  FS3A_PROJEKT_STAVBY/   01_PROJEKT/(R001/ R002/)  02_INZINIERING/(01_ZIADOST/ 02_VYJADRENIA/)
+  FS5A_VYBER_ZHOTOVITELA/  FS7A_ODOVZDANIE/
+40_PREZENTACIA/              (prázdny)
+90_ARCHIV/  02_EXPORT_PROJEKTU/
+```
+
+**Vytvorenie priečinka (🌳, `index.html`, na všetkých 3 miestach šablóny riadku vedľa 📁/🔗/🧊):**
+- `createProjectFolderFromTemplate(cislo)` → Apps Script `createProjectFolder` (`{cislo, nazov}`) → `akcia_createProjectFolder` (`Code.gs`): cez zdieľaný `najdiProjektFolder` over, či priečinok s daným číslom už existuje (idempotentné — nikdy neduplikuje); ak nie, vytvorí `root.createFolder('20YY-NNN-Nazov')` a rekurzívne skopíruje **len adresárovú štruktúru** šablóny (`skopirujStromPriecinkov`, žiadne súbory).
+- Pri úspechu appka upsertne `project_folders.folder_name` (rovnaký vzor ako `copyProjectFolderPath`), takže 📁 ikona hneď pozná názov bez ďalšieho klikania.
+- Názov nového priečinka má vždy pomlčku po čísle (`20YY-NNN-Nazov`) — časť starších priečinkov má namiesto nej medzeru, appka pri zakladaní nových vždy použije pomlčku.
+
+**Kontrola priečinkov („🗂 Priečinky" v hlavičke vedľa Financií → `openFolderAuditModal()`):**
+- Živý scan pri každom otvorení (žiadna priebežná cache/badge, zámerne — rovnaký vzor ako iné "spusti na klik" akcie): `akcia_listProjectFolders` vypíše priame podpriečinky `1_PROJEKTY` (vynechá `__strom_suborov` a `_Fazy`), klientsky sa regexom `^(\d{4})-(\d{3})[\s_-]*(.*)$` rozparsuje na dashboard `cislo` + názov a porovná so `projects`.
+- Tri kategórie: **chýba priečinok** (tlačidlo „Vytvoriť" priamo v riadku, volá tú istú `createProjectFolderFromTemplate`), **iný názov ako v Caflou** (`normFolderName` — lowercase, bez diakritiky/medzier/pomlčiek/podčiarkovníkov, kvôli rôznym historickým konvenciám oddeľovačov; len zobrazené, **žiadne automatické premenovanie** — konzistentné s opatrnosťou pri Drive mutáciách inde v appke, opravu necháva na Jozefa), **osirelé priečinky** (na Drive existujú, žiadny zodpovedajúci projekt v Caflou — len informatívny zoznam).
+- Porovnáva sa naprieč **všetkými** fázami vrátane Archívu.
+
+**Gotcha:** obe nové Apps Script akcie vyžadujú Jozefov ručný redeploy (Deploy → Manage → nová verzia) predtým, než začnú fungovať naostro — do vtedy 🌳 aj „Priečinky" hlásia chybu z `doPost` („Neznáma akcia"). Skutočné vytvorenie priečinka nebolo pri tejto zmene overené naostro (vyžaduje redeploy) — len headless testom s podvrhnutým `fetch`.
+
 ### Odkaz na projektový priečinok (📁, 2026-07-20, prerobené 2026-09-14)
 
 **Pôvodné riešenie (`search-ms:` URI otvárajúce Windows Search) bolo nefunkčné a je odstránené.** Dôvod (potvrdené 2026-08-31 Jozefom — "otvorí Explorer ale nič nenájde", diagnostikované 2026-09-14): `H:\Spoločné disky\...` je Google Drive for Desktop mount v "Stream" režime — virtuálny súborový systém bez lokálneho change journalu, ktorý Windows Search **principiálne** nevie indexovať. Overené priamo: PowerShell dopyt cez `Search.CollatorDSO` (ADODB) na daný path vrátil 0 výsledkov; registry `HKLM:\SOFTWARE\Microsoft\Windows Search\CrawlScopeManager\Windows\SystemIndex\WorkingSetRules` nikdy neobsahoval H:; v Indexing Options (`control.exe /name Microsoft.IndexingOptions`) sa H: nedá pridať ako zdroj vôbec (len C: a D: sú ponúkané) — nie je to teda otázka konfigurácie, len permanentné obmedzenie Drive Stream disku.

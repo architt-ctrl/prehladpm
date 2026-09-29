@@ -773,6 +773,12 @@ nav {
     </svg>
     <span class="hbtn-lbl">Financie</span>
   </button>
+  <button class="hbtn" onclick="openFolderAuditModal()" title="Kontrola, či má každý projekt priečinok na Drive a či mu sedí číslo/názov s Caflou">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"></path>
+    </svg>
+    <span class="hbtn-lbl">Priečinky</span>
+  </button>
   <button class="hbtn" onclick="toggleCfg()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="12" r="3"></circle>
@@ -1252,6 +1258,16 @@ nav {
     <div id="financieContent" style="max-height:70vh;overflow-y:auto;padding:4px 0"></div>
     <div class="mactions">
       <button class="btn-ghost" onclick="document.getElementById('financieModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="folderAuditModal">
+  <div class="modal" style="max-width:640px">
+    <h3>Kontrola priečinkov</h3>
+    <div id="folderAuditContent" style="max-height:75vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('folderAuditModal').classList.add('hidden')">Zavrieť</button>
     </div>
   </div>
 </div>
@@ -3151,6 +3167,7 @@ function renderProjects() {
               ${folderPathIconHtml(p.cislo)}
               ${koordIconHtml(p.cislo)}
               ${ifcIconHtml(p.cislo)}
+              ${templateFolderIconHtml(p.cislo)}
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -3176,6 +3193,7 @@ function renderProjects() {
           ${folderPathIconHtml(p.cislo)}
           ${koordIconHtml(p.cislo)}
           ${ifcIconHtml(p.cislo)}
+          ${templateFolderIconHtml(p.cislo)}
           <div style="font-size:16px;color:var(--text3)">✓</div>
         </div>
         <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>`).join('')
@@ -3287,6 +3305,94 @@ async function shareIfcLink(cislo) {
   document.querySelectorAll(`#ifc-${cislo}`).forEach(el => el.outerHTML = ifcIconHtml(cislo));
 }
 
+function templateFolderIconHtml(cislo) {
+  const name = projectFolderNameMap[cislo];
+  const style = name ? `${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);` : KOORD_ICON_STYLE;
+  const title = name ? `Priečinok už existuje (${name})` : 'Vytvoriť priečinok projektu podľa šablóny (__strom_suborov)';
+  return `<button id="tmplf-${cislo}" onclick="event.stopPropagation();createProjectFolderFromTemplate('${cislo}')"
+    title="${title}" style="${style}">🌳</button>`;
+}
+
+async function createProjectFolderFromTemplate(cislo) {
+  const btn = document.getElementById(`tmplf-${cislo}`);
+  if (btn) btn.style.opacity = '0.4';
+  if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); if (btn) btn.style.opacity = '1'; return; }
+  const p = projects.find(x => x.cislo === cislo);
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'createProjectFolder', cislo, nazov: p ? p.nazov : '' }) });
+    const d = await r.json();
+    if (d.ok) {
+      projectFolderNameMap[cislo] = d.folderName;
+      sb.from('project_folders').upsert({ cislo, folder_name: d.folderName, updated_at: new Date().toISOString() }).then(null, () => {});
+      showToast(d.existed ? `Priečinok už existoval: ${d.folderName}` : `Priečinok vytvorený podľa šablóny: ${d.folderName}`, 'ok');
+    } else {
+      showToast(d.error || 'Vytvorenie priečinka zlyhalo', 'err');
+    }
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  }
+  document.querySelectorAll(`#tmplf-${cislo}`).forEach(el => el.outerHTML = templateFolderIconHtml(cislo));
+}
+
+// ── KONTROLA PRIEČINKOV — či má každý projekt priečinok na Drive a či mu sedí číslo/názov ──
+// Živý scan pri každom otvorení (jedno Apps Script/Drive volanie) - žiadna priebežná cache/badge,
+// zámerne podľa rovnakého vzoru ako iné "spusti na klik" akcie v appke (Jozef si to overí keď treba).
+function normFolderName(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+}
+
+async function openFolderAuditModal() {
+  document.getElementById('folderAuditModal').classList.remove('hidden');
+  const el = document.getElementById('folderAuditContent');
+  el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam priečinky z Drive…</div>';
+  if (!cfg.url) { el.innerHTML = '<div style="color:var(--red);padding:12px">Chýba nastavenie Apps Script URL</div>'; return; }
+  let folders;
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'listProjectFolders' }) });
+    const d = await r.json();
+    if (!d.ok) { el.innerHTML = `<div style="color:var(--red);padding:12px">${d.error||'Chyba'}</div>`; return; }
+    folders = d.folders;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
+    return;
+  }
+  // "2026-026-Hotel-Belvue-BJ" alebo "2026-014 RD-Orth-Klak" (staršie priečinky majú medzeru namiesto pomlčky)
+  const byCislo = {}; // dashboard cislo -> {name}
+  const unmatched = [];
+  folders.forEach(f => {
+    const m = f.name.match(/^(\d{4})-(\d{3})[\s_-]*(.*)$/);
+    if (!m) { unmatched.push(f.name); return; }
+    const cislo = m[1].slice(2) + '-' + m[2];
+    byCislo[cislo] = { name: f.name, nazov: m[3] || '' };
+  });
+  const missing = [], mismatched = [], usedCisla = new Set();
+  projects.forEach(p => {
+    const match = byCislo[p.cislo];
+    if (!match) { missing.push(p); return; }
+    usedCisla.add(p.cislo);
+    if (normFolderName(match.nazov) !== normFolderName(p.nazov)) mismatched.push({ p, folderName: match.name });
+  });
+  const orphans = Object.keys(byCislo).filter(c => !usedCisla.has(c)).map(c => byCislo[c].name);
+
+  const rowMissing = p => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+    <span style="flex:1;font-size:13px"><b>${p.cislo}</b> — ${p.nazov}</span>
+    <button class="btn-ghost" style="font-size:11px;padding:3px 9px" onclick="createProjectFolderFromTemplate('${p.cislo}').then(()=>openFolderAuditModal())">Vytvoriť</button>
+  </div>`;
+  const rowMismatch = ({p, folderName}) => `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+    <b>${p.cislo}</b> — Caflou: „${p.nazov}" · priečinok: „${folderName}"
+  </div>`;
+
+  el.innerHTML = `
+    ${missing.length ? `<div class="sec-title" style="color:var(--red)">Chýba priečinok (${missing.length})</div>${missing.map(rowMissing).join('')}` : ''}
+    ${mismatched.length ? `<div class="sec-title" style="color:var(--orange);margin-top:14px">Iný názov ako v Caflou (${mismatched.length})</div>${mismatched.map(rowMismatch).join('')}` : ''}
+    ${!missing.length && !mismatched.length ? '<div style="padding:20px;text-align:center;color:var(--text2)">Všetky projekty majú priečinok so správnym číslom aj názvom ✓</div>' : ''}
+    ${orphans.length ? `<div class="sec-title" style="color:var(--text3);margin-top:14px">Priečinky bez zhody v Caflou (${orphans.length})</div>
+      <div style="font-size:12px;color:var(--text3);line-height:1.7">${orphans.map(n=>n.replace(/</g,'&lt;')).join('<br>')}</div>` : ''}
+    ${unmatched.length ? `<div class="sec-title" style="color:var(--text3);margin-top:14px">Nerozpoznaný formát názvu (${unmatched.length})</div>
+      <div style="font-size:12px;color:var(--text3);line-height:1.7">${unmatched.map(n=>n.replace(/</g,'&lt;')).join('<br>')}</div>` : ''}
+  `;
+}
+
 const PROJECTS_LOCAL_ROOT = 'H:\\Spoločné disky\\1_PROJEKTY\\';
 
 function folderPathIconHtml(cislo) {
@@ -3389,6 +3495,7 @@ function projRowHtml(p) {
       ${folderPathIconHtml(p.cislo)}
       ${koordIconHtml(p.cislo)}
       ${ifcIconHtml(p.cislo)}
+      ${templateFolderIconHtml(p.cislo)}
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);

@@ -285,6 +285,8 @@ function doPost(e) {
     else if (req.action === 'findKoordinaciaFolder') resp = akcia_findKoordinaciaFolder(req);
     else if (req.action === 'findIfcFile')        resp = akcia_findIfcFile(req);
     else if (req.action === 'findProjectFolderName') resp = akcia_findProjectFolderName(req);
+    else if (req.action === 'createProjectFolder') resp = akcia_createProjectFolder(req);
+    else if (req.action === 'listProjectFolders')  resp = akcia_listProjectFolders(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -474,20 +476,75 @@ function volajGemini(prompt) {
 var VZOR_ZOZNAM_ID = '1J2GzotOVyr-n7Tf315naJjPQszWA1FG2i4RN5j4n9v8';
 var VZOR_SUHRN_ID  = '17u-hXwikZGL-ZVElmGIp7TKB0ToaiR1uULU81jllNZE';
 var PROJECTS_DRIVE_ROOT_ID = '0AAim-BTmMDGAUk9PVA'; // Shared Drive "1_PROJEKTY" – projektové priečinky sú jeho priami potomkovia
+var TEMPLATE_FOLDER_ID = '1fkTbATRtHIj4zQHuIsuEHQ1GZkPAYviY'; // "__strom_suborov" – šablóna štruktúry nového projektového priečinka (priamy potomok root-u)
 
 // Spoločný helper: "26-026" (2-číslicový rok, dashboard formát) → priečinok na Drive
 // "2026-026-..." (4-číslicový rok) hľadaný prefix-zhodou na priamych potomkoch root-u
 // (rovnaká konvencia ako sync-fazy.ps1). Zdieľané medzi findKoordinaciaFolder/
 // findProjectFolderName/findIfcFile/sledujPrilohy - predtým bola táto logika 3x nezávisle skopírovaná.
-function najdiProjektFolder(root, cislo) {
+function cisloNaPrefix(cislo) {
   var m = String(cislo).match(/^(\d{2})-(\d{3})$/);
-  var prefix = m ? ('20' + m[1] + '-' + m[2]) : cislo;
+  return m ? ('20' + m[1] + '-' + m[2]) : String(cislo);
+}
+
+function najdiProjektFolder(root, cislo) {
+  var prefix = cisloNaPrefix(cislo);
   var fi = root.getFolders();
   while (fi.hasNext()) {
     var f = fi.next();
     if (f.getName().indexOf(prefix) === 0) return f;
   }
   return null;
+}
+
+// ── VYTVORENIE NOVÉHO PROJEKTOVÉHO PRIEČINKA ZO ŠABLÓNY (__strom_suborov) ─────
+// Kopíruje len ADRESÁROVÚ ŠTRUKTÚRU šablóny (žiadne súbory - šablóna má v listoch
+// len .keep placeholder súbory na udržanie prázdnych priečinkov v Drive UI, tie sa
+// nekopírujú, novovytvorené priečinky ich nepotrebujú). Idempotentné - ak priečinok
+// s daným číslom už existuje, nič nevytvára a vráti existujúci.
+function skopirujStromPriecinkov(sablona, ciel) {
+  var fi = sablona.getFolders();
+  while (fi.hasNext()) {
+    var f = fi.next();
+    var novy = ciel.createFolder(f.getName());
+    skopirujStromPriecinkov(f, novy);
+  }
+}
+
+function akcia_createProjectFolder(req) {
+  var cislo = String(req.cislo || '').trim();
+  var nazov = String(req.nazov || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var existujuci = najdiProjektFolder(root, cislo);
+    if (existujuci) return { ok: true, existed: true, folderName: existujuci.getName() };
+    var nazovPriecinka = cisloNaPrefix(cislo) + (nazov ? ('-' + nazov) : '');
+    var novy = root.createFolder(nazovPriecinka);
+    var sablona = DriveApp.getFolderById(TEMPLATE_FOLDER_ID);
+    skopirujStromPriecinkov(sablona, novy);
+    return { ok: true, existed: false, folderName: nazovPriecinka };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ── ZOZNAM VŠETKÝCH PROJEKTOVÝCH PRIEČINKOV (pre "Kontrola priečinkov") ───────
+function akcia_listProjectFolders(req) {
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var fi = root.getFolders();
+    var folders = [];
+    while (fi.hasNext()) {
+      var f = fi.next();
+      var name = f.getName();
+      if (name === '__strom_suborov' || name === '_Fazy') continue;
+      folders.push({ name: name });
+    }
+    return { ok: true, folders: folders };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
 }
 
 // ── HĽADANIE PRIEČINKA 20_KOORDINACIA (pre batch dopytov) ─────────────────────
