@@ -3307,11 +3307,13 @@ async function shareIfcLink(cislo) {
 }
 
 function templateFolderIconHtml(cislo) {
-  const name = projectFolderNameMap[cislo];
-  const style = name ? `${KOORD_ICON_STYLE}border-color:var(--blue);color:var(--blue);` : KOORD_ICON_STYLE;
-  const title = name ? `Priečinok už existuje (${name})` : 'Vytvoriť priečinok projektu podľa šablóny (__strom_suborov)';
+  // Keď appka už vie, že priečinok existuje (project_folders cache alebo bulkCheckProjectFolders),
+  // ikona sa vôbec nezobrazuje — Jozef nechce možnosť "vytvoriť znova" pre niečo, čo už je hotové.
+  // Prázdny <span id> namiesto úplne žiadneho elementu, nech querySelectorAll('#tmplf-{cislo}') v
+  // bulkCheckProjectFolders/createProjectFolderFromTemplate má stále čo nahradiť pri ďalšom prekreslení.
+  if (projectFolderNameMap[cislo]) return `<span id="tmplf-${cislo}"></span>`;
   return `<button id="tmplf-${cislo}" onclick="event.stopPropagation();createProjectFolderFromTemplate('${cislo}')"
-    title="${title}" style="${style}">🌳</button>`;
+    title="Vytvoriť priečinok projektu podľa šablóny (__strom_suborov)" style="${KOORD_ICON_STYLE}">🌳</button>`;
 }
 
 async function createProjectFolderFromTemplate(cislo) {
