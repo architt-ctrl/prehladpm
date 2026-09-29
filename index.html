@@ -2913,6 +2913,7 @@ async function syncData() {
     showToast(projects.length + ' projektov' + (toPush.length ? ` · aktivita: ${toPush.length} nahratých` : ''), 'ok');
     migrateTaskSpecialists().catch(() => {});
     syncResponsibleContacts().catch(() => {});
+    bulkCheckProjectFolders().catch(() => {});
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     if (!projects.length) loadDemo();
@@ -3341,6 +3342,44 @@ function normFolderName(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
 }
 
+// "2026-026-Hotel-Belvue-BJ" alebo "2026-014 RD-Orth-Klak" (staršie priečinky majú medzeru namiesto pomlčky)
+// → {byCislo: {dashboard cislo: {name, nazov}}, unmatched: [názvy čo sa nedali rozparsovať]}
+function parseProjectFolders(folders) {
+  const byCislo = {}, unmatched = [];
+  folders.forEach(f => {
+    const m = f.name.match(/^(\d{4})-(\d{3})[\s_-]*(.*)$/);
+    if (!m) { unmatched.push(f.name); return; }
+    const cislo = m[1].slice(2) + '-' + m[2];
+    byCislo[cislo] = { name: f.name, nazov: m[3] || '' };
+  });
+  return { byCislo, unmatched };
+}
+
+// Tichý hromadný scan na pozadí (jedno Apps Script/Drive volanie pre všetky projekty naraz) — volaný
+// z syncData(), aby 🌳/📁 ikony hneď na začiatku vedeli, ktoré priečinky reálne existujú, namiesto
+// aby to Jozef musel zisťovať klikaním na každý projekt zvlášť (Jozef, 2026-09-29: "aplikácia overí
+// či existuje daný folder"). Nikdy nevolá renderProjects()/renderAll() (kolabovalo by otvorené detaily)
+// — aktualizuje len konkrétne ikony, ktoré sú práve v DOM (outerHTML rovnakým vzorom ako inde v appke).
+async function bulkCheckProjectFolders() {
+  if (!cfg.url) return;
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'listProjectFolders' }) });
+    const d = await r.json();
+    if (!d.ok) return;
+    const { byCislo } = parseProjectFolders(d.folders);
+    const toUpsert = [];
+    projects.forEach(p => {
+      const match = byCislo[p.cislo];
+      if (!match || projectFolderNameMap[p.cislo] === match.name) return;
+      projectFolderNameMap[p.cislo] = match.name;
+      toUpsert.push({ cislo: p.cislo, folder_name: match.name, updated_at: new Date().toISOString() });
+      document.querySelectorAll(`#tmplf-${p.cislo}`).forEach(el => el.outerHTML = templateFolderIconHtml(p.cislo));
+      document.querySelectorAll(`#fpath-${p.cislo}`).forEach(el => el.outerHTML = folderPathIconHtml(p.cislo));
+    });
+    if (toUpsert.length) sb.from('project_folders').upsert(toUpsert).then(null, () => {});
+  } catch(e) {}
+}
+
 async function openFolderAuditModal() {
   document.getElementById('folderAuditModal').classList.remove('hidden');
   const el = document.getElementById('folderAuditContent');
@@ -3356,15 +3395,7 @@ async function openFolderAuditModal() {
     el.innerHTML = `<div style="color:var(--red);padding:12px">Chyba: ${e.message}</div>`;
     return;
   }
-  // "2026-026-Hotel-Belvue-BJ" alebo "2026-014 RD-Orth-Klak" (staršie priečinky majú medzeru namiesto pomlčky)
-  const byCislo = {}; // dashboard cislo -> {name}
-  const unmatched = [];
-  folders.forEach(f => {
-    const m = f.name.match(/^(\d{4})-(\d{3})[\s_-]*(.*)$/);
-    if (!m) { unmatched.push(f.name); return; }
-    const cislo = m[1].slice(2) + '-' + m[2];
-    byCislo[cislo] = { name: f.name, nazov: m[3] || '' };
-  });
+  const { byCislo, unmatched } = parseProjectFolders(folders);
   const missing = [], mismatched = [], usedCisla = new Set();
   projects.forEach(p => {
     const match = byCislo[p.cislo];
