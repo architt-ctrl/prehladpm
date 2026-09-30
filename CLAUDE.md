@@ -567,6 +567,41 @@ Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlí
 - **Spätná kompatibilita so starým formátom:** záznamy spracované pred touto zmenou majú `pripomienky` ako pole holých reťazcov — `normPripomienka(p)` (duplikovaná v `index.html` aj `vyjadrenia.html`, keďže si nezdieľajú JS) normalizuje `string → {text:p, done:false, komentar:''}` za behu pri renderovaní; pri prvej interakcii (odškrtnutie/komentár) sa **celé pole** danej vyjadrenia prepíše na nový objektový formát v Supabase (nie len dotknutá položka).
 - Overené headless testami (podvrhnuté `sb.from`, žiadny reálny zápis): checkbox render aj toggle, `prompt()`-based komentár aj jeho uloženie, spätná kompatibilita (string položka sa vykreslí bez pádu), `mailto:` odkaz, „🔗 Zdieľať toto vyjadrenie" prítomný v HTML. `vyjadrenia.html?id=...` samostatne otestované (žiadny toggle v HTML, obe pripomienky rovno viditeľné, `mailto:` aj checked-mark `☑` prítomné).
 
+### Koncepčný zoznam dokumentácie (AI návrh, 📋, krok 1, 2026-09-30)
+
+**Kontext/vízia (Jozef, 4 kroky):** pri každom stupni projektovej dokumentácie (Štúdia, Stavebný zámer, Projekt stavby...) Jozef dnes ručne (v hlave/na papieri) zostavuje koncepčný zoznam dokumentácie — rozdelený na stavebné objekty (SO) a prevádzkové súbory (PS) — na základe Zmluvy o dielo (ZoD) a rozhodnutí hlavného architekta. Celková vízia: (1) **AI navrhne** koncepčný zoznam zo ZoD + predošlého stupňa, (2) appka z neho vytvorí **kostru priečinkov** pre PDF export PD, (3) keď sa strom priečinkov v praxi upraví (pridá/premenuje/vymaže položka), AI to prečíta a **zosynchronizuje** oficiálny zoznam späť, (4) zoznam sa napokon použije ako **SSOT** vo viacerých výstupoch PD naraz (príloha „A – Zoznam dokumentácie" v `suhrn.html`, koordinačná situácia, titulná strana). **Táto session rieši výhradne krok 1** — AI vygeneruje návrh, projektant/architekt/Jozef ho v appke vidí a upraví (pridá/zmaže/premenuje/preradí). Kroky 2–4 (vytváranie priečinkov, spätná synchronizácia zo stromu, prepojenie na výstupy PD) sú **zámerne mimo rozsahu**, nič z nich nie je implementované.
+
+**Zdroje pre AI návrh (overené naostro cez Drive, nie predpoklad):**
+- **ZoD** — vždy v `00_RIADENIE/01_ZMLUVY/` v priečinku projektu (Jozef, po spresnení — pôvodne som sa pýtal príliš uzavretou otázkou, ktorá mu nedovolila normálne odpovedať). Overené, že tento podpriečinok v aktuálnej šablóne reálne existuje vedľa `02_EKONOMIKA`/`03_ZAPISY`/`04_KORESPONDENCIA`; na testovanom projekte bol zatiaľ prázdny okrem `.keep` — appka preto musí vedieť zrozumiteľne pokračovať aj bez ZoD (flag `zodChyba`), nie tvrdo zlyhať.
+- **Dokumentácia z predošlého stupňa** — `30_FAZY/{predošlý stupeň}/`. „Z toho vyplýva, že každý stupeň má vlastný zoznam" (Jozef) — zoznam sa teda generuje a ukladá **per stupeň**, nie raz za celý projekt.
+
+**`DOKUMENTACIA_FAZY`** — ďalšia nezávislá fáza-taxonómia (rovnaký zámerný vzor paralelných, nezlučovaných fáza-názvoslovní ako `PONUKY_FAZY`/`TASK_FAZA_TAGS`, pozri „Dopyty" vyššie), presné mená priečinkov pod `30_FAZY/`, overené naostro na `2026-026-Hotel-Belvue-BJ`, v tomto presnom poradí (poradie = aj poradie stupňov, index-1 = „predošlý stupeň"): `FS1A_ZADANIE, FS2A_STUDIA, FS3A_ZAMER_STAVBY, FS3A_PROJEKT_STAVBY, FS4A_REALIZACNY, FS5A_VYBER_ZHOTOVITELA, FS6A_REALIZACIA_AD, FS7A_ODOVZDANIE`. Definované duplicitne v `index.html` a `Code.gs` (nezdieľajú modul) — **musia ostať zhodné**, pri zmene upraviť oboje.
+
+**Staršie projekty** (napr. `2025-027-REK-BD-BBela`, overené naostro) majú starú štruktúru (`1-STUDIA`, `2-DUR`...) bez `30_FAZY` — appka to zrozumiteľne nahlási cez `showToast` (`d.error`), nepadá. Žiadny fallback/migrácia pre ne — mimo rozsahu.
+
+**Supabase `zoznam_dokumentacie`** (SQL: `supabase/zoznam-dokumentacie-setup.sql`, treba spustiť ručne): `id, cislo, faza, kategoria ('SO'|'PS'), kod, nazov, poradie, zdroj ('ai'|'rucne'), created_at`. Žiadny `unique` constraint — poradie a obsah rieši výhradne appka.
+
+**Apps Script — `akcia_navrhniZoznamDokumentacie(req)`** (`{cislo, faza}`), **nič nezapisuje do Supabase** (to robí až `index.html` po zobrazení návrhu):
+1. `najdiProjektFolder` → `30_FAZY` (**len nájsť, nevytvárať** — na rozdiel od `ziskajAlebaVytvorPodpriecinok` inde v appke; ak chýba, jasná chyba „starší projekt?").
+2. ZoD v `00_RIADENIE/01_ZMLUVY` cez nový `najdiPrveSubor(folder)` (preskočí `.keep`, vráti prvý reálny súbor alebo `null`) → `fileToText` (existujúci OCR helper, zvláda `.docx` aj PDF/foto rovnako ako pri Vyjadreniach). Ak sa nenájde/zlyhá čítanie → `zodChyba:true`, **pokračuje ďalej** bez ZoD (nie hard-fail).
+3. Predošlý stupeň (`DOKUMENTACIA_FAZY[idx-1]`, ak `idx>0`) → nový `vypisStromSuborov(folder, maxHlbka, maxPolozky, prefix, acc)` — rekurzívny plochý zoznam **len názvov** súborov (žiadny obsah, cap hĺbka 4 / 300 položiek kvôli veľkosti promptu). **Samostatný, jednoduchší helper než existujúci `buildFolderTree`** (ten je viazaný na `suhrn.html`-špecifický formát a je dokumentovaný ako v praxi nepoužívaný) — nová funkcia naň nezávisí.
+4. Gemini prompt (SK) — kontext stupňa + ZoD text (ak je) + zoznam súborov predošlého stupňa (ak je), žiada JSON pole `{kategoria:'SO'|'PS', kod, nazov}`.
+5. Vráti `{ok:true, items, zodChyba, predoslyStupenNajdeny}`.
+
+Registrované v `doPost` ako `'navrhniZoznamDokumentacie'`.
+
+**`index.html`:**
+- `DOKUMENTACIA_FAZY`/`DOKUMENTACIA_FAZA_LABEL` — vlastná kópia (nie zdieľaná s `Code.gs`, iný runtime).
+- Tlačidlo **„📋 Zoznam dokumentácie"** v `buildDetailHtml(p)` vedľa `📄 Vyjadrenia` → `openDokumentacieModal(cislo)` → `#dokumentacieModal` (skeleton podľa `#dopytyModal`).
+- `_dokumentacieCtx = {cislo, faza, items}` — `<select>` s `DOKUMENTACIA_FAZY` prepína stupeň (`switchDokumentacieFaza`, znova načíta zo Supabase, **predvolená hodnota sa neodvodzuje** od dashboard `faza`/`podfaza` — iná taxonómia, necháva sa na užívateľovi).
+- **„✦ Navrhnúť AI"** (`navrhnutZoznamAI`) — zavolá Apps Script, výsledné `items` **rovno bulk-insertne** do Supabase (`poradie` = index v poli, `zdroj:'ai'`) a prekreslí — jeden krok „navrhni a ulož", žiadne samostatné schvaľovanie (úprava/mazanie potom je bežná operácia). Pri `zodChyba` sa do toastu pridá upozornenie, že návrh je bez ZoD.
+- Render zoskupený podľa `kategoria` („Stavebné objekty" / „Prevádzkové súbory"), riadok = `kod`+`nazov` inline inputy (`onchange` persist cez `editDokumentacieItem`), ▲▼ (`moveDokumentacieItem` — `poradie` swap medzi susedmi **v rámci tej istej kategórie**, vzor `moveTask` z `planovanie.html`), ✕ (`deleteDokumentacieItem`, splice-then-rerender-then-persist vzor), „+ Pridať položku" na konci každej kategórie (`addDokumentacieItem`, `zdroj:'rucne'`).
+- **Žiadny odznak na riadku projektu v tejto session** (vedomé rozhodnutie — funkcia ešte nie je hotová/preverená naostro, netreba kvôli nej dotýkať „3 miesta šablóny riadku" gotchu predčasne).
+
+**Gotcha na redeploy:** nová `doPost` akcia vyžaduje Jozefov ručný redeploy Apps Scriptu (Deploy → Manage → nová verzia) + spustenie `zoznam-dokumentacie-setup.sql` v Supabase predtým, než začne fungovať naostro.
+
+**Neoverené v tejto session:** kvalita AI návrhu (SO/PS rozsah primeraný danému stupňu, správne parsovanie reálnej ZoD `.docx`) — nebol k dispozícii žiadny Apps Script beh zo session, overená len logika (nájdenie priečinkov, ukladanie/preradenie/mazanie, prepínanie fáz) headless Puppeteer testom s podvrhnutým `fetch`/`sb.from`. Po redeployi + SQL migrácii treba reálny test na projekte s vyplnenou ZoD v `01_ZMLUVY` a podľa výsledku doladiť Gemini prompt.
+
 ### Odkaz na priečinok s podkladmi (🔗, 2026-08-31)
 
 Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri vyššie) je vedľa 📁 ďalšia ikona — priamy link na Drive priečinok `20_KOORDINACIA` (spoločný priečinok pre podklady všetkých profesií, pozri "Realita overená naživo" v sekcii o štruktúre priečinka nižšie). Zámerne **nie** automatický scan naprieč všetkými projektmi (bolo by to príliš veľa Apps Script/Drive volaní naraz) — objavuje sa lenivo, projekt po projekte, na Jozefov klik.

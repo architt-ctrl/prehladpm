@@ -1292,6 +1292,16 @@ nav {
   </div>
 </div>
 
+<div class="overlay hidden" id="dokumentacieModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="dokumentacieTitle">Zoznam dokumentácie</h3>
+    <div id="dokumentacieContent" style="max-height:75vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('dokumentacieModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="portfolioModal">
   <div class="modal" style="max-width:600px">
     <h3>Celkový stav portfólia</h3>
@@ -3615,6 +3625,141 @@ async function deleteVyjadrenie(id) {
   loadVyjadreniaMap().catch(() => {});
 }
 
+// ── Zoznam dokumentácie (AI návrh, krok 1, 2026-09-30) ──────────────────────
+// Musí byť identické s DOKUMENTACIA_FAZY v appscript/Code.gs (viď CLAUDE.md).
+const DOKUMENTACIA_FAZY = ['FS1A_ZADANIE','FS2A_STUDIA','FS3A_ZAMER_STAVBY','FS3A_PROJEKT_STAVBY','FS4A_REALIZACNY','FS5A_VYBER_ZHOTOVITELA','FS6A_REALIZACIA_AD','FS7A_ODOVZDANIE'];
+const DOKUMENTACIA_FAZA_LABEL = {
+  FS1A_ZADANIE:'Zadanie', FS2A_STUDIA:'Štúdia', FS3A_ZAMER_STAVBY:'Stavebný zámer',
+  FS3A_PROJEKT_STAVBY:'Projekt stavby', FS4A_REALIZACNY:'Realizačný projekt',
+  FS5A_VYBER_ZHOTOVITELA:'Výber zhotoviteľa', FS6A_REALIZACIA_AD:'Realizácia + AD',
+  FS7A_ODOVZDANIE:'Odovzdanie'
+};
+
+let _dokumentacieCtx = null; // { cislo, faza, items }
+
+async function openDokumentacieModal(cislo) {
+  const p = projects.find(x => x.cislo === cislo);
+  document.getElementById('dokumentacieTitle').textContent = `Zoznam dokumentácie – ${p ? p.nazov : cislo}`;
+  document.getElementById('dokumentacieModal').classList.remove('hidden');
+  _dokumentacieCtx = { cislo, faza: DOKUMENTACIA_FAZY[0], items: [] };
+  await switchDokumentacieFaza(DOKUMENTACIA_FAZY[0]);
+}
+
+async function switchDokumentacieFaza(faza) {
+  _dokumentacieCtx.faza = faza;
+  document.getElementById('dokumentacieContent').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  const { data } = await sb.from('zoznam_dokumentacie').select('*').eq('cislo', _dokumentacieCtx.cislo).eq('faza', faza).order('poradie');
+  _dokumentacieCtx.items = data || [];
+  renderDokumentacieModal();
+}
+
+function renderDokumentacieModal() {
+  const { cislo, faza, items } = _dokumentacieCtx;
+  const el = document.getElementById('dokumentacieContent');
+  const grupa = (kat, label) => {
+    const rows = items.filter(it => it.kategoria === kat);
+    return `<div style="margin-top:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">${label}</div>
+      ${rows.map((it, i) => dokumentacieRowHtml(it, i === 0, i === rows.length - 1)).join('') || '<div style="font-size:11px;color:var(--text3)">žiadne položky</div>'}
+      <div onclick="addDokumentacieItem('${kat}')" style="font-size:11px;color:var(--blue);cursor:pointer;margin-top:4px">+ Pridať položku</div>
+    </div>`;
+  };
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+      <select onchange="switchDokumentacieFaza(this.value)" class="pd-sel" style="font-size:12px;flex:1;min-width:160px">
+        ${DOKUMENTACIA_FAZY.map(f => `<option value="${f}" ${f === faza ? 'selected' : ''}>${DOKUMENTACIA_FAZA_LABEL[f]}</option>`).join('')}
+      </select>
+      <button id="dok-ai-btn" onclick="navrhnutZoznamAI()" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">✦ Navrhnúť AI</button>
+    </div>
+    ${grupa('SO', 'Stavebné objekty (SO)')}
+    ${grupa('PS', 'Prevádzkové súbory (PS)')}
+  `;
+}
+
+function dokumentacieRowHtml(it, first, last) {
+  return `<div style="display:flex;gap:6px;align-items:center;padding:3px 0">
+    <div style="display:flex;flex-direction:column;flex-shrink:0">
+      <span onclick="${first ? '' : `moveDokumentacieItem('${it.id}',-1)`}" style="cursor:${first ? 'default' : 'pointer'};color:${first ? 'var(--border)' : 'var(--text3)'};font-size:10px;line-height:1">▲</span>
+      <span onclick="${last ? '' : `moveDokumentacieItem('${it.id}',1)`}" style="cursor:${last ? 'default' : 'pointer'};color:${last ? 'var(--border)' : 'var(--text3)'};font-size:10px;line-height:1">▼</span>
+    </div>
+    <input value="${(it.kod||'').replace(/"/g,'&quot;')}" placeholder="kód" onchange="editDokumentacieItem('${it.id}','kod',this.value)" style="width:70px;font-size:12px;border:1px solid var(--border);border-radius:5px;padding:3px 6px;background:var(--bg2);color:var(--text)">
+    <input value="${(it.nazov||'').replace(/"/g,'&quot;')}" placeholder="názov" onchange="editDokumentacieItem('${it.id}','nazov',this.value)" style="flex:1;font-size:12px;border:1px solid var(--border);border-radius:5px;padding:3px 6px;background:var(--bg2);color:var(--text)">
+    <button onclick="deleteDokumentacieItem('${it.id}')" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:13px;flex-shrink:0">✕</button>
+  </div>`;
+}
+
+async function editDokumentacieItem(id, field, value) {
+  const it = _dokumentacieCtx.items.find(x => x.id === id);
+  if (!it) return;
+  it[field] = value;
+  await sb.from('zoznam_dokumentacie').update({ [field]: value }).eq('id', id).then(null, () => showToast('Chyba uloženia', 'err'));
+}
+
+async function moveDokumentacieItem(id, dir) {
+  const { items } = _dokumentacieCtx;
+  const it = _dokumentacieCtx.items.find(x => x.id === id);
+  if (!it) return;
+  const sameKat = items.filter(x => x.kategoria === it.kategoria);
+  const idx = sameKat.indexOf(it);
+  const swapWith = sameKat[idx + dir];
+  if (!swapWith) return;
+  const p1 = it.poradie, p2 = swapWith.poradie;
+  it.poradie = p2; swapWith.poradie = p1;
+  items.sort((a, b) => a.poradie - b.poradie);
+  renderDokumentacieModal();
+  await Promise.all([
+    sb.from('zoznam_dokumentacie').update({ poradie: p2 }).eq('id', it.id).then(null, () => {}),
+    sb.from('zoznam_dokumentacie').update({ poradie: p1 }).eq('id', swapWith.id).then(null, () => {})
+  ]);
+}
+
+async function deleteDokumentacieItem(id) {
+  _dokumentacieCtx.items = _dokumentacieCtx.items.filter(x => x.id !== id);
+  renderDokumentacieModal();
+  await sb.from('zoznam_dokumentacie').delete().eq('id', id);
+}
+
+async function addDokumentacieItem(kat) {
+  const { cislo, faza, items } = _dokumentacieCtx;
+  const maxPoradie = Math.max(0, ...items.filter(x => x.kategoria === kat).map(x => x.poradie));
+  const { data, error } = await sb.from('zoznam_dokumentacie').insert({ cislo, faza, kategoria: kat, kod: '', nazov: '', poradie: maxPoradie + 1, zdroj: 'rucne' }).select().single();
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  _dokumentacieCtx.items.push(data);
+  renderDokumentacieModal();
+}
+
+async function navrhnutZoznamAI() {
+  const { cislo, faza } = _dokumentacieCtx;
+  if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); return; }
+  const btn = document.getElementById('dok-ai-btn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.textContent = 'Generujem…'; }
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', cache: 'no-store', body: JSON.stringify({ action: 'navrhniZoznamDokumentacie', cislo, faza }) });
+    const d = await r.json();
+    if (!d.ok) { showToast(d.error || 'Návrh zlyhal', 'err'); return; }
+    const items = Array.isArray(d.items) ? d.items : [];
+    if (!items.length) { showToast('AI nevrátila žiadne položky', 'err'); return; }
+    const rows = items.map((it, i) => ({
+      cislo, faza,
+      kategoria: it.kategoria === 'PS' ? 'PS' : 'SO',
+      kod: it.kod || null,
+      nazov: it.nazov || '',
+      poradie: i,
+      zdroj: 'ai'
+    }));
+    const { error } = await sb.from('zoznam_dokumentacie').insert(rows);
+    if (error) { showToast('Chyba uloženia: ' + error.message, 'err'); return; }
+    let msg = `AI navrhla ${items.length} položiek ✓`;
+    if (d.zodChyba) msg += ' (bez ZoD — nenašla sa v 00_RIADENIE/01_ZMLUVY)';
+    showToast(msg, 'ok');
+    await switchDokumentacieFaza(faza);
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.textContent = '✦ Navrhnúť AI'; }
+  }
+}
+
 async function openFolderAuditModal() {
   document.getElementById('folderAuditModal').classList.remove('hidden');
   const el = document.getElementById('folderAuditContent');
@@ -3875,6 +4020,8 @@ function buildDetailHtml(p) {
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📨 Dopyty</button>
       <button onclick="event.stopPropagation();openVyjadreniaModal('${p.cislo}')"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📄 Vyjadrenia</button>
+      <button onclick="event.stopPropagation();openDokumentacieModal('${p.cislo}')"
+        style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📋 Zoznam dokumentácie</button>
       <a href="suhrn.html?cislo=${encodeURIComponent(p.cislo)}&nazov=${encodeURIComponent(p.nazov)}&faza=${encodeURIComponent(p.faza||'')}&podfaza=${encodeURIComponent(p.podfaza||'')}&caflouid=${encodeURIComponent(p.caflou_id||'')}&taskids=${encodeURIComponent((p.caflou_task_ids||[]).join(','))}" onclick="event.stopPropagation()" target="_blank"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);text-decoration:none;display:inline-flex;align-items:center">📄 A,B</a>
     </div>

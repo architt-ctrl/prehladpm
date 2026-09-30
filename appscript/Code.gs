@@ -289,6 +289,7 @@ function doPost(e) {
     else if (req.action === 'listProjectFolders')  resp = akcia_listProjectFolders(req);
     else if (req.action === 'scanVyjadreniaProjekt') resp = akcia_scanVyjadreniaProjekt(req);
     else if (req.action === 'resetVyjadreniaCursor') resp = akcia_resetVyjadreniaCursor(req);
+    else if (req.action === 'navrhniZoznamDokumentacie') resp = akcia_navrhniZoznamDokumentacie(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -1482,4 +1483,123 @@ function akcia_scanVyjadreniaProjekt(req) {
 function akcia_resetVyjadreniaCursor(req) {
   PropertiesService.getScriptProperties().deleteProperty('spracovane_vyjadrenia');
   return { ok: true };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// KONCEPČNÝ ZOZNAM DOKUMENTÁCIE (AI návrh, krok 1, 2026-09-30)
+// ══════════════════════════════════════════════════════════════════════════════
+// Presné mená priečinkov pod 30_FAZY/ v aktuálnej (novej) štruktúre projektového
+// priečinka, v poradí stupňov (index-1 = "predošlý stupeň") - overené naostro na
+// 2026-026-Hotel-Belvue-BJ. Nezávislá taxonómia od dashboard faza/podfaza,
+// PONUKY_FAZY aj TASK_FAZA_TAGS - rovnaký zámerný vzor paralelných fáza-názvoslovní
+// ako inde v repe (pozri CLAUDE.md "Dopyty"). Musí byť identická s DOKUMENTACIA_FAZY
+// v index.html.
+var DOKUMENTACIA_FAZY = ['FS1A_ZADANIE','FS2A_STUDIA','FS3A_ZAMER_STAVBY','FS3A_PROJEKT_STAVBY','FS4A_REALIZACNY','FS5A_VYBER_ZHOTOVITELA','FS6A_REALIZACIA_AD','FS7A_ODOVZDANIE'];
+
+// Prvý reálny súbor v priečinku (preskočí .keep placeholder) - použité na nájdenie ZoD.
+function najdiPrveSubor(folder) {
+  var fi = folder.getFiles();
+  while (fi.hasNext()) {
+    var f = fi.next();
+    if (f.getName() === '.keep') continue;
+    return f;
+  }
+  return null;
+}
+
+// Rekurzívny plochý zoznam názvov súborov (žiadny obsah) - na kontext "čo už je z
+// predošlého stupňa", cap na hĺbku aj počet položiek kvôli veľkosti Gemini promptu.
+// Samostatný, jednoduchší helper než existujúci buildFolderTree (ten je viazaný na
+// suhrn.html-špecifický formát a je dokumentovaný ako v praxi nepoužívaný).
+function vypisStromSuborov(folder, maxHlbka, maxPolozky, prefix, acc) {
+  acc = acc || [];
+  prefix = prefix || '';
+  if (maxHlbka <= 0 || acc.length >= maxPolozky) return acc;
+  var fi = folder.getFiles();
+  while (fi.hasNext() && acc.length < maxPolozky) {
+    var f = fi.next();
+    if (f.getName() === '.keep') continue;
+    acc.push(prefix + f.getName());
+  }
+  var di = folder.getFolders();
+  while (di.hasNext() && acc.length < maxPolozky) {
+    var d = di.next();
+    vypisStromSuborov(d, maxHlbka - 1, maxPolozky, prefix + d.getName() + '/', acc);
+  }
+  return acc;
+}
+
+var DOKUMENTACIA_FAZA_LABEL_GS = {
+  FS1A_ZADANIE: 'Zadanie', FS2A_STUDIA: 'Štúdia', FS3A_ZAMER_STAVBY: 'Stavebný zámer',
+  FS3A_PROJEKT_STAVBY: 'Projekt stavby', FS4A_REALIZACNY: 'Realizačný projekt',
+  FS5A_VYBER_ZHOTOVITELA: 'Výber zhotoviteľa', FS6A_REALIZACIA_AD: 'Realizácia + AD',
+  FS7A_ODOVZDANIE: 'Odovzdanie'
+};
+
+// AI návrh koncepčného zoznamu dokumentácie (SO/PS) pre daný stupeň PD - {cislo, faza}.
+// Číta len (ZoD v 00_RIADENIE/01_ZMLUVY, súbory predošlého stupňa v 30_FAZY/...) -
+// nič nevytvára ani nezapisuje do Supabase, to robí až index.html po zobrazení návrhu.
+function akcia_navrhniZoznamDokumentacie(req) {
+  var cislo = String(req.cislo || '').trim();
+  var faza = String(req.faza || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  if (DOKUMENTACIA_FAZY.indexOf(faza) === -1) return { ok: false, error: 'Neznáma fáza: ' + faza };
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
+
+    var fi30 = projFolder.getFoldersByName('30_FAZY');
+    if (!fi30.hasNext()) return { ok: false, error: 'Projekt nemá priečinok 30_FAZY (starší projekt so staršou štruktúrou?)' };
+    var fazyFolder = fi30.next();
+
+    var zodText = null, zodChyba = false;
+    var zmluvyFolder = null;
+    var fi00 = projFolder.getFoldersByName('00_RIADENIE');
+    if (fi00.hasNext()) {
+      var fiZm = fi00.next().getFoldersByName('01_ZMLUVY');
+      if (fiZm.hasNext()) zmluvyFolder = fiZm.next();
+    }
+    if (zmluvyFolder) {
+      var zodFile = najdiPrveSubor(zmluvyFolder);
+      if (zodFile) {
+        try { zodText = fileToText(zodFile.getId(), zodFile.getMimeType()); }
+        catch(e) { zodChyba = true; Logger.log('Zoznam dokumentacie - chyba citania ZoD: ' + e.message); }
+      } else zodChyba = true;
+    } else zodChyba = true;
+
+    var predoslyStupenNajdeny = false;
+    var predoslyText = '';
+    var idx = DOKUMENTACIA_FAZY.indexOf(faza);
+    if (idx > 0) {
+      var fiPred = fazyFolder.getFoldersByName(DOKUMENTACIA_FAZY[idx - 1]);
+      if (fiPred.hasNext()) {
+        var subory = vypisStromSuborov(fiPred.next(), 4, 300);
+        if (subory.length) {
+          predoslyStupenNajdeny = true;
+          predoslyText = subory.join('\n');
+        }
+      }
+    }
+
+    var label = DOKUMENTACIA_FAZA_LABEL_GS[faza] || faza;
+    var prompt =
+      'Si asistent architekta pripravujúci koncepčný zoznam dokumentácie pre stupeň "' + label + '" ' +
+      'projektu (projektová dokumentácia stavby na Slovensku). Zoznam sa delí na stavebné objekty ' +
+      '(SO) a prevádzkové súbory (PS). Rozsah/detail zoznamu prispôsob tomuto konkrétnemu stupňu ' +
+      '(zadanie a štúdia majú spravidla menej položiek než projekt stavby alebo realizačný projekt).\n\n' +
+      (zodText ? ('TEXT ZMLUVY O DIELO (rozsah a predmet diela):\n' + zodText + '\n\n') : '') +
+      (predoslyText ? ('ZOZNAM SÚBOROV Z PREDOŠLÉHO STUPŇA (' + DOKUMENTACIA_FAZY[idx - 1] + '):\n' + predoslyText + '\n\n') : '') +
+      'Vráť JSON pole objektov v tvare {"kategoria":"SO"|"PS","kod":"...","nazov":"..."} ' +
+      '(kod napr. "SO 01", môže byť aj null). Odpovedaj LEN validným JSON poľom, bez markdown, bez vysvetlení.';
+
+    var raw = volajGemini(prompt);
+    var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    var items = JSON.parse(json);
+    if (!Array.isArray(items)) throw new Error('Gemini nevrátil pole');
+
+    return { ok: true, items: items, zodChyba: zodChyba, predoslyStupenNajdeny: predoslyStupenNajdeny };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
 }
