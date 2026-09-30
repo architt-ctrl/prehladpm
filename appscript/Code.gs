@@ -1328,7 +1328,9 @@ function zapisDoSupabaseVyjadrenie(entry) {
     muteHttpExceptions: true
   });
   if (resp.getResponseCode() >= 300) {
-    Logger.log('Chyba zápisu do Supabase project_vyjadrenia: ' + resp.getContentText());
+    var chyba = 'Supabase HTTP ' + resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 300);
+    Logger.log('Chyba zápisu do Supabase project_vyjadrenia: ' + chyba);
+    throw new Error(chyba);
   }
 }
 
