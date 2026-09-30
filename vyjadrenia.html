@@ -45,12 +45,16 @@
     .meta .late{color:var(--red);font-weight:700}
     .meta .soon{color:var(--orange);font-weight:700}
     .kontakt{font-size:12px;color:var(--text3);margin-top:4px}
+    .kontakt a{color:var(--blue);text-decoration:none}
     .zhrnutie{font-size:13px;color:var(--text2);margin-top:6px;line-height:1.5}
     .pr-toggle{font-size:12px;color:var(--blue);cursor:pointer;margin-top:8px;user-select:none;display:inline-block}
-    .pr-list{margin:6px 0 0 18px;padding:0;font-size:13px;color:var(--text2);line-height:1.6}
+    .pr-list{margin:6px 0 0 0;padding:0;font-size:13px;color:var(--text2);line-height:1.5}
+    .pr-list li{list-style:none;display:flex;gap:7px;margin-bottom:6px}
+    .pr-mark{flex-shrink:0;margin-top:1px}
+    .pr-done{text-decoration:line-through;color:var(--text3)}
+    .pr-komentar{font-size:11px;color:var(--text3);margin-top:1px}
     .file-link{font-size:12px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:8px}
     .file-link:hover{text-decoration:underline}
-    .pr-list li{margin-bottom:3px}
   </style>
 </head>
 <body>
@@ -75,12 +79,18 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const params = new URLSearchParams(location.search);
 const cislo = params.get('cislo');
 const nazov = params.get('nazov');
+const singleId = params.get('id'); // odkaz na jedno konkrétne vyjadrenie - nerozbaľuje sa, všetko rovno vidno
 document.getElementById('topProj').textContent = [cislo, nazov].filter(Boolean).join(' – ');
 
 const openSet = new Set();
 let rows = [];
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// Staré záznamy (spred zavedenia checkboxu/komentára) majú pripomienky ako holé reťazce.
+function normPripomienka(p) {
+  return (typeof p === 'string') ? { text: p, done: false, komentar: '' } : (p || { text: '', done: false, komentar: '' });
+}
 
 function badgeHtml(stav) {
   if (!stav) return '';
@@ -94,15 +104,28 @@ function dlClass(termin) {
   return d < 0 ? 'late' : d <= 14 ? 'soon' : '';
 }
 
+function pripomienkyHtml(pripomienky) {
+  if (!pripomienky.length) return '';
+  return `<ul class="pr-list">${pripomienky.map(p => {
+    const n = normPripomienka(p);
+    return `<li><span class="pr-mark">${n.done ? '☑' : '☐'}</span><span>
+      <span class="${n.done ? 'pr-done' : ''}">${esc(n.text)}</span>
+      ${n.komentar ? `<div class="pr-komentar">💬 ${esc(n.komentar)}</div>` : ''}
+    </span></li>`;
+  }).join('')}</ul>`;
+}
+
 function render() {
   const main = document.getElementById('main');
   if (!rows.length) {
-    main.innerHTML = '<div class="empty">Zatiaľ žiadne vyjadrenia ani stanoviská k tomuto projektu.</div>';
+    main.innerHTML = singleId
+      ? '<div class="empty err">Toto vyjadrenie sa nenašlo (odkaz už možno nie je platný).</div>'
+      : '<div class="empty">Zatiaľ žiadne vyjadrenia ani stanoviská k tomuto projektu.</div>';
     return;
   }
   main.innerHTML = rows.map(r => {
     const pripomienky = Array.isArray(r.pripomienky) ? r.pripomienky : [];
-    const open = openSet.has(r.id);
+    const open = singleId ? true : openSet.has(r.id);
     return `<div class="card">
       <div class="card-head">
         <span class="organ">${esc(r.organ || 'Neznámy pôvodca')}${r.cislo_vyjadrenia ? ` <span class="cislo-vyj">· č. ${esc(r.cislo_vyjadrenia)}</span>` : ''}</span>
@@ -112,12 +135,12 @@ function render() {
         ${r.datum_dokumentu ? 'Dokument: ' + esc(r.datum_dokumentu) : ''}
         ${r.termin_reakcie ? `<span class="${dlClass(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${esc(r.termin_reakcie)}</span>` : ''}
       </div>
-      ${r.kontakt ? `<div class="kontakt">👤 ${esc(r.kontakt)}</div>` : ''}
+      ${r.kontakt || r.kontakt_email ? `<div class="kontakt">👤 ${esc(r.kontakt || '')}${r.kontakt_email ? ` · <a href="mailto:${esc(r.kontakt_email)}">✉️ ${esc(r.kontakt_email)}</a>` : ''}</div>` : ''}
       ${r.zhrnutie ? `<div class="zhrnutie">${esc(r.zhrnutie)}</div>` : ''}
-      ${pripomienky.length ? `
-        <div class="pr-toggle" onclick="toggleOpen('${r.id}')">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
-        ${open ? `<ul class="pr-list">${pripomienky.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
-      ` : ''}
+      ${pripomienky.length ? (singleId
+        ? pripomienkyHtml(pripomienky)
+        : `<div class="pr-toggle" onclick="toggleOpen('${r.id}')">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>${open ? pripomienkyHtml(pripomienky) : ''}`
+      ) : ''}
       ${r.file_url ? `<a class="file-link" href="${esc(r.file_url)}" target="_blank">📎 Otvoriť oficiálny dokument</a>` : ''}
     </div>`;
   }).join('');
@@ -133,7 +156,10 @@ async function init() {
     document.getElementById('main').innerHTML = '<div class="empty err">Chýba číslo projektu v odkaze.</div>';
     return;
   }
-  const { data, error } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
+  const query = sb.from('project_vyjadrenia').select('*');
+  const { data, error } = singleId
+    ? await query.eq('id', singleId)
+    : await query.eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
   if (error) {
     document.getElementById('main').innerHTML = '<div class="empty err">Nepodarilo sa načítať: ' + esc(error.message) + '</div>';
     return;

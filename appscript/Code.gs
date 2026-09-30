@@ -1382,8 +1382,10 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         '- organ: názov úradu/inštitúcie/správcu siete, ktorý stanovisko vydal\n' +
         '- cislo_vyjadrenia: číslo/spisová značka/jednacie číslo dokumentu (napr. "OU-BA-OSZP3-2026/012345"), ' +
         'alebo null ak nie je uvedené\n' +
-        '- kontakt: meno (a telefón/email ak sú uvedené) osoby, ktorá stanovisko vypracovala alebo je na ' +
+        '- kontakt: meno (a telefón ak je uvedený) osoby, ktorá stanovisko vypracovala alebo je na ' +
         'ňom podpísaná ako kontaktná osoba (napr. "Ing. Jana Nováková, 0901 234 567"), alebo null ak nie je uvedené\n' +
+        '- kontakt_email: e-mailová adresa tej istej kontaktnej osoby, ak je v dokumente uvedená ' +
+        '(samostatne od poľa kontakt, kvôli klikateľnému odkazu), inak null\n' +
         '- datum_dokumentu: dátum vydania dokumentu vo formáte YYYY-MM-DD, alebo null ak nie je uvedený\n' +
         '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
         'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
@@ -1402,6 +1404,11 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
       var raw = volajGemini(prompt);
       var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
       var data = JSON.parse(json);
+      // Gemini vracia pripomienky ako pole holých textov - obalíme na objekty s miestom na odškrtnutie
+      // a komentár (done/komentar sú čisto UI stav, dopĺňa/mení ich až Jozef v index.html, nie Gemini).
+      var pripomienkyObj = (Array.isArray(data.pripomienky) ? data.pripomienky : []).map(function(text) {
+        return { text: text, done: false, komentar: '' };
+      });
       zapisDoSupabaseVyjadrenie({
         cislo: cislo,
         file_id: id,
@@ -1410,10 +1417,11 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         organ: data.organ || null,
         cislo_vyjadrenia: data.cislo_vyjadrenia || null,
         kontakt: data.kontakt || null,
+        kontakt_email: data.kontakt_email || null,
         datum_dokumentu: data.datum_dokumentu || null,
         termin_reakcie: data.termin_reakcie || null,
         stav: data.stav || null,
-        pripomienky: Array.isArray(data.pripomienky) ? data.pripomienky : [],
+        pripomienky: pripomienkyObj,
         zhrnutie: data.zhrnutie || null
       });
       novych++;

@@ -11,6 +11,7 @@ create table if not exists project_vyjadrenia (
   organ text,
   cislo_vyjadrenia text,
   kontakt text,
+  kontakt_email text,
   datum_dokumentu date,
   termin_reakcie date,
   stav text,
@@ -21,9 +22,13 @@ create table if not exists project_vyjadrenia (
 
 -- Idempotentné pridanie stĺpcov aj keď tabuľka už existuje zo staršej verzie tohto súboru
 -- (cislo_vyjadrenia/kontakt pribudli 2026-09-30, deň po prvom nasadení; stav/pripomienky o pár
--- hodín neskôr v ten istý deň, na Jozefovu žiadosť kvôli klientskemu zdieľaniu).
+-- hodín neskôr v ten istý deň; kontakt_email ešte o čosi neskôr, na Jozefovu žiadosť kvôli
+-- klientskemu zdieľaniu). Pozor: `pripomienky` odteraz drží pole OBJEKTOV
+-- `{text, done, komentar}`, nie pole holých reťazcov ako pri prvom nasadení - staré záznamy
+-- (pred touto zmenou) majú starý formát, kým sa nespracujú znova cez "🗑 Reset" + "Skontrolovať teraz".
 alter table project_vyjadrenia add column if not exists cislo_vyjadrenia text;
 alter table project_vyjadrenia add column if not exists kontakt text;
+alter table project_vyjadrenia add column if not exists kontakt_email text;
 alter table project_vyjadrenia add column if not exists stav text;
 alter table project_vyjadrenia add column if not exists pripomienky jsonb default '[]'::jsonb;
 

@@ -3457,6 +3457,24 @@ function vyjadrenieDlStyle(termin) {
   return d < 0 ? 'color:var(--red);font-weight:700' : d <= 14 ? 'color:var(--orange);font-weight:700' : 'color:var(--text2)';
 }
 
+// Staré záznamy (spred zavedenia checkboxu/komentára) majú pripomienky ako holé reťazce -
+// normalizujeme na objekt za behu, nič sa v Supabase neprepisuje kým sa daná položka reálne nezmení.
+function normPripomienka(p) {
+  return (typeof p === 'string') ? { text: p, done: false, komentar: '' } : (p || { text: '', done: false, komentar: '' });
+}
+
+function pripomienkaRowHtml(recordId, idx, p) {
+  const n = normPripomienka(p);
+  return `<li style="list-style:none;display:flex;gap:6px;align-items:flex-start;margin-bottom:6px">
+    <input type="checkbox" ${n.done ? 'checked' : ''} onclick="togglePripomienka('${recordId}',${idx})" style="margin-top:2px;cursor:pointer;flex-shrink:0;accent-color:var(--green)">
+    <div style="flex:1;min-width:0">
+      <span style="${n.done ? 'text-decoration:line-through;color:var(--text3)' : ''}">${n.text}</span>
+      ${n.komentar ? `<div style="font-size:11px;color:var(--text3);margin-top:1px">💬 ${n.komentar}</div>` : ''}
+      <span onclick="komentarPripomienka('${recordId}',${idx})" style="font-size:10px;color:var(--blue);cursor:pointer;margin-left:6px;white-space:nowrap">${n.komentar ? 'upraviť komentár' : '+ komentár'}</span>
+    </div>
+  </li>`;
+}
+
 function renderVyjadreniaModal() {
   const { cislo, rows } = _vyjadreniaCtx;
   const el = document.getElementById('vyjadreniaContent');
@@ -3474,13 +3492,16 @@ function renderVyjadreniaModal() {
           ${r.datum_dokumentu ? 'Dokument: ' + r.datum_dokumentu : ''}
           ${r.termin_reakcie ? `<span style="${vyjadrenieDlStyle(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${r.termin_reakcie}</span>` : ''}
         </div>
-        ${r.kontakt ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 ${r.kontakt}</div>` : ''}
+        ${r.kontakt || r.kontakt_email ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 ${r.kontakt || ''}${r.kontakt_email ? ` · <a href="mailto:${r.kontakt_email}" style="color:var(--blue);text-decoration:none">✉️ ${r.kontakt_email}</a>` : ''}</div>` : ''}
         ${r.zhrnutie ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${r.zhrnutie}</div>` : ''}
         ${pripomienky.length ? `
           <div onclick="toggleVyjadrenieOpen('${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer;margin-top:4px;user-select:none">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
-          ${open ? `<ul style="margin:4px 0 0 16px;padding:0;font-size:12px;color:var(--text2)">${pripomienky.map(p => `<li style="margin-bottom:2px">${p}</li>`).join('')}</ul>` : ''}
+          ${open ? `<ul style="margin:4px 0 0 0;padding:0">${pripomienky.map((p, idx) => pripomienkaRowHtml(r.id, idx, p)).join('')}</ul>` : ''}
         ` : ''}
-        ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:4px">📎 Otvoriť súbor</a>` : ''}
+        <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+          ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none">📎 Otvoriť súbor</a>` : ''}
+          <span onclick="shareVyjadrenieItem('${cislo}','${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer">🔗 Zdieľať toto vyjadrenie</span>
+        </div>
       </div>
       <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;flex-shrink:0">✕</button>
     </div>`;
@@ -3540,6 +3561,39 @@ function shareVyjadreniaLink(cislo) {
   const base = location.origin + location.pathname.replace(/[^/]*$/, '');
   const url = base + 'vyjadrenia.html?cislo=' + encodeURIComponent(cislo) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo);
   navigator.clipboard.writeText(url).then(() => showToast('Odkaz pre klienta skopírovaný ✓', 'ok'), () => showToast(url, 'ok'));
+}
+
+function shareVyjadrenieItem(cislo, id) {
+  const p = projects.find(x => x.cislo === cislo);
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const url = base + 'vyjadrenia.html?cislo=' + encodeURIComponent(cislo) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo) + '&id=' + encodeURIComponent(id);
+  navigator.clipboard.writeText(url).then(() => showToast('Odkaz na toto vyjadrenie skopírovaný ✓', 'ok'), () => showToast(url, 'ok'));
+}
+
+async function saveVyjadreniePripomienky(id, pripomienky) {
+  await sb.from('project_vyjadrenia').update({ pripomienky }).eq('id', id).then(null, () => showToast('Chyba uloženia', 'err'));
+}
+
+function togglePripomienka(id, idx) {
+  const row = _vyjadreniaCtx.rows.find(r => r.id === id);
+  if (!row || !Array.isArray(row.pripomienky)) return;
+  const arr = row.pripomienky.map(normPripomienka);
+  arr[idx] = { ...arr[idx], done: !arr[idx].done };
+  row.pripomienky = arr;
+  renderVyjadreniaModal();
+  saveVyjadreniePripomienky(id, arr);
+}
+
+function komentarPripomienka(id, idx) {
+  const row = _vyjadreniaCtx.rows.find(r => r.id === id);
+  if (!row || !Array.isArray(row.pripomienky)) return;
+  const arr = row.pripomienky.map(normPripomienka);
+  const text = prompt('Komentár k pripomienke:', arr[idx].komentar || '');
+  if (text === null) return;
+  arr[idx] = { ...arr[idx], komentar: text.trim() };
+  row.pripomienky = arr;
+  renderVyjadreniaModal();
+  saveVyjadreniePripomienky(id, arr);
 }
 
 async function resetVyjadreniaCursor(cislo) {
