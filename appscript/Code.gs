@@ -1371,6 +1371,10 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
     budget.zostava--;
 
     try {
+      // Súbor nastavíme ako "ktokoľvek s odkazom" hneď pri spracovaní - link v Supabase (file_url) tak
+      // funguje aj pre klienta cez vyjadrenia.html (priečinok VYJADRENIA samotný verejne zdieľaný nie
+      // je), rovnaký princíp ako pri 🧊 IFC náhľade (akcia_findIfcFile).
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
       var text = fileToText(id, file.getMimeType());
       var prompt =
         'Nasledujúci text je naskenované stanovisko/vyjadrenie od úradu alebo správcu ' +

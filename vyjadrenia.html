@@ -47,6 +47,8 @@
     .zhrnutie{font-size:13px;color:var(--text2);margin-top:6px;line-height:1.5}
     .pr-toggle{font-size:12px;color:var(--blue);cursor:pointer;margin-top:8px;user-select:none;display:inline-block}
     .pr-list{margin:6px 0 0 18px;padding:0;font-size:13px;color:var(--text2);line-height:1.6}
+    .file-link{font-size:12px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:8px}
+    .file-link:hover{text-decoration:underline}
     .pr-list li{margin-bottom:3px}
   </style>
 </head>
@@ -113,6 +115,7 @@ function render() {
         <div class="pr-toggle" onclick="toggleOpen('${r.id}')">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
         ${open ? `<ul class="pr-list">${pripomienky.map(p => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
       ` : ''}
+      ${r.file_url ? `<a class="file-link" href="${esc(r.file_url)}" target="_blank">📎 Otvoriť oficiálny dokument</a>` : ''}
     </div>`;
   }).join('');
 }
