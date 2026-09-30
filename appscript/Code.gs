@@ -287,6 +287,7 @@ function doPost(e) {
     else if (req.action === 'findProjectFolderName') resp = akcia_findProjectFolderName(req);
     else if (req.action === 'createProjectFolder') resp = akcia_createProjectFolder(req);
     else if (req.action === 'listProjectFolders')  resp = akcia_listProjectFolders(req);
+    else if (req.action === 'scanVyjadreniaProjekt') resp = akcia_scanVyjadreniaProjekt(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -1298,4 +1299,134 @@ function createDocInFolder(title, textContent, parentFolderId, templateId) {
 function testPeople() {
   var resp = People.ContactGroups.list({ pageSize: 5 });
   Logger.log(JSON.stringify(resp));
+}
+
+// ── VYJADRENIA A STANOVISKÁ OD ÚRADOV / SPRÁVCOV SIETÍ (2026-09-30) ───────────
+// Sleduje priečinok 20_KOORDINACIA/VYJADRENIA v každom projekte (get-or-create,
+// takže ho netreba ručne zakladať v starších projektoch), nové súbory prečíta cez
+// OCR (fileToText) + Gemini a zapíše ako záznam do Supabase project_vyjadrenia.
+// Vedomé rozhodnutie (Jozef): žiadny status-workflow, len organ/dátum/termín/zhrnutie
+// + odkaz na súbor.
+
+// Drive priečinok "2026-026-Nazov" → dashboard "26-026". Reverzná funkcia k cisloNaPrefix,
+// ktorá predtým v repe nikde neexistovala.
+function folderNameNaCislo(name) {
+  var m = String(name || '').match(/^20(\d{2})-(\d{3})/);
+  return m ? (m[1] + '-' + m[2]) : null;
+}
+
+function zapisDoSupabaseVyjadrenie(entry) {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/project_vyjadrenia?on_conflict=file_id', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Prefer': 'return=minimal,resolution=ignore-duplicates'
+    },
+    payload: JSON.stringify([entry]),
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() >= 300) {
+    Logger.log('Chyba zápisu do Supabase project_vyjadrenia: ' + resp.getContentText());
+  }
+}
+
+// Jadro logiky - volané aj z triggeru (sledujVyjadrenia), aj z manuálnej akcie
+// (akcia_scanVyjadreniaProjekt). budget.zostava sa zdieľa naprieč všetkými projektmi
+// v jednom behu triggeru (strop na Apps Script time limit), pri manuálnom volaní
+// pre jeden projekt stačí vyšší jednorazový limit.
+function spracujProjektVyjadrenia(cislo, projFolder, budget) {
+  var props = PropertiesService.getScriptProperties();
+  var spracovane = JSON.parse(props.getProperty('spracovane_vyjadrenia') || '[]');
+  var spracovaneSet = {};
+  spracovane.forEach(function(id) { spracovaneSet[id] = true; });
+
+  var koordFolder = ziskajAlebaVytvorPodpriecinok(projFolder, '20_KOORDINACIA');
+  var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
+
+  var novych = 0;
+  var fi = vyjFolder.getFiles();
+  while (fi.hasNext() && budget.zostava > 0) {
+    var file = fi.next();
+    var id = file.getId();
+    if (spracovaneSet[id]) continue;
+    spracovane.push(id);
+    spracovaneSet[id] = true;
+    budget.zostava--;
+
+    try {
+      var text = fileToText(id, file.getMimeType());
+      var prompt =
+        'Nasledujúci text je naskenované stanovisko/vyjadrenie od úradu alebo správcu ' +
+        'inžinierskych sietí k projektu stavby. Extrahuj z neho JSON objekt s poľami:\n' +
+        '- organ: názov úradu/inštitúcie/správcu siete, ktorý stanovisko vydal\n' +
+        '- datum_dokumentu: dátum vydania dokumentu vo formáte YYYY-MM-DD, alebo null ak nie je uvedený\n' +
+        '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
+        'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
+        'formáte YYYY-MM-DD - použi ktorýkoľvek z týchto dvoch, ak je v texte uvedený, inak null\n' +
+        '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska (napr. kladné/so pripomienkami/' +
+        'zamietavé, hlavné podmienky)\n\n' +
+        'Ak niektorý údaj nie je v texte, použi null. Odpovedaj LEN validným JSON objektom, ' +
+        'bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
+      var raw = volajGemini(prompt);
+      var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      var data = JSON.parse(json);
+      zapisDoSupabaseVyjadrenie({
+        cislo: cislo,
+        file_id: id,
+        file_name: file.getName(),
+        file_url: file.getUrl(),
+        organ: data.organ || null,
+        datum_dokumentu: data.datum_dokumentu || null,
+        termin_reakcie: data.termin_reakcie || null,
+        zhrnutie: data.zhrnutie || null
+      });
+      novych++;
+    } catch(e) {
+      Logger.log('Vyjadrenia - chyba pri spracovaní ' + file.getName() + ' (' + cislo + '): ' + e.message);
+    }
+  }
+
+  if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
+  props.setProperty('spracovane_vyjadrenia', JSON.stringify(spracovane));
+  return novych;
+}
+
+// Time-driven trigger (nastaviť ručne v Apps Script editore, odporúčaná perióda hodinovo,
+// rovnaký gotcha ako sledujMaily/sledujKomentare/sledujPrilohy).
+function sledujVyjadrenia() {
+  var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+  var fi = root.getFolders();
+  var budget = { zostava: 15 };
+  var celkomNovych = 0;
+  while (fi.hasNext() && budget.zostava > 0) {
+    var folder = fi.next();
+    var name = folder.getName();
+    if (name === '__strom_suborov' || name === '_Fazy') continue;
+    var cislo = folderNameNaCislo(name);
+    if (!cislo) continue;
+    try {
+      celkomNovych += spracujProjektVyjadrenia(cislo, folder, budget);
+    } catch(e) {
+      Logger.log('Vyjadrenia - chyba pri projekte ' + cislo + ': ' + e.message);
+    }
+  }
+  Logger.log('sledujVyjadrenia: spracovaných ' + celkomNovych + ' nových súborov');
+}
+
+// Manuálny scan jedného projektu (tlačidlo "Skontrolovať teraz" vo Vyjadrenia modáli) -
+// nečaká sa na hodinový trigger, hlavne na overenie po redeployi.
+function akcia_scanVyjadreniaProjekt(req) {
+  var cislo = String(req.cislo || '').trim();
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
+    var novych = spracujProjektVyjadrenia(cislo, projFolder, { zostava: 20 });
+    return { ok: true, novych: novych };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
 }

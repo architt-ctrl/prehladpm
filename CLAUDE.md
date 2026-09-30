@@ -487,6 +487,31 @@ Keď je otvorený jeden projekt na viacerých kartách naraz, karty sú nerozlí
 
 **Šablóna riadku projektu existuje na 3 miestach** (`projRowHtml`, výsledky vyhľadávania a Archív v `renderProjects()`) — akúkoľvek zmenu tlačidiel v riadku (📁, ✎...) treba spraviť na všetkých troch, inak zmizne len v niektorých pohľadoch (stalo sa pri prvom pridaní 📁 — chýbalo vo vyhľadávaní aj Archíve).
 
+### Evidencia vyjadrení/stanovísk od úradov a správcov sietí (📄, 2026-09-30)
+
+**Cieľ (Jozef):** stanoviská/vyjadrenia od úradov a správcov sietí (zvyčajne sken/foto/PDF priamo od úradu) sledovať bez ručného status-workflow — appka má sama zistiť, od koho dokument je a hlavne dokedy treba reagovať (dátum platnosti vyjadrenia alebo termín na doloženie úprav PD), a zobraziť to v modáli pri projekte. **Vedomé rozhodnutie: žiadny stĺpec/pole so stavom** — len organ, dátumy a odkaz na súbor.
+
+**Zdrojový priečinok:** `20_KOORDINACIA/VYJADRENIA` v priečinku každého projektu (Jozef ho už ručne založil aspoň v jednom projekte). Appka ho pri prvom scane **sama založí, ak chýba** (`ziskajAlebaVytvorPodpriecinok`, get-or-create) — staršie projekty (~55) ho nemusia mať vopred, netreba ho zakladať ručne všade.
+
+**Automatická detekcia — Apps Script trigger `sledujVyjadrenia`** (`Code.gs`, time-driven, **treba nastaviť ručne** rovnako ako `sledujMaily`/`sledujKomentare`/`sledujPrilohy`, odporúčaná perióda hodinovo):
+- Prejde priame podpriečinky `PROJECTS_DRIVE_ROOT_ID` (vynechá `__strom_suborov`/`_Fazy`), pre každý odvodí dashboard `cislo` cez novú `folderNameNaCislo(name)` (reverzná funkcia k `cisloNaPrefix`, predtým v repe nikde neexistovala: `20YY-NNN...` → `YY-NNN`).
+- Jadro `spracujProjektVyjadrenia(cislo, projFolder, budget)` — zdieľané aj s manuálnou akciou nižšie — cursor `spracovane_vyjadrenia` v `PropertiesService` (identický vzor ako `spracovane_prilohy` pri `sledujPrilohy`: ID list, capped na posledných 1000), pre každý nespracovaný súbor vo `VYJADRENIA`: `fileToText(fileId, mimeType)` (existujúci OCR helper z `extractMetadata` — funguje aj na fotky, keďže Drive konverzia na Google Doc OCR-uje čokoľvek, nielen PDF), potom `volajGemini` s promptom na JSON `{organ, datum_dokumentu, termin_reakcie, zhrnutie}` (`termin_reakcie` pokrýva obe možnosti čo Jozef spomenul — platnosť vyjadrenia ALEBO termín na doloženie úprav PD, Gemini vyberie ktorý je v texte), zápis cez nový `zapisDoSupabaseVyjadrenie` (rovnaký REST insert vzor ako `zapisDoSupabaseDennik`, `?on_conflict=file_id&resolution=ignore-duplicates` kvôli `file_id unique` — chráni pred duplicitou pri race manuálny-scan/trigger).
+- `budget.zostava` (trigger: 15 naprieč všetkými projektmi v behu, manuálny scan: 20 na jeden projekt) — strop na jeden beh kvôli Apps Script time limitu (OCR+Gemini na súbor trvá rádovo sekundy), rovnaký princíp ako `maxPages=15` pri `sledujKomentare`.
+- Jedna zlyhaná extrakcia (try/catch okolo spracovania súboru) nezhodí zvyšok behu — chyba len `Logger.log`, súbor sa **aj tak** označí ako spracovaný (rovnaká tichá-zlyhania konvencia ako `sledujPrilohy`/`sledujMaily` — pri opakovanej chybe treba pozrieť Apps Script logy, appka ju nikde neukazuje).
+
+**Manuálny scan (`akcia_scanVyjadreniaProjekt`, `{cislo}`)** — tlačidlo "🔄 Skontrolovať teraz" v modáli, nečaká sa na hodinový trigger (hlavne na overenie po redeployi).
+
+**Supabase `project_vyjadrenia`** (SQL: `supabase/project-vyjadrenia-setup.sql`, treba spustiť ručne): `id, cislo, file_id (unique), file_name, file_url, organ, datum_dokumentu, termin_reakcie, zhrnutie, created_at`.
+
+**`index.html`:**
+- `vyjadreniaMap` — `{cislo: [{termin_reakcie}]}`, bulk-loadovaná fire-and-forget v `syncData()` (`loadVyjadreniaMap()`, vedľa `bulkCheckProjectFolders`) — len na odznak, detail sa fetchuje lazy pri otvorení modálu. Po načítaní **nevolá `renderAll()`** — targeted `outerHTML` refresh existujúcich `#vyjad-{cislo}` elementov (rovnaká gotcha ako `bulkCheckProjectFolders`).
+- `vyjadreniaIconHtml(cislo)` — odznak `📄N`, farba podľa najbližšieho `termin_reakcie` naprieč záznamami projektu (červená = uplynulo, oranžová = do 14 dní, inak neutrálna — rovnaká škála ako `dlCls`/`prow-days`). Vložené na **všetkých 3 miestach šablóny riadku** hneď za `templateFolderIconHtml`.
+- Tlačidlo **"📄 Vyjadrenia"** v `buildDetailHtml` vedľa `📨 Dopyty` → `openVyjadreniaModal(cislo)` → `#vyjadreniaModal` (skeleton podľa `#dopytyModal`), zoznam: organ, dátum dokumentu, farebný termín, zhrnutie, odkaz na súbor, ✕ mazanie (`deleteVyjadrenie` — splice-then-rerender-then-persist, rovnaký vzor ako `deleteFinancieEntry`/`deleteDopyt`).
+
+**Gotcha na redeploy:** nová `doPost` akcia (`scanVyjadreniaProjekt`) aj nový trigger vyžadujú Jozefov ručný redeploy Apps Scriptu (Deploy → Manage → nová verzia) + ručné nastavenie time-driven triggeru pre `sledujVyjadrenia`.
+
+**Neoverené v tejto session:** kvalita Gemini extrakcie (organ/termín/zhrnutie) na reálnom naskenovanom slovenskom úradnom dokumente — overená len logika (dátumové porovnania, cursor, reverzná funkcia na cislo) syntetickými Node testami, žiadny reálny Apps Script/Drive/Gemini beh. Po redeployi + nastavení triggeru + vložení aspoň jedného reálneho súboru treba skontrolovať výstup cez "🔄 Skontrolovať teraz" a prompt podľa potreby doladiť.
+
 ### Odkaz na priečinok s podkladmi (🔗, 2026-08-31)
 
 Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri vyššie) je vedľa 📁 ďalšia ikona — priamy link na Drive priečinok `20_KOORDINACIA` (spoločný priečinok pre podklady všetkých profesií, pozri "Realita overená naživo" v sekcii o štruktúre priečinka nižšie). Zámerne **nie** automatický scan naprieč všetkými projektmi (bolo by to príliš veľa Apps Script/Drive volaní naraz) — objavuje sa lenivo, projekt po projekte, na Jozefov klik.

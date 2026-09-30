@@ -1282,6 +1282,16 @@ nav {
   </div>
 </div>
 
+<div class="overlay hidden" id="vyjadreniaModal">
+  <div class="modal" style="max-width:640px">
+    <h3 id="vyjadreniaTitle">Vyjadrenia</h3>
+    <div id="vyjadreniaContent" style="max-height:75vh;overflow-y:auto;padding:4px 0"></div>
+    <div class="mactions">
+      <button class="btn-ghost" onclick="document.getElementById('vyjadreniaModal').classList.add('hidden')">Zavrieť</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="portfolioModal">
   <div class="modal" style="max-width:600px">
     <h3>Celkový stav portfólia</h3>
@@ -1439,6 +1449,7 @@ let planRowsCache  = [];         // riadky plan_ulohy z posledného syncData —
 let koordinaciaFolderMap = {};   // {cislo: koordinacia_url} — len projekty s novou štruktúrou priečinka (20_KOORDINACIA)
 let ifcFileMap = {};             // {cislo: {fileId, name}} — nájdený IFC súbor v 20_KOORDINACIA/ARCHITEKTURA
 let projectFolderNameMap = {};   // {cislo: presný názov priečinka na Drive} — pre kopírovanie lokálnej cesty (search-ms nefunguje)
+let vyjadreniaMap = {};          // {cislo: [{termin_reakcie}, ...]} — bulk z project_vyjadrenia, len pre odznak na riadku (detail sa fetchuje lazy)
 let geminiMap = JSON.parse(localStorage.getItem('pmGemini') || '{}');  // {cislo: 'text'}
 let gemExpandedSet = new Set(JSON.parse(localStorage.getItem('pmGemExpanded') || '[]')); // {cislo} — zhrnutie AI rozbalené (default skryté, šetrí miesto)
 let activeFaza = 'Štúdia';
@@ -2914,6 +2925,7 @@ async function syncData() {
     migrateTaskSpecialists().catch(() => {});
     syncResponsibleContacts().catch(() => {});
     bulkCheckProjectFolders().catch(() => {});
+    loadVyjadreniaMap().catch(() => {});
   } catch(e) {
     showToast('Chyba: ' + e.message, 'err');
     if (!projects.length) loadDemo();
@@ -3169,6 +3181,7 @@ function renderProjects() {
               ${koordIconHtml(p.cislo)}
               ${ifcIconHtml(p.cislo)}
               ${templateFolderIconHtml(p.cislo)}
+              ${vyjadreniaIconHtml(p.cislo)}
               <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
                 style="background:none;border:1px solid var(--border);border-radius:5px;
                 width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -3195,6 +3208,7 @@ function renderProjects() {
           ${koordIconHtml(p.cislo)}
           ${ifcIconHtml(p.cislo)}
           ${templateFolderIconHtml(p.cislo)}
+          ${vyjadreniaIconHtml(p.cislo)}
           <div style="font-size:16px;color:var(--text3)">✓</div>
         </div>
         <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>`).join('')
@@ -3383,6 +3397,107 @@ async function bulkCheckProjectFolders() {
   } catch(e) {}
 }
 
+// ── VYJADRENIA A STANOVISKÁ OD ÚRADOV / SPRÁVCOV SIETÍ ──────────────────────
+// Apps Script trigger sledujVyjadrenia (appscript/Code.gs) sleduje priečinok
+// 20_KOORDINACIA/VYJADRENIA v každom projekte, nové súbory prečíta cez OCR+Gemini
+// a zapíše do Supabase project_vyjadrenia. Tu sa len bulk-loaduje počet + najbližší
+// termin_reakcie pre odznak na riadku; detail sa fetchuje lazy pri otvorení modálu.
+async function loadVyjadreniaMap() {
+  const { data } = await sb.from('project_vyjadrenia').select('cislo,termin_reakcie');
+  vyjadreniaMap = {};
+  (data || []).forEach(r => { (vyjadreniaMap[r.cislo] = vyjadreniaMap[r.cislo] || []).push(r); });
+  document.querySelectorAll('[id^="vyjad-"]').forEach(el => {
+    const cislo = el.id.slice(6);
+    el.outerHTML = vyjadreniaIconHtml(cislo);
+  });
+}
+
+function vyjadreniaIconHtml(cislo) {
+  const rows = vyjadreniaMap[cislo];
+  if (!rows || !rows.length) return `<span id="vyjad-${cislo}"></span>`;
+  let minDays = null;
+  const today = new Date();
+  rows.forEach(r => {
+    if (!r.termin_reakcie) return;
+    const d = Math.floor((new Date(r.termin_reakcie) - today) / 86400000);
+    if (minDays === null || d < minDays) minDays = d;
+  });
+  const color = minDays === null ? 'var(--text3)' : minDays < 0 ? 'var(--red)' : minDays <= 14 ? 'var(--orange)' : 'var(--text3)';
+  return `<span id="vyjad-${cislo}" title="Vyjadrenia od úradov (${rows.length})" style="font-size:11px;font-weight:700;color:${color};flex-shrink:0">📄${rows.length}</span>`;
+}
+
+let _vyjadreniaCtx = null; // { cislo, rows }
+
+async function openVyjadreniaModal(cislo) {
+  const p = projects.find(x => x.cislo === cislo);
+  document.getElementById('vyjadreniaTitle').textContent = `Vyjadrenia – ${p ? p.nazov : cislo}`;
+  document.getElementById('vyjadreniaModal').classList.remove('hidden');
+  document.getElementById('vyjadreniaContent').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
+  const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
+  _vyjadreniaCtx = { cislo, rows: data || [] };
+  renderVyjadreniaModal();
+}
+
+function vyjadrenieDlStyle(termin) {
+  if (!termin) return 'color:var(--text3)';
+  const d = Math.floor((new Date(termin) - new Date()) / 86400000);
+  return d < 0 ? 'color:var(--red);font-weight:700' : d <= 14 ? 'color:var(--orange);font-weight:700' : 'color:var(--text2)';
+}
+
+function renderVyjadreniaModal() {
+  const { cislo, rows } = _vyjadreniaCtx;
+  const el = document.getElementById('vyjadreniaContent');
+  const list = rows.length ? rows.map(r => `
+    <div style="border-bottom:1px solid var(--border);padding:10px 0;display:flex;gap:8px;align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">
+          ${r.datum_dokumentu ? 'Dokument: ' + r.datum_dokumentu : ''}
+          ${r.termin_reakcie ? `<span style="${vyjadrenieDlStyle(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${r.termin_reakcie}</span>` : ''}
+        </div>
+        ${r.zhrnutie ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${r.zhrnutie}</div>` : ''}
+        ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none">📎 Otvoriť súbor</a>` : ''}
+      </div>
+      <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;flex-shrink:0">✕</button>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
+  el.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <button onclick="scanVyjadreniaTeraz('${cislo}')" id="vyj-scan-btn" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text2)">🔄 Skontrolovať teraz</button>
+    </div>
+    ${list}`;
+}
+
+async function scanVyjadreniaTeraz(cislo) {
+  const btn = document.getElementById('vyj-scan-btn');
+  if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); return; }
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ action: 'scanVyjadreniaProjekt', cislo }) });
+    const d = await r.json();
+    if (d.ok) {
+      showToast(d.novych ? `Nájdených nových: ${d.novych}` : 'Žiadne nové súbory', 'ok');
+      const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
+      _vyjadreniaCtx = { cislo, rows: data || [] };
+      renderVyjadreniaModal();
+      loadVyjadreniaMap().catch(() => {});
+    } else {
+      showToast(d.error || 'Kontrola zlyhala', 'err');
+    }
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  }
+  const btn2 = document.getElementById('vyj-scan-btn');
+  if (btn2) { btn2.disabled = false; btn2.style.opacity = '1'; }
+}
+
+async function deleteVyjadrenie(id) {
+  if (!confirm('Vymazať tento záznam?')) return;
+  _vyjadreniaCtx.rows = _vyjadreniaCtx.rows.filter(r => r.id !== id);
+  renderVyjadreniaModal();
+  await sb.from('project_vyjadrenia').delete().eq('id', id);
+  loadVyjadreniaMap().catch(() => {});
+}
+
 async function openFolderAuditModal() {
   document.getElementById('folderAuditModal').classList.remove('hidden');
   const el = document.getElementById('folderAuditContent');
@@ -3530,6 +3645,7 @@ function projRowHtml(p) {
       ${koordIconHtml(p.cislo)}
       ${ifcIconHtml(p.cislo)}
       ${templateFolderIconHtml(p.cislo)}
+      ${vyjadreniaIconHtml(p.cislo)}
       <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
         style="background:none;border:1px solid var(--border);border-radius:5px;
         width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
@@ -3640,6 +3756,8 @@ function buildDetailHtml(p) {
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📋 Šablóna</button>
       <button onclick="event.stopPropagation();openDopytyModal('${p.cislo}')"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📨 Dopyty</button>
+      <button onclick="event.stopPropagation();openVyjadreniaModal('${p.cislo}')"
+        style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2)">📄 Vyjadrenia</button>
       <a href="suhrn.html?cislo=${encodeURIComponent(p.cislo)}&nazov=${encodeURIComponent(p.nazov)}&faza=${encodeURIComponent(p.faza||'')}&podfaza=${encodeURIComponent(p.podfaza||'')}&caflouid=${encodeURIComponent(p.caflou_id||'')}&taskids=${encodeURIComponent((p.caflou_task_ids||[]).join(','))}" onclick="event.stopPropagation()" target="_blank"
         style="background:none;border:1px solid var(--border);border-radius:7px;padding:6px 12px;font-size:12px;cursor:pointer;color:var(--text2);text-decoration:none;display:inline-flex;align-items:center">📄 A,B</a>
     </div>
