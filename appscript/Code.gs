@@ -1351,8 +1351,6 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
     var file = fi.next();
     var id = file.getId();
     if (spracovaneSet[id]) continue;
-    spracovane.push(id);
-    spracovaneSet[id] = true;
     budget.zostava--;
 
     try {
@@ -1389,6 +1387,8 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         zhrnutie: data.zhrnutie || null
       });
       novych++;
+      spracovane.push(id);
+      spracovaneSet[id] = true;
     } catch(e) {
       Logger.log('Vyjadrenia - chyba pri spracovaní ' + file.getName() + ' (' + cislo + '): ' + e.message);
     }
