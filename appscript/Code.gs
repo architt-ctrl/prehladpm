@@ -1345,8 +1345,21 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
   var koordFolder = ziskajAlebaVytvorPodpriecinok(projFolder, '20_KOORDINACIA');
   var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
 
+  // DOČASNÁ DIAGNOSTIKA (2026-09-30) - koľko súborov appka reálne vidí v priečinku
+  var debugAllFiles = [];
+  var fiDebug = vyjFolder.getFiles();
+  while (fiDebug.hasNext()) { var fd = fiDebug.next(); debugAllFiles.push(fd.getName() + '|' + fd.getId()); }
+
   var novych = 0;
   var errors = [];
+  var debug = {
+    projFolderId: projFolder.getId(),
+    koordFolderId: koordFolder.getId(),
+    vyjFolderId: vyjFolder.getId(),
+    cursorSize: spracovane.length,
+    cursorIds: spracovane,
+    filesSeen: debugAllFiles
+  };
   var fi = vyjFolder.getFiles();
   while (fi.hasNext() && budget.zostava > 0) {
     var file = fi.next();
@@ -1399,7 +1412,7 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
 
   if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
   props.setProperty('spracovane_vyjadrenia', JSON.stringify(spracovane));
-  return { novych: novych, errors: errors };
+  return { novych: novych, errors: errors, debug: debug };
 }
 
 // Time-driven trigger (nastaviť ručne v Apps Script editore, odporúčaná perióda hodinovo,
@@ -1434,7 +1447,7 @@ function akcia_scanVyjadreniaProjekt(req) {
     var projFolder = najdiProjektFolder(root, cislo);
     if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
     var vysledok = spracujProjektVyjadrenia(cislo, projFolder, { zostava: 20 });
-    return { ok: true, novych: vysledok.novych, errors: vysledok.errors };
+    return { ok: true, novych: vysledok.novych, errors: vysledok.errors, debug: vysledok.debug };
   } catch(e) {
     return { ok: false, error: e.message };
   }

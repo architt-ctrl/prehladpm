@@ -3475,6 +3475,7 @@ async function scanVyjadreniaTeraz(cislo) {
   try {
     const r = await fetch(cfg.url, { method: 'POST', cache: 'no-store', body: JSON.stringify({ action: 'scanVyjadreniaProjekt', cislo }) });
     const d = await r.json();
+    if (d.debug) { console.log('VYJADRENIA DEBUG', d.debug); alert('DEBUG (odfoť/skopíruj):\n' + JSON.stringify(d.debug, null, 1)); }
     if (d.ok) {
       if (d.errors && d.errors.length) {
         showToast(`Nových: ${d.novych||0}, chyby: ${d.errors.join(' | ')}`, 'err');
