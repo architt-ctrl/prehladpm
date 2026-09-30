@@ -1361,6 +1361,10 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         'Nasledujúci text je naskenované stanovisko/vyjadrenie od úradu alebo správcu ' +
         'inžinierskych sietí k projektu stavby. Extrahuj z neho JSON objekt s poľami:\n' +
         '- organ: názov úradu/inštitúcie/správcu siete, ktorý stanovisko vydal\n' +
+        '- cislo_vyjadrenia: číslo/spisová značka/jednacie číslo dokumentu (napr. "OU-BA-OSZP3-2026/012345"), ' +
+        'alebo null ak nie je uvedené\n' +
+        '- kontakt: meno (a telefón/email ak sú uvedené) osoby, ktorá stanovisko vypracovala alebo je na ' +
+        'ňom podpísaná ako kontaktná osoba (napr. "Ing. Jana Nováková, 0901 234 567"), alebo null ak nie je uvedené\n' +
         '- datum_dokumentu: dátum vydania dokumentu vo formáte YYYY-MM-DD, alebo null ak nie je uvedený\n' +
         '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
         'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
@@ -1378,6 +1382,8 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         file_name: file.getName(),
         file_url: file.getUrl(),
         organ: data.organ || null,
+        cislo_vyjadrenia: data.cislo_vyjadrenia || null,
+        kontakt: data.kontakt || null,
         datum_dokumentu: data.datum_dokumentu || null,
         termin_reakcie: data.termin_reakcie || null,
         zhrnutie: data.zhrnutie || null

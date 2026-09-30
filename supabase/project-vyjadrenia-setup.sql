@@ -10,13 +10,21 @@ create table if not exists project_vyjadrenia (
   file_name text,
   file_url text,
   organ text,
+  cislo_vyjadrenia text,
+  kontakt text,
   datum_dokumentu date,
   termin_reakcie date,
   zhrnutie text,
   created_at timestamptz not null default now()
 );
 
+-- Idempotentné pridanie stĺpcov aj keď tabuľka už existuje zo staršej verzie tohto súboru
+-- (cislo_vyjadrenia/kontakt pribudli 2026-09-30, deň po prvom nasadení).
+alter table project_vyjadrenia add column if not exists cislo_vyjadrenia text;
+alter table project_vyjadrenia add column if not exists kontakt text;
+
 alter table project_vyjadrenia enable row level security;
 
+drop policy if exists "public read/write" on project_vyjadrenia;
 create policy "public read/write" on project_vyjadrenia
   for all using (true) with check (true);
