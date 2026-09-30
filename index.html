@@ -3427,6 +3427,19 @@ function vyjadreniaIconHtml(cislo) {
 }
 
 let _vyjadreniaCtx = null; // { cislo, rows }
+const vyjadrenieOpenSet = new Set(); // id záznamov s rozbalenými pripomienkami
+
+function vyjadrenieStavBadge(stav) {
+  if (!stav) return '';
+  const map = {
+    'súhlasné':   { bg: 'var(--grn-bg)', bd: 'var(--grn-bd)', col: 'var(--green)' },
+    'podmienečné':{ bg: 'var(--ora-bg)', bd: 'var(--ora-bd)', col: 'var(--orange)' },
+    'zamietavé':  { bg: 'var(--red-bg)', bd: 'var(--red-bd)', col: 'var(--red)' },
+    'neutrálne':  { bg: 'var(--bg3)', bd: 'var(--border)', col: 'var(--text2)' },
+  };
+  const s = map[stav] || map['neutrálne'];
+  return `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:9px;background:${s.bg};border:1px solid ${s.bd};color:${s.col};flex-shrink:0;white-space:nowrap">${stav}</span>`;
+}
 
 async function openVyjadreniaModal(cislo) {
   const p = projects.find(x => x.cislo === cislo);
@@ -3447,22 +3460,34 @@ function vyjadrenieDlStyle(termin) {
 function renderVyjadreniaModal() {
   const { cislo, rows } = _vyjadreniaCtx;
   const el = document.getElementById('vyjadreniaContent');
-  const list = rows.length ? rows.map(r => `
+  const list = rows.length ? rows.map(r => {
+    const pripomienky = Array.isArray(r.pripomienky) ? r.pripomienky : [];
+    const open = vyjadrenieOpenSet.has(r.id);
+    return `
     <div style="border-bottom:1px solid var(--border);padding:10px 0;display:flex;gap:8px;align-items:flex-start">
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}${r.cislo_vyjadrenia ? ` <span style="font-weight:400;color:var(--text3)">· č. ${r.cislo_vyjadrenia}</span>` : ''}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}${r.cislo_vyjadrenia ? ` <span style="font-weight:400;color:var(--text3)">· č. ${r.cislo_vyjadrenia}</span>` : ''}</div>
+          ${vyjadrenieStavBadge(r.stav)}
+        </div>
         <div style="font-size:11px;color:var(--text3);margin-top:2px">
           ${r.datum_dokumentu ? 'Dokument: ' + r.datum_dokumentu : ''}
           ${r.termin_reakcie ? `<span style="${vyjadrenieDlStyle(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${r.termin_reakcie}</span>` : ''}
         </div>
         ${r.kontakt ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 ${r.kontakt}</div>` : ''}
         ${r.zhrnutie ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${r.zhrnutie}</div>` : ''}
-        ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none">📎 Otvoriť súbor</a>` : ''}
+        ${pripomienky.length ? `
+          <div onclick="toggleVyjadrenieOpen('${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer;margin-top:4px;user-select:none">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
+          ${open ? `<ul style="margin:4px 0 0 16px;padding:0;font-size:12px;color:var(--text2)">${pripomienky.map(p => `<li style="margin-bottom:2px">${p}</li>`).join('')}</ul>` : ''}
+        ` : ''}
+        ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:4px">📎 Otvoriť súbor</a>` : ''}
       </div>
       <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;flex-shrink:0">✕</button>
-    </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
+    </div>`;
+  }).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
   el.innerHTML = `
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px">
+      ${rows.length ? `<button onclick="shareVyjadreniaLink('${cislo}')" title="Skopírovať odkaz na zoznam pre klienta (bez interných tlačidiel)" style="background:none;border:1px solid var(--blue);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--blue)">🔗 Zdieľať s klientom</button>` : ''}
       <button onclick="resetVyjadreniaCursor('${cislo}')" title="Vynúti nové spracovanie všetkých súborov v priečinku (zabudne, čo už bolo skúsené)" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text3)">🗑 Reset</button>
       <button onclick="scanVyjadreniaTeraz('${cislo}')" id="vyj-scan-btn" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text2)">🔄 Skontrolovať teraz</button>
     </div>
@@ -3503,6 +3528,18 @@ async function scanVyjadreniaTeraz(cislo) {
   showToast('Kontrola dokončená', 'ok');
   const btn2 = document.getElementById('vyj-scan-btn');
   if (btn2) { btn2.disabled = false; btn2.style.opacity = '1'; }
+}
+
+function toggleVyjadrenieOpen(id) {
+  if (vyjadrenieOpenSet.has(id)) vyjadrenieOpenSet.delete(id); else vyjadrenieOpenSet.add(id);
+  renderVyjadreniaModal();
+}
+
+function shareVyjadreniaLink(cislo) {
+  const p = projects.find(x => x.cislo === cislo);
+  const base = location.origin + location.pathname.replace(/[^/]*$/, '');
+  const url = base + 'vyjadrenia.html?cislo=' + encodeURIComponent(cislo) + '&nazov=' + encodeURIComponent(p ? p.nazov : cislo);
+  navigator.clipboard.writeText(url).then(() => showToast('Odkaz pre klienta skopírovaný ✓', 'ok'), () => showToast(url, 'ok'));
 }
 
 async function resetVyjadreniaCursor(cislo) {

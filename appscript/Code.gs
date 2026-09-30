@@ -1384,10 +1384,17 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
         'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
         'formáte YYYY-MM-DD - použi ktorýkoľvek z týchto dvoch, ak je v texte uvedený, inak null\n' +
-        '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska (napr. kladné/so pripomienkami/' +
-        'zamietavé, hlavné podmienky)\n\n' +
-        'Ak niektorý údaj nie je v texte, použi null. Odpovedaj LEN validným JSON objektom, ' +
-        'bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
+        '- stav: jedno slovo hodnotiace celkový výsledok stanoviska - presne jedna z hodnôt ' +
+        '"súhlasné" (bezpodmienečný súhlas), "podmienečné" (súhlas viazaný na splnenie podmienok/' +
+        'pripomienok), "zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (len informatívne, ' +
+        'neobsahuje jasné áno/nie stanovisko)\n' +
+        '- pripomienky: pole krátkych textových položiek - konkrétne podmienky/pripomienky/' +
+        'požiadavky uvedené v dokumente (každá položka = jedna vecná podmienka, stručne ' +
+        'preformulovaná, nie doslovný odsek). Prázdne pole [], ak dokument žiadne konkrétne ' +
+        'podmienky neuvádza\n' +
+        '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska\n\n' +
+        'Ak niektorý údaj nie je v texte, použi null (okrem pripomienky, tam prázdne pole). ' +
+        'Odpovedaj LEN validným JSON objektom, bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
       var raw = volajGemini(prompt);
       var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
       var data = JSON.parse(json);
@@ -1401,6 +1408,8 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         kontakt: data.kontakt || null,
         datum_dokumentu: data.datum_dokumentu || null,
         termin_reakcie: data.termin_reakcie || null,
+        stav: data.stav || null,
+        pripomienky: Array.isArray(data.pripomienky) ? data.pripomienky : [],
         zhrnutie: data.zhrnutie || null
       });
       novych++;
