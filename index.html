@@ -3473,38 +3473,34 @@ async function scanVyjadreniaTeraz(cislo) {
   const btn = document.getElementById('vyj-scan-btn');
   if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); return; }
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
-  // Apps Script /exec -> macros/echo presmerovanie občas nedoručí odpoveď (vracia HTML namiesto JSON),
-  // aj keď beh na strane servera prebehne v poriadku (overené 2026-09-30 cez debug výpis) - preto sa
-  // pri zlyhaní skúsi ešte 2x znova s pauzou, namiesto okamžitého vzdania sa.
-  let d = null, lastErr = null;
-  for (let pokus = 1; pokus <= 3 && !d; pokus++) {
-    try {
-      const r = await fetch(cfg.url, { method: 'POST', cache: 'no-store', body: JSON.stringify({ action: 'scanVyjadreniaProjekt', cislo }) });
-      d = await r.json();
-    } catch(e) {
-      lastErr = e;
-      if (pokus < 3) await new Promise(res => setTimeout(res, 2000));
-    }
+  showToast('Spracúvam na pozadí (OCR+AI pre viac súborov môže trvať aj pár minút)…', 'ok');
+
+  // Skenovanie viacerých súborov (OCR+Gemini) môže trvať dlho a doručenie HTTP odpovede cez Apps Script
+  // /exec -> macros/echo presmerovanie je pri dlhšom behu nespoľahlivé (overené naostro 2026-09-30 -
+  // krátke akcie ako Reset prejdú vždy, tento dlhší beh opakovane padá na "Failed to fetch"/neplatný
+  // JSON, hoci server-side beh dokončí prácu správne). Preto sa appka na samotnú odpoveď fetch()
+  // nespolieha vôbec - len spustí beh (výsledok requestu sa len zaloguje pre prípad chyby) a výsledky
+  // si sama priebežne dotiahne zo Supabase, kam Apps Script zapisuje súbor po súbore.
+  fetch(cfg.url, { method: 'POST', cache: 'no-store', body: JSON.stringify({ action: 'scanVyjadreniaProjekt', cislo }) })
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.debug) console.log('VYJADRENIA DEBUG', d.debug);
+      if (d && d.errors && d.errors.length) showToast('Chyby pri spracovaní: ' + d.errors.join(' | '), 'err');
+    })
+    .catch(e => console.log('scanVyjadreniaTeraz - odpoveď sa nedoručila (očakávané, výsledok sa číta zo Supabase):', e.message));
+
+  const refresh = async () => {
+    const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
+    _vyjadreniaCtx = { cislo, rows: data || [] };
+    renderVyjadreniaModal();
+    loadVyjadreniaMap().catch(() => {});
+  };
+  const oneskorenia = [8000, 15000, 20000, 25000, 30000, 30000]; // ~8s, 23s, 43s, 68s, 98s, 128s od kliknutia
+  for (const ms of oneskorenia) {
+    await new Promise(res => setTimeout(res, ms));
+    await refresh();
   }
-  try {
-    if (!d) throw lastErr || new Error('Neznáma chyba');
-    if (d.debug) console.log('VYJADRENIA DEBUG', d.debug);
-    if (d.ok) {
-      if (d.errors && d.errors.length) {
-        showToast(`Nových: ${d.novych||0}, chyby: ${d.errors.join(' | ')}`, 'err');
-      } else {
-        showToast(d.novych ? `Nájdených nových: ${d.novych}` : 'Žiadne nové súbory', 'ok');
-      }
-      const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
-      _vyjadreniaCtx = { cislo, rows: data || [] };
-      renderVyjadreniaModal();
-      loadVyjadreniaMap().catch(() => {});
-    } else {
-      showToast(d.error || 'Kontrola zlyhala', 'err');
-    }
-  } catch(e) {
-    showToast('Chyba (aj po 3 pokusoch): ' + e.message, 'err');
-  }
+  showToast('Kontrola dokončená', 'ok');
   const btn2 = document.getElementById('vyj-scan-btn');
   if (btn2) { btn2.disabled = false; btn2.style.opacity = '1'; }
 }
