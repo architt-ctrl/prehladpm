@@ -1346,6 +1346,7 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
   var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
 
   var novych = 0;
+  var errors = [];
   var fi = vyjFolder.getFiles();
   while (fi.hasNext() && budget.zostava > 0) {
     var file = fi.next();
@@ -1390,13 +1391,15 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
       spracovane.push(id);
       spracovaneSet[id] = true;
     } catch(e) {
-      Logger.log('Vyjadrenia - chyba pri spracovaní ' + file.getName() + ' (' + cislo + '): ' + e.message);
+      var chybaText = file.getName() + ': ' + e.message;
+      Logger.log('Vyjadrenia - chyba pri spracovaní ' + chybaText + ' (' + cislo + ')');
+      errors.push(chybaText);
     }
   }
 
   if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
   props.setProperty('spracovane_vyjadrenia', JSON.stringify(spracovane));
-  return novych;
+  return { novych: novych, errors: errors };
 }
 
 // Time-driven trigger (nastaviť ručne v Apps Script editore, odporúčaná perióda hodinovo,
@@ -1413,7 +1416,7 @@ function sledujVyjadrenia() {
     var cislo = folderNameNaCislo(name);
     if (!cislo) continue;
     try {
-      celkomNovych += spracujProjektVyjadrenia(cislo, folder, budget);
+      celkomNovych += spracujProjektVyjadrenia(cislo, folder, budget).novych;
     } catch(e) {
       Logger.log('Vyjadrenia - chyba pri projekte ' + cislo + ': ' + e.message);
     }
@@ -1430,8 +1433,8 @@ function akcia_scanVyjadreniaProjekt(req) {
     var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
     var projFolder = najdiProjektFolder(root, cislo);
     if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
-    var novych = spracujProjektVyjadrenia(cislo, projFolder, { zostava: 20 });
-    return { ok: true, novych: novych };
+    var vysledok = spracujProjektVyjadrenia(cislo, projFolder, { zostava: 20 });
+    return { ok: true, novych: vysledok.novych, errors: vysledok.errors };
   } catch(e) {
     return { ok: false, error: e.message };
   }
