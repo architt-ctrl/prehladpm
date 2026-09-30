@@ -602,6 +602,10 @@ Registrované v `doPost` ako `'navrhniZoznamDokumentacie'`.
 
 **Neoverené v tejto session:** kvalita AI návrhu (SO/PS rozsah primeraný danému stupňu, správne parsovanie reálnej ZoD `.docx`) — nebol k dispozícii žiadny Apps Script beh zo session, overená len logika (nájdenie priečinkov, ukladanie/preradenie/mazanie, prepínanie fáz) headless Puppeteer testom s podvrhnutým `fetch`/`sb.from`. Po redeployi + SQL migrácii treba reálny test na projekte s vyplnenou ZoD v `01_ZMLUVY` a podľa výsledku doladiť Gemini prompt.
 
+**PENDING (2026-09-30, ešte ten istý deň):** Jozef nahlásil „nefunguje to dobre" bez upresnenia — **presný symptóm ešte nebol zistený**, čaká na ďalšiu session s konkrétnym popisom (ktorý krok, aká chyba/toast, čo sa stalo namiesto očakávaného). Keďže v tejto session ešte neprebehol Jozefov redeploy Apps Scriptu ani SQL migrácia (pozri gotcha vyššie), prvé podozrenie je jedna z týchto dvoch vecí (rovnaká „Neznáma akcia"/schema-chýba chyba ako pri iných čerstvo pridaných funkciách v repe), nie nutne bug v novom kóde — over najprv toto, než hľadať ďalej.
+
+Súvisiaca, zatiaľ neriešená požiadavka: Jozef sa pýtal aj na „zoznam priečinkov vo 30_FAZY" (či už diagnostický výpis reálneho stavu na Drive, alebo aby appka rovno vytvárala priečinky zo schváleného zoznamu — krok 2 z pôvodnej 4-krokovej vízie vyššie) — pri spresňujúcej otázke odpovedal „nechaj ma to zatiaľ tak", takže **zámer nebol upresnený ani implementovaný**, len zaznamenané ako otvorené na budúcu session.
+
 ### Odkaz na priečinok s podkladmi (🔗, 2026-08-31)
 
 Pri každom projekte v zozname (na všetkých 3 miestach šablóny riadku, pozri vyššie) je vedľa 📁 ďalšia ikona — priamy link na Drive priečinok `20_KOORDINACIA` (spoločný priečinok pre podklady všetkých profesií, pozri "Realita overená naživo" v sekcii o štruktúre priečinka nižšie). Zámerne **nie** automatický scan naprieč všetkými projektmi (bolo by to príliš veľa Apps Script/Drive volaní naraz) — objavuje sa lenivo, projekt po projekte, na Jozefov klik.
