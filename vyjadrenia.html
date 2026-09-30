@@ -22,10 +22,11 @@
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;min-height:100vh;-webkit-font-smoothing:antialiased}
 
-    .top{background:var(--text);color:#f5f3ef;padding:16px 20px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-    .top-logo-img{height:22px;width:auto;flex-shrink:0;display:block;filter:invert(1)}
-    .top-sub{font-size:13px;color:rgba(245,243,239,.5)}
-    .top-name{width:100%;font-size:13px;color:rgba(245,243,239,.75);margin-top:2px}
+    .top{background:var(--text);color:#f5f3ef;padding:10px 20px;display:flex;align-items:center;gap:16px}
+    .top-logo-img{height:36px;width:auto;flex-shrink:0;display:block;filter:invert(1)}
+    .top-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+    .top-proj{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .top-sub{font-size:12px;color:rgba(245,243,239,.55)}
 
     .main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
     .empty{padding:40px 16px;text-align:center;color:var(--text2);font-size:14px;line-height:1.6}
@@ -56,8 +57,10 @@
 
 <div class="top">
   <img class="top-logo-img" src="logo-tornyos-wide.png" alt="Tornyos Architects">
-  <span class="top-sub">· vyjadrenia a stanoviská</span>
-  <span class="top-name" id="topName"></span>
+  <div class="top-info">
+    <div class="top-proj" id="topProj"></div>
+    <div class="top-sub">Vyjadrenia a stanoviská</div>
+  </div>
 </div>
 
 <div class="main" id="main">
@@ -72,7 +75,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const params = new URLSearchParams(location.search);
 const cislo = params.get('cislo');
 const nazov = params.get('nazov');
-if (nazov) document.getElementById('topName').textContent = nazov;
+document.getElementById('topProj').textContent = [cislo, nazov].filter(Boolean).join(' – ');
 
 const openSet = new Set();
 let rows = [];

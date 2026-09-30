@@ -22,9 +22,9 @@
     html{-webkit-font-smoothing:antialiased}
     body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;min-height:100vh}
 
-    .top{background:var(--text);color:#f5f3ef;padding:12px 18px;display:flex;align-items:center;gap:8px}
-    .top-logo-img{height:22px;width:auto;flex-shrink:0;display:block;filter:invert(1)}
-    .top-sub{font-size:13px;color:rgba(245,243,239,.45)}
+    .top{background:var(--text);color:#f5f3ef;padding:10px 20px;display:flex;align-items:center;gap:16px}
+    .top-logo-img{height:36px;width:auto;flex-shrink:0;display:block;filter:invert(1)}
+    .top-sub{font-size:13px;color:rgba(245,243,239,.55)}
 
     .wrap{max-width:600px;margin:0 auto;padding:20px 16px}
     .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:14px}
@@ -88,7 +88,7 @@
 
 <div class="top">
   <img class="top-logo-img" src="logo-tornyos-wide.png" alt="Tornyos Architects">
-  <span class="top-sub">· Cenová ponuka</span>
+  <span class="top-sub">Cenová ponuka</span>
 </div>
 
 <div class="wrap" id="app">
@@ -313,7 +313,7 @@ async function submitQuote() {
 
 // ── SPECIALIST MARKETPLACE MODE ───────────────────────────────────────────────
 async function initSpecialistView() {
-  document.querySelector('.top-sub').textContent = '· Portál profesistov';
+  document.querySelector('.top-sub').textContent = 'Portál profesistov';
   const { data: spec } = await sb.from('specialists').select('*').eq('portal_token', specialistToken).single();
   if (!spec) { renderError('Neplatný link – profesista nenájdený.'); return; }
   document.title = 'Portál – ' + spec.name;
@@ -603,7 +603,7 @@ async function submitSpecQuote(reqId) {
 let _empCtx = null;
 
 async function initEmployeeView() {
-  document.querySelector('.top-sub').textContent = '· Zadanie pre t\xedm';
+  document.querySelector('.top-sub').textContent = 'Zadanie pre t\xedm';
   document.title = 'Zadanie pre t\xedm';
   const { data: et } = await sb.from('employee_tasks').select('*').eq('token', taskToken).single();
   if (!et) { renderError('Neplatn\xfd link – zadanie nenájdené.'); return; }
