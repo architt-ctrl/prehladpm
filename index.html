@@ -3462,7 +3462,8 @@ function renderVyjadreniaModal() {
       <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;flex-shrink:0">✕</button>
     </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
   el.innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+    <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px">
+      <button onclick="resetVyjadreniaCursor('${cislo}')" title="Vynúti nové spracovanie všetkých súborov v priečinku (zabudne, čo už bolo skúsené)" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text3)">🗑 Reset</button>
       <button onclick="scanVyjadreniaTeraz('${cislo}')" id="vyj-scan-btn" style="background:none;border:1px solid var(--border);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--text2)">🔄 Skontrolovať teraz</button>
     </div>
     ${list}`;
@@ -3506,6 +3507,17 @@ async function scanVyjadreniaTeraz(cislo) {
   }
   const btn2 = document.getElementById('vyj-scan-btn');
   if (btn2) { btn2.disabled = false; btn2.style.opacity = '1'; }
+}
+
+async function resetVyjadreniaCursor(cislo) {
+  if (!cfg.url) { showToast('Chýba nastavenie Apps Script URL', 'err'); return; }
+  try {
+    const r = await fetch(cfg.url, { method: 'POST', cache: 'no-store', body: JSON.stringify({ action: 'resetVyjadreniaCursor' }) });
+    const d = await r.json();
+    showToast(d.ok ? 'Vyčistené — skús „Skontrolovať teraz"' : (d.error || 'Zlyhalo'), d.ok ? 'ok' : 'err');
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  }
 }
 
 async function deleteVyjadrenie(id) {

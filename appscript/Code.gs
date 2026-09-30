@@ -288,6 +288,7 @@ function doPost(e) {
     else if (req.action === 'createProjectFolder') resp = akcia_createProjectFolder(req);
     else if (req.action === 'listProjectFolders')  resp = akcia_listProjectFolders(req);
     else if (req.action === 'scanVyjadreniaProjekt') resp = akcia_scanVyjadreniaProjekt(req);
+    else if (req.action === 'resetVyjadreniaCursor') resp = akcia_resetVyjadreniaCursor(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
       .setMimeType(ContentService.MimeType.JSON);
@@ -1453,4 +1454,11 @@ function akcia_scanVyjadreniaProjekt(req) {
   } catch(e) {
     return { ok: false, error: e.message };
   }
+}
+
+// Vyčistí kurzor "už spracované" pre Vyjadrenia (tlačidlo "🗑 Reset" v modáli) - obchádza nespoľahlivé
+// ručné mazanie cez Project Settings -> Script Properties v Apps Script editore.
+function akcia_resetVyjadreniaCursor(req) {
+  PropertiesService.getScriptProperties().deleteProperty('spracovane_vyjadrenia');
+  return { ok: true };
 }
