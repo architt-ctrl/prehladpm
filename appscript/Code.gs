@@ -1392,9 +1392,13 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
         'formáte YYYY-MM-DD - použi ktorýkoľvek z týchto dvoch, ak je v texte uvedený, inak null\n' +
         '- stav: jedno slovo hodnotiace celkový výsledok stanoviska - presne jedna z hodnôt ' +
-        '"súhlasné" (bezpodmienečný súhlas), "podmienečné" (súhlas viazaný na splnenie podmienok/' +
-        'pripomienok), "zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (len informatívne, ' +
-        'neobsahuje jasné áno/nie stanovisko)\n' +
+        '"súhlasné" (bezpodmienečný súhlas, od nás sa už nič ďalšie nežiada), "podmienečné" ' +
+        '(súhlas viazaný na splnenie podmienok/pripomienok, ALEBO odosielateľ od nás niečo žiada ' +
+        'predtým než sa vec posunie ďalej - napr. žiada doplnenie/úpravu podkladov, doplnenie ' +
+        'projektovej dokumentácie a pod. - teda čokoľvek, kde je na našej strane ešte nejaký krok), ' +
+        '"zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (čisto informatívne stanovisko, ' +
+        'ktoré nám len dáva podklady/informácie bez toho, aby od nás niečo žiadalo - napr. vyjadrenie ' +
+        'k existencii sietí, predloženie technických podmienok na pripojenie)\n' +
         '- pripomienky: pole krátkych textových položiek - konkrétne podmienky/pripomienky/' +
         'požiadavky uvedené v dokumente (každá položka = jedna vecná podmienka, stručne ' +
         'preformulovaná, nie doslovný odsek). Prázdne pole [], ak dokument žiadne konkrétne ' +
