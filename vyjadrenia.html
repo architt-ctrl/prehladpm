@@ -52,7 +52,6 @@
     .pr-list li{list-style:none;display:flex;gap:7px;margin-bottom:6px}
     .pr-mark{flex-shrink:0;margin-top:1px}
     .pr-done{text-decoration:line-through;color:var(--text3)}
-    .pr-komentar{font-size:11px;color:var(--text3);margin-top:1px}
     .file-link{font-size:12px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:8px}
     .file-link:hover{text-decoration:underline}
   </style>
@@ -108,10 +107,7 @@ function pripomienkyHtml(pripomienky) {
   if (!pripomienky.length) return '';
   return `<ul class="pr-list">${pripomienky.map(p => {
     const n = normPripomienka(p);
-    return `<li><span class="pr-mark">${n.done ? '☑' : '☐'}</span><span>
-      <span class="${n.done ? 'pr-done' : ''}">${esc(n.text)}</span>
-      ${n.komentar ? `<div class="pr-komentar">💬 ${esc(n.komentar)}</div>` : ''}
-    </span></li>`;
+    return `<li><span class="pr-mark">${n.done ? '☑' : '☐'}</span><span class="${n.done ? 'pr-done' : ''}">${esc(n.text)}</span></li>`;
   }).join('')}</ul>`;
 }
 

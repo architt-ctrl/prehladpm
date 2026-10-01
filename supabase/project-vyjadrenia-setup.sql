@@ -17,6 +17,7 @@ create table if not exists project_vyjadrenia (
   stav text,
   pripomienky jsonb default '[]'::jsonb,
   zhrnutie text,
+  poznamka text,
   created_at timestamptz not null default now()
 );
 
@@ -31,6 +32,10 @@ alter table project_vyjadrenia add column if not exists kontakt text;
 alter table project_vyjadrenia add column if not exists kontakt_email text;
 alter table project_vyjadrenia add column if not exists stav text;
 alter table project_vyjadrenia add column if not exists pripomienky jsonb default '[]'::jsonb;
+-- poznamka (2026-10-01): JEDEN komentár k celému vyjadreniu (interný, len index.html) - nahrádza
+-- predchádzajúci pokus o komentár ku KAŽDEJ jednotlivej pripomienke (ten sa už v appke nepoužíva,
+-- ale staré dáta v pripomienky[].komentar ostávajú nedotknuté/nečítané).
+alter table project_vyjadrenia add column if not exists poznamka text;
 
 alter table project_vyjadrenia enable row level security;
 

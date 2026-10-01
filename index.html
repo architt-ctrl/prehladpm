@@ -3477,11 +3477,7 @@ function pripomienkaRowHtml(recordId, idx, p) {
   const n = normPripomienka(p);
   return `<li style="list-style:none;display:flex;gap:6px;align-items:flex-start;margin-bottom:6px">
     <input type="checkbox" ${n.done ? 'checked' : ''} onclick="togglePripomienka('${recordId}',${idx})" style="margin-top:2px;cursor:pointer;flex-shrink:0;accent-color:var(--green)">
-    <div style="flex:1;min-width:0">
-      <span style="${n.done ? 'text-decoration:line-through;color:var(--text3)' : ''}">${n.text}</span>
-      ${n.komentar ? `<div style="font-size:11px;color:var(--text3);margin-top:1px">💬 ${n.komentar}</div>` : ''}
-      <span onclick="komentarPripomienka('${recordId}',${idx})" style="font-size:10px;color:var(--blue);cursor:pointer;margin-left:6px;white-space:nowrap">${n.komentar ? 'upraviť komentár' : '+ komentár'}</span>
-    </div>
+    <span style="${n.done ? 'text-decoration:line-through;color:var(--text3)' : ''}">${n.text}</span>
   </li>`;
 }
 
@@ -3505,6 +3501,10 @@ function renderVyjadreniaModal() {
         </div>
         ${r.kontakt || r.kontakt_email ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 ${r.kontakt || ''}${r.kontakt_email ? ` · <a href="mailto:${r.kontakt_email}" style="color:var(--blue);text-decoration:none">✉️ ${r.kontakt_email}</a>` : ''}</div>` : ''}
         ${r.zhrnutie ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${r.zhrnutie}</div>` : ''}
+        <div style="font-size:11px;margin-top:4px">
+          ${r.poznamka ? `<div style="color:var(--text3)">💬 ${r.poznamka}</div>` : ''}
+          <span onclick="poznamkaVyjadrenia('${r.id}')" style="color:var(--blue);cursor:pointer">${r.poznamka ? 'upraviť poznámku' : '+ poznámka'}</span>
+        </div>
         ${pripomienky.length ? `
           <div onclick="toggleVyjadrenieOpen('${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer;margin-top:4px;user-select:none">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
           ${open ? `<ul style="margin:4px 0 0 0;padding:0">${pripomienky.map((p, idx) => pripomienkaRowHtml(r.id, idx, p)).join('')}</ul>` : ''}
@@ -3595,16 +3595,14 @@ function togglePripomienka(id, idx) {
   saveVyjadreniePripomienky(id, arr);
 }
 
-function komentarPripomienka(id, idx) {
+function poznamkaVyjadrenia(id) {
   const row = _vyjadreniaCtx.rows.find(r => r.id === id);
-  if (!row || !Array.isArray(row.pripomienky)) return;
-  const arr = row.pripomienky.map(normPripomienka);
-  const text = prompt('Komentár k pripomienke:', arr[idx].komentar || '');
+  if (!row) return;
+  const text = prompt('Poznámka k vyjadreniu:', row.poznamka || '');
   if (text === null) return;
-  arr[idx] = { ...arr[idx], komentar: text.trim() };
-  row.pripomienky = arr;
+  row.poznamka = text.trim();
   renderVyjadreniaModal();
-  saveVyjadreniePripomienky(id, arr);
+  sb.from('project_vyjadrenia').update({ poznamka: row.poznamka }).eq('id', id).then(null, () => showToast('Chyba uloženia', 'err'));
 }
 
 async function resetVyjadreniaCursor(cislo) {
