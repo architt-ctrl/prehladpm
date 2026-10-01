@@ -62,6 +62,14 @@
     .pozn-list{margin:6px 0 0 0}
     .pozn-item{font-size:12px;color:var(--text2);padding:3px 0;border-top:1px solid var(--border);display:flex;gap:6px}
     .pozn-date{color:var(--text3);flex-shrink:0;font-size:11px}
+    .upload-card{max-width:720px;margin:16px auto 0;padding:0 16px}
+    .upload-inner{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+    .upload-title{font-size:13px;font-weight:600;margin-bottom:8px}
+    .upload-btn{background:var(--text);color:#f5f3ef;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+    .upload-btn:disabled{opacity:.5;cursor:default}
+    .upload-status{font-size:12px;color:var(--text2);margin-top:8px}
+    .upload-status.err{color:var(--red)}
+    .upload-status.ok{color:var(--green)}
   </style>
 </head>
 <body>
@@ -71,6 +79,15 @@
   <div class="top-info">
     <div class="top-proj" id="topProj"></div>
     <div class="top-sub">Vyjadrenia a stanoviská</div>
+  </div>
+</div>
+
+<div class="upload-card" id="uploadCard" style="display:none">
+  <div class="upload-inner">
+    <div class="upload-title">Nahrať nové vyjadrenie</div>
+    <input type="file" id="uploadFile" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" capture="environment" style="display:none" onchange="onUploadFile()">
+    <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('uploadFile').click()">📤 Vybrať súbor a nahrať</button>
+    <div class="upload-status" id="uploadStatus"></div>
   </div>
 </div>
 
@@ -218,19 +235,12 @@ function toggleOpen(id) {
   render();
 }
 
-async function init() {
-  if (!cislo) {
-    document.getElementById('main').innerHTML = '<div class="empty err">Chýba číslo projektu v odkaze.</div>';
-    return;
-  }
+async function loadData() {
   const query = sb.from('project_vyjadrenia').select('*');
   const { data, error } = singleId
     ? await query.eq('id', singleId)
     : await query.eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
-  if (error) {
-    document.getElementById('main').innerHTML = '<div class="empty err">Nepodarilo sa načítať: ' + esc(error.message) + '</div>';
-    return;
-  }
+  if (error) throw error;
   rows = sortVyjadrenia(data || []);
   const ids = rows.map(r => r.id);
   notesByVyjadrenie = {};
@@ -239,9 +249,91 @@ async function init() {
     ids.forEach(id => { notesByVyjadrenie[id] = []; });
     (notes || []).forEach(n => notesByVyjadrenie[n.vyjadrenie_id].push(n));
   }
-  render();
+}
+
+async function init() {
+  if (!cislo) {
+    document.getElementById('main').innerHTML = '<div class="empty err">Chýba číslo projektu v odkaze.</div>';
+    return;
+  }
+  document.getElementById('uploadCard').style.display = 'block';
+  try {
+    await loadData();
+    render();
+  } catch(e) {
+    document.getElementById('main').innerHTML = '<div class="empty err">Nepodarilo sa načítať: ' + esc(e.message) + '</div>';
+  }
 }
 init();
+
+// ── Nahratie nového vyjadrenia (investor/projektant, bez loginu) ───────────
+// Apps Script natvrdo v kóde (táto stránka nemá prístup k appke ⚙ Nastaveniam) - rovnaká URL
+// ako "Gemini Apps Script URL" v index.html. Uploadnutý súbor sa na serveri hneď spracuje
+// (OCR+Gemini) cez rovnakú akciu ako "🔄 Skontrolovať teraz" v internom modáli.
+const VYJADRENIA_APPS_SCRIPT_URL = 'PLACEHOLDER_SET_BY_JOZEF';
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('Súbor sa nepodarilo prečítať'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onUploadFile() {
+  const inp = document.getElementById('uploadFile');
+  const file = inp.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('uploadStatus');
+  const btn = document.getElementById('uploadBtn');
+  const reset = () => { inp.value = ''; btn.disabled = false; };
+  if (!VYJADRENIA_APPS_SCRIPT_URL || VYJADRENIA_APPS_SCRIPT_URL === 'PLACEHOLDER_SET_BY_JOZEF') {
+    statusEl.textContent = 'Nahrávanie zatiaľ nie je nastavené — kontaktujte architt.';
+    statusEl.className = 'upload-status err';
+    reset();
+    return;
+  }
+  const MAX_SIZE = 15 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    statusEl.textContent = 'Súbor je príliš veľký (max 15 MB).';
+    statusEl.className = 'upload-status err';
+    reset();
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = 'Nahrávam „' + file.name + '"…';
+  statusEl.className = 'upload-status';
+  try {
+    const fileBase64 = await fileToBase64(file);
+    // Spracovanie (OCR+Gemini) môže trvať dlhšie a doručenie odpovede cez Apps Script /exec
+    // presmerovanie je pri dlhších behoch nespoľahlivé (rovnaký gotcha ako scanVyjadreniaTeraz
+    // v index.html) - preto sa na fetch() odpoveď nespolieha, len sa spustí a výsledok sa
+    // priebežne dotiahne zo Supabase.
+    fetch(VYJADRENIA_APPS_SCRIPT_URL, {
+      method: 'POST', cache: 'no-store',
+      body: JSON.stringify({ action: 'uploadVyjadrenie', cislo, fileName: file.name, mimeType: file.type, fileBase64 })
+    }).then(r => r.json()).then(d => {
+      if (d && !d.ok) console.log('uploadVyjadrenie zlyhalo:', d.error);
+      if (d && d.errors && d.errors.length) console.log('uploadVyjadrenie errors:', d.errors);
+    }).catch(e => console.log('uploadVyjadrenie - odpoveď sa nedoručila (očakávané, výsledok sa číta zo Supabase):', e.message));
+
+    statusEl.textContent = 'Súbor sa spracúva, môže to trvať aj minútu…';
+    const oneskorenia = [8000, 15000, 20000, 20000];
+    for (const ms of oneskorenia) {
+      await new Promise(res => setTimeout(res, ms));
+      await loadData();
+      render();
+    }
+    statusEl.textContent = 'Hotovo — vyjadrenie by malo byť v zozname nižšie.';
+    statusEl.className = 'upload-status ok';
+  } catch(e) {
+    statusEl.textContent = 'Chyba: ' + e.message;
+    statusEl.className = 'upload-status err';
+  } finally {
+    reset();
+  }
+}
 </script>
 </body>
 </html>

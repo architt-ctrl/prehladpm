@@ -289,6 +289,7 @@ function doPost(e) {
     else if (req.action === 'listProjectFolders')  resp = akcia_listProjectFolders(req);
     else if (req.action === 'scanVyjadreniaProjekt') resp = akcia_scanVyjadreniaProjekt(req);
     else if (req.action === 'resetVyjadreniaCursor') resp = akcia_resetVyjadreniaCursor(req);
+    else if (req.action === 'uploadVyjadrenie') resp = akcia_uploadVyjadrenie(req);
     else if (req.action === 'navrhniZoznamDokumentacie') resp = akcia_navrhniZoznamDokumentacie(req);
     else resp = { ok: false, error: 'Neznáma akcia: ' + req.action };
     return ContentService.createTextOutput(JSON.stringify(resp))
@@ -1491,6 +1492,33 @@ function akcia_scanVyjadreniaProjekt(req) {
 function akcia_resetVyjadreniaCursor(req) {
   PropertiesService.getScriptProperties().deleteProperty('spracovane_vyjadrenia');
   return { ok: true };
+}
+
+// Nahratie nového vyjadrenia priamo z klientského vyjadrenia.html (bez loginu, investor/projektant) -
+// uloží súbor do 20_KOORDINACIA/VYJADRENIA a hneď ho spracuje (OCR+Gemini), rovnaká logika ako
+// "🔄 Skontrolovať teraz" v index.html, len obmedzená na tento jeden nový súbor (budget.zostava malé,
+// cursor zabezpečí že sa neprocesujú staré/už spracované súbory znova).
+function akcia_uploadVyjadrenie(req) {
+  var cislo = String(req.cislo || '').trim();
+  var fileName = String(req.fileName || 'vyjadrenie').trim();
+  var mimeType = String(req.mimeType || 'application/octet-stream');
+  var fileBase64 = req.fileBase64;
+  if (!cislo) return { ok: false, error: 'Chýba cislo' };
+  if (!fileBase64) return { ok: false, error: 'Chýba súbor' };
+  try {
+    var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+    var projFolder = najdiProjektFolder(root, cislo);
+    if (!projFolder) return { ok: false, error: 'Priečinok projektu sa na Drive nenašiel' };
+    var koordFolder = ziskajAlebaVytvorPodpriecinok(projFolder, '20_KOORDINACIA');
+    var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
+    var bytes = Utilities.base64Decode(fileBase64);
+    var blob = Utilities.newBlob(bytes, mimeType, fileName);
+    vyjFolder.createFile(blob);
+    var vysledok = spracujProjektVyjadrenia(cislo, projFolder, { zostava: 3 });
+    return { ok: true, novych: vysledok.novych, errors: vysledok.errors };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
