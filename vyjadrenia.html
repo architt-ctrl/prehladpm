@@ -27,7 +27,14 @@
     .top-info{display:flex;flex-direction:column;gap:2px;min-width:0}
     .top-proj{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .top-sub{font-size:12px;color:rgba(245,243,239,.55)}
-    .top-upload{margin-left:auto;flex-shrink:0;text-align:right}
+
+    .upload-card{max-width:720px;margin:16px auto 0;padding:0 16px;text-align:right}
+    .upload-btn{background:var(--text);color:#f5f3ef;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+    .upload-btn:hover{opacity:.9}
+    .upload-btn:disabled{opacity:.5;cursor:default}
+    .upload-status{font-size:12px;color:var(--text2);margin-top:6px}
+    .upload-status.err{color:var(--red)}
+    .upload-status.ok{color:var(--green)}
 
     .main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
     .empty{padding:40px 16px;text-align:center;color:var(--text2);font-size:14px;line-height:1.6}
@@ -63,12 +70,6 @@
     .pozn-list{margin:6px 0 0 0}
     .pozn-item{font-size:12px;color:var(--text2);padding:3px 0;border-top:1px solid var(--border);display:flex;gap:6px}
     .pozn-date{color:var(--text3);flex-shrink:0;font-size:11px}
-    .upload-btn{background:transparent;color:#f5f3ef;border:1px solid rgba(245,243,239,.4);border-radius:8px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);white-space:nowrap}
-    .upload-btn:hover{background:rgba(245,243,239,.1)}
-    .upload-btn:disabled{opacity:.5;cursor:default}
-    .upload-status{font-size:11px;color:rgba(245,243,239,.65);margin-top:4px;max-width:160px}
-    .upload-status.err{color:#ffb3a8}
-    .upload-status.ok{color:#9be0b8}
   </style>
 </head>
 <body>
@@ -79,11 +80,12 @@
     <div class="top-proj" id="topProj"></div>
     <div class="top-sub">Vyjadrenia a stanoviská</div>
   </div>
-  <div class="top-upload" id="uploadCard" style="display:none">
-    <input type="file" id="uploadFile" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" capture="environment" style="display:none" onchange="onUploadFile()">
-    <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('uploadFile').click()">Nahrať vyjadrenie</button>
-    <div class="upload-status" id="uploadStatus"></div>
-  </div>
+</div>
+
+<div class="upload-card" id="uploadCard" style="display:none">
+  <input type="file" id="uploadFile" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" capture="environment" style="display:none" onchange="onUploadFile()">
+  <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('uploadFile').click()">Nahrať vyjadrenie</button>
+  <div class="upload-status" id="uploadStatus"></div>
 </div>
 
 <div class="main" id="main">
