@@ -52,6 +52,11 @@
     .pr-list li{list-style:none;display:flex;gap:7px;margin-bottom:6px}
     .pr-mark{flex-shrink:0;margin-top:1px}
     .pr-done{text-decoration:line-through;color:var(--text3)}
+    .pr-typ{font-size:9px;font-weight:600;padding:1px 6px;border-radius:7px;background:var(--bg3);flex-shrink:0;white-space:nowrap;align-self:flex-start}
+    .pr-typ-projekt{border:1px solid var(--blue);color:var(--blue)}
+    .pr-typ-realizacia{border:1px solid var(--border);color:var(--text3)}
+    .b-pd-pending{background:var(--red-bg);border:1px solid var(--red-bd);color:var(--red)}
+    .b-pd-done{background:var(--grn-bg);border:1px solid var(--grn-bd);color:var(--green)}
     .file-link{font-size:12px;color:var(--blue);text-decoration:none;display:inline-block;margin-top:8px}
     .file-link:hover{text-decoration:underline}
   </style>
@@ -103,12 +108,32 @@ function dlClass(termin) {
   return d < 0 ? 'late' : d <= 14 ? 'soon' : '';
 }
 
+function pripomienkaTypBadge(typ) {
+  if (typ === 'projekt') return `<span class="pr-typ pr-typ-projekt">PD</span>`;
+  if (typ === 'realizacia') return `<span class="pr-typ pr-typ-realizacia">Realizácia</span>`;
+  return '';
+}
+
 function pripomienkyHtml(pripomienky) {
   if (!pripomienky.length) return '';
   return `<ul class="pr-list">${pripomienky.map(p => {
     const n = normPripomienka(p);
-    return `<li><span class="pr-mark">${n.done ? '☑' : '☐'}</span><span class="${n.done ? 'pr-done' : ''}">${esc(n.text)}</span></li>`;
+    return `<li><span class="pr-mark">${n.done ? '☑' : '☐'}</span><span class="${n.done ? 'pr-done' : ''}" style="flex:1">${esc(n.text)}</span>${pripomienkaTypBadge(n.typ)}</li>`;
   }).join('')}</ul>`;
+}
+
+// Stav pripomienok typu "projekt" (pozri index.html vyjadreniePdStatus) - null/'pending'/'done'.
+function pdStatus(r) {
+  const pripomienky = Array.isArray(r.pripomienky) ? r.pripomienky : [];
+  const pdItems = pripomienky.map(normPripomienka).filter(p => p.typ === 'projekt');
+  if (!pdItems.length) return null;
+  return pdItems.every(p => p.done) ? 'done' : 'pending';
+}
+
+function pdStatusBadge(status) {
+  if (status === 'pending') return `<span class="badge b-pd-pending" style="margin-left:auto">⚠ Vyžaduje dopracovanie PD</span>`;
+  if (status === 'done') return `<span class="badge b-pd-done" style="margin-left:auto">✓ Pripomienky zapracované</span>`;
+  return '';
 }
 
 function render() {
@@ -126,6 +151,7 @@ function render() {
       <div class="card-head">
         <span class="organ">${esc(r.organ || 'Neznámy pôvodca')}</span>
         ${badgeHtml(r.stav)}
+        ${pdStatusBadge(pdStatus(r))}
       </div>
       ${r.cislo_vyjadrenia ? `<div class="cislo-vyj">č. ${esc(r.cislo_vyjadrenia)}</div>` : ''}
       <div class="meta">

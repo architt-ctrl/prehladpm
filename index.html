@@ -2847,6 +2847,7 @@ async function syncData() {
     caflouTasksCache = {};
     Object.keys(taskEmailCache).forEach(k => delete taskEmailCache[k]);
     Object.keys(taskNotesCache).forEach(k => delete taskNotesCache[k]);
+    Object.keys(vyjadrenieNotesCache).forEach(k => delete vyjadrenieNotesCache[k]);
     _vytazenieCache = null;
     _intTimData = null;
     _financieData = null;
@@ -3438,6 +3439,8 @@ function vyjadreniaIconHtml(cislo) {
 
 let _vyjadreniaCtx = null; // { cislo, rows }
 const vyjadrenieOpenSet = new Set(); // id záznamov s rozbalenými pripomienkami
+const vyjadrenieNotesCache = {}; // {vyjadrenie_id: [{id,datum,text,created_at}]} — bulk-loadované pri otvorení modálu
+const vyjadrenieNotesOpen = new Set(); // id záznamov s rozbaleným zoznamom poznámok
 
 function vyjadrenieStavBadge(stav) {
   if (!stav) return '';
@@ -3451,13 +3454,53 @@ function vyjadrenieStavBadge(stav) {
   return `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:9px;background:${s.bg};border:1px solid ${s.bd};color:${s.col};flex-shrink:0;white-space:nowrap">${stav}</span>`;
 }
 
+// Stav pripomienok typu "projekt" (týkajúcich sa PD) na danom vyjadrení - null = žiadne také
+// pripomienky, 'pending' = aspoň jedna neodfajknutá, 'done' = všetky odfajknuté.
+function vyjadreniePdStatus(r) {
+  const pripomienky = Array.isArray(r.pripomienky) ? r.pripomienky.map(normPripomienka) : [];
+  const pdItems = pripomienky.filter(p => p.typ === 'projekt');
+  if (!pdItems.length) return null;
+  return pdItems.every(p => p.done) ? 'done' : 'pending';
+}
+
+function pdStatusBadge(status) {
+  if (status === 'pending') return `<span style="margin-left:auto;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9px;background:var(--red-bg);border:1px solid var(--red-bd);color:var(--red);flex-shrink:0;white-space:nowrap">⚠ Vyžaduje dopracovanie PD</span>`;
+  if (status === 'done') return `<span style="margin-left:auto;font-size:10px;font-weight:700;padding:2px 8px;border-radius:9px;background:var(--grn-bg);border:1px solid var(--grn-bd);color:var(--green);flex-shrink:0;white-space:nowrap">✓ Pripomienky zapracované</span>`;
+  return '';
+}
+
+// Poradie (Jozef, 2026-10-01): pripnuté vždy prvé (manuálna priorita) → vyžadujúce dopracovanie PD
+// (zoradené podľa najbližšieho termínu) → pripomienky k PD zapracované → ostatné podľa dátumu
+// dokumentu zostupne. Jeden zoznam, žiadne samostatné sekcie.
+function sortVyjadrenia(rows) {
+  const rank = r => {
+    if (r.pripnute) return 0;
+    const st = vyjadreniePdStatus(r);
+    if (st === 'pending') return 1;
+    if (st === 'done') return 2;
+    return 3;
+  };
+  return rows.slice().sort((a, b) => {
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 1) return (a.termin_reakcie || '9999-99-99').localeCompare(b.termin_reakcie || '9999-99-99');
+    return (b.datum_dokumentu || '').localeCompare(a.datum_dokumentu || '');
+  });
+}
+
 async function openVyjadreniaModal(cislo) {
   const p = projects.find(x => x.cislo === cislo);
   document.getElementById('vyjadreniaTitle').textContent = `Vyjadrenia – ${p ? p.nazov : cislo}`;
   document.getElementById('vyjadreniaModal').classList.remove('hidden');
   document.getElementById('vyjadreniaContent').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text3)">Načítavam…</div>';
   const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
-  _vyjadreniaCtx = { cislo, rows: data || [] };
+  _vyjadreniaCtx = { cislo, rows: sortVyjadrenia(data || []) };
+  const ids = (data || []).map(r => r.id);
+  if (ids.length) {
+    const { data: notes } = await sb.from('vyjadrenie_poznamky').select('id,vyjadrenie_id,text,created_at').in('vyjadrenie_id', ids).order('created_at', { ascending: false });
+    ids.forEach(id => { vyjadrenieNotesCache[id] = []; });
+    (notes || []).forEach(n => vyjadrenieNotesCache[n.vyjadrenie_id].push(formatTaskNote(n)));
+  }
   renderVyjadreniaModal();
 }
 
@@ -3467,17 +3510,27 @@ function vyjadrenieDlStyle(termin) {
   return d < 0 ? 'color:var(--red);font-weight:700' : d <= 14 ? 'color:var(--orange);font-weight:700' : 'color:var(--text2)';
 }
 
-// Staré záznamy (spred zavedenia checkboxu/komentára) majú pripomienky ako holé reťazce -
+// Staré záznamy (spred zavedenia typu/checkboxu) majú pripomienky ako holé reťazce alebo bez `typ` -
 // normalizujeme na objekt za behu, nič sa v Supabase neprepisuje kým sa daná položka reálne nezmení.
 function normPripomienka(p) {
-  return (typeof p === 'string') ? { text: p, done: false, komentar: '' } : (p || { text: '', done: false, komentar: '' });
+  return (typeof p === 'string') ? { text: p, done: false, typ: null } : (p || { text: '', done: false, typ: null });
+}
+
+// Rozlíšenie, či sa pripomienka týka projektovej dokumentácie (treba ju riešiť teraz, pred ďalším
+// krokom) alebo až realizácie stavby (dodrží sa počas výstavby, netreba kvôli nej meniť PD) -
+// klasifikuje Gemini pri extrakcii (Code.gs), staré záznamy majú typ:null → bez odznaku.
+function pripomienkaTypBadge(typ) {
+  if (typ === 'projekt') return `<span style="font-size:9px;font-weight:600;padding:1px 6px;border-radius:7px;background:var(--bg3);border:1px solid var(--blue);color:var(--blue);flex-shrink:0;white-space:nowrap">PD</span>`;
+  if (typ === 'realizacia') return `<span style="font-size:9px;font-weight:600;padding:1px 6px;border-radius:7px;background:var(--bg3);border:1px solid var(--border);color:var(--text3);flex-shrink:0;white-space:nowrap">Realizácia</span>`;
+  return '';
 }
 
 function pripomienkaRowHtml(recordId, idx, p) {
   const n = normPripomienka(p);
-  return `<li style="list-style:none;display:flex;gap:6px;align-items:flex-start;margin-bottom:6px">
+  return `<li style="list-style:none;display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;margin-bottom:6px">
     <input type="checkbox" ${n.done ? 'checked' : ''} onclick="togglePripomienka('${recordId}',${idx})" style="margin-top:2px;cursor:pointer;flex-shrink:0;accent-color:var(--green)">
-    <span style="${n.done ? 'text-decoration:line-through;color:var(--text3)' : ''}">${n.text}</span>
+    <span style="flex:1;min-width:120px;${n.done ? 'text-decoration:line-through;color:var(--text3)' : ''}">${n.text}</span>
+    ${pripomienkaTypBadge(n.typ)}
   </li>`;
 }
 
@@ -3487,12 +3540,17 @@ function renderVyjadreniaModal() {
   const list = rows.length ? rows.map(r => {
     const pripomienky = Array.isArray(r.pripomienky) ? r.pripomienky : [];
     const open = vyjadrenieOpenSet.has(r.id);
+    const notesOpen = vyjadrenieNotesOpen.has(r.id);
+    const cachedNotes = vyjadrenieNotesCache[r.id];
+    const lastNote = Array.isArray(cachedNotes) && cachedNotes.length > 0 && !notesOpen ? cachedNotes[0] : null;
+    const pdStatus = vyjadreniePdStatus(r);
     return `
     <div style="border-bottom:1px solid var(--border);padding:10px 0;display:flex;gap:8px;align-items:flex-start">
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}</div>
           ${vyjadrenieStavBadge(r.stav)}
+          ${pdStatusBadge(pdStatus)}
         </div>
         ${r.cislo_vyjadrenia ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">č. ${r.cislo_vyjadrenia}</div>` : ''}
         <div style="font-size:11px;color:var(--text3);margin-top:2px">
@@ -3501,20 +3559,24 @@ function renderVyjadreniaModal() {
         </div>
         ${r.kontakt || r.kontakt_email ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">👤 ${r.kontakt || ''}${r.kontakt_email ? ` · <a href="mailto:${r.kontakt_email}" style="color:var(--blue);text-decoration:none">✉️ ${r.kontakt_email}</a>` : ''}</div>` : ''}
         ${r.zhrnutie ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">${r.zhrnutie}</div>` : ''}
-        <div style="font-size:11px;margin-top:4px">
-          ${r.poznamka ? `<div style="color:var(--text3)">💬 ${r.poznamka}</div>` : ''}
-          <span onclick="poznamkaVyjadrenia('${r.id}')" style="color:var(--blue);cursor:pointer">${r.poznamka ? 'upraviť poznámku' : '+ poznámka'}</span>
-        </div>
         ${pripomienky.length ? `
           <div onclick="toggleVyjadrenieOpen('${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer;margin-top:4px;user-select:none">${open ? '▾' : '▸'} Pripomienky (${pripomienky.length})</div>
           ${open ? `<ul style="margin:4px 0 0 0;padding:0">${pripomienky.map((p, idx) => pripomienkaRowHtml(r.id, idx, p)).join('')}</ul>` : ''}
         ` : ''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+          ${lastNote ? `<span onclick="toggleVyjadrenieNotes('${cislo}','${r.id}')" style="flex:1;min-width:0;font-size:11px;color:var(--text2);cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${lastNote.datum}: ${lastNote.text.replace(/"/g,'&quot;')}">📝 ${lastNote.datum}: ${lastNote.text}</span>`
+            : `<span onclick="toggleVyjadrenieNotes('${cislo}','${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer">📝 Poznámky${Array.isArray(cachedNotes) && cachedNotes.length ? ` (${cachedNotes.length})` : ''}</span>`}
+        </div>
+        ${notesOpen ? buildVyjadrenieNotesHtml(r.id) : ''}
         <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
           ${r.file_url ? `<a href="${r.file_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:var(--blue);text-decoration:none">📎 Otvoriť súbor</a>` : ''}
           <span onclick="shareVyjadrenieItem('${cislo}','${r.id}')" style="font-size:11px;color:var(--blue);cursor:pointer">🔗 Zdieľať toto vyjadrenie</span>
         </div>
       </div>
-      <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;flex-shrink:0">✕</button>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:6px;flex-shrink:0">
+        <span onclick="toggleVyjadreniePin('${r.id}')" title="${r.pripnute ? 'Odopnúť' : 'Pripnúť na vrch'}" style="cursor:pointer;font-size:13px;opacity:${r.pripnute ? '1' : '.3'}">📌</span>
+        <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px">✕</button>
+      </div>
     </div>`;
   }).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
   el.innerHTML = `
@@ -3548,7 +3610,8 @@ async function scanVyjadreniaTeraz(cislo) {
 
   const refresh = async () => {
     const { data } = await sb.from('project_vyjadrenia').select('*').eq('cislo', cislo).order('datum_dokumentu', { ascending: false });
-    _vyjadreniaCtx = { cislo, rows: data || [] };
+    _vyjadreniaCtx = { cislo, rows: sortVyjadrenia(data || []) };
+    (data || []).forEach(r => { if (vyjadrenieNotesCache[r.id] === undefined) vyjadrenieNotesCache[r.id] = []; });
     renderVyjadreniaModal();
     loadVyjadreniaMap().catch(() => {});
   };
@@ -3591,8 +3654,69 @@ function togglePripomienka(id, idx) {
   const arr = row.pripomienky.map(normPripomienka);
   arr[idx] = { ...arr[idx], done: !arr[idx].done };
   row.pripomienky = arr;
+  // Odškrtnutie poslednej PD pripomienky mení odznak ⚠→✓, čo mení aj poradie v zozname.
+  _vyjadreniaCtx.rows = sortVyjadrenia(_vyjadreniaCtx.rows);
   renderVyjadreniaModal();
   saveVyjadreniePripomienky(id, arr);
+}
+
+function toggleVyjadreniePin(id) {
+  const row = _vyjadreniaCtx.rows.find(r => r.id === id);
+  if (!row) return;
+  row.pripnute = !row.pripnute;
+  _vyjadreniaCtx.rows = sortVyjadrenia(_vyjadreniaCtx.rows);
+  renderVyjadreniaModal();
+  sb.from('project_vyjadrenia').update({ pripnute: row.pripnute }).eq('id', id).then(null, () => showToast('Chyba uloženia', 'err'));
+}
+
+function buildVyjadrenieNotesHtml(id) {
+  const notes = vyjadrenieNotesCache[id];
+  if (notes === undefined || notes === null) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam…</div>';
+  let html = '<div style="margin-top:2px">';
+  if (notes.length) {
+    html += notes.map(n => `
+      <div style="font-size:11px;padding:3px 0;border-top:1px solid var(--border)44;display:flex;gap:6px;align-items:baseline">
+        <span style="color:var(--text3);flex-shrink:0;font-size:10px">${n.datum}</span>
+        <span style="color:var(--text2);flex:1">${n.text}</span>
+      </div>`).join('');
+  } else {
+    html += '<div style="font-size:11px;color:var(--text3);padding:3px 0;font-style:italic">Žiadne poznámky</div>';
+  }
+  html += `<div style="display:flex;gap:4px;margin-top:6px">
+    <input id="vni-${id}" class="dennik-input" placeholder="Nový záznam…"
+      style="flex:1;font-size:11px" onkeydown="if(event.key==='Enter'){event.stopPropagation();addVyjadrenieNote('${id}')}">
+    <button onclick="event.stopPropagation();addVyjadrenieNote('${id}')"
+      style="background:var(--text);color:#fff;border:none;border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;flex-shrink:0">Pridať</button>
+  </div>`;
+  html += '</div>';
+  return html;
+}
+
+function toggleVyjadrenieNotes(cislo, id) {
+  if (vyjadrenieNotesOpen.has(id)) { vyjadrenieNotesOpen.delete(id); renderVyjadreniaModal(); return; }
+  vyjadrenieNotesOpen.add(id);
+  renderVyjadreniaModal();
+}
+
+async function addVyjadrenieNote(id) {
+  const inp = document.getElementById('vni-' + id);
+  const text = inp?.value.trim(); if (!text) return;
+  inp.value = '';
+  inp.disabled = true;
+  try {
+    const { data, error } = await sb.from('vyjadrenie_poznamky')
+      .insert({ vyjadrenie_id: id, text }).select('id,text,created_at').single();
+    if (error) throw error;
+    const newNote = formatTaskNote(data);
+    if (!vyjadrenieNotesCache[id]) vyjadrenieNotesCache[id] = [];
+    vyjadrenieNotesCache[id].unshift(newNote);
+  } catch(e) {
+    showToast('Chyba: ' + e.message, 'err');
+  } finally {
+    if (inp) inp.disabled = false;
+  }
+  vyjadrenieNotesOpen.delete(id);
+  renderVyjadreniaModal();
 }
 
 function poznamkaVyjadrenia(id) {

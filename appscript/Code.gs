@@ -1399,20 +1399,24 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
         '"zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (čisto informatívne stanovisko, ' +
         'ktoré nám len dáva podklady/informácie bez toho, aby od nás niečo žiadalo - napr. vyjadrenie ' +
         'k existencii sietí, predloženie technických podmienok na pripojenie)\n' +
-        '- pripomienky: pole krátkych textových položiek - konkrétne podmienky/pripomienky/' +
-        'požiadavky uvedené v dokumente (každá položka = jedna vecná podmienka, stručne ' +
-        'preformulovaná, nie doslovný odsek). Prázdne pole [], ak dokument žiadne konkrétne ' +
-        'podmienky neuvádza\n' +
+        '- pripomienky: pole OBJEKTOV {text, typ} - konkrétne podmienky/pripomienky/požiadavky ' +
+        'uvedené v dokumente (každá položka = jedna vecná podmienka, text stručne preformulovaný, ' +
+        'nie doslovný odsek). typ je presne jedna z hodnôt "projekt" (pripomienka sa týka ' +
+        'projektovej dokumentácie - treba ju zapracovať/zohľadniť v PD skôr než sa postúpi do ' +
+        'ďalšieho stupňa/konania) alebo "realizacia" (pripomienka sa týka až fyzickej realizácie ' +
+        'stavby - treba ju dodržať počas výstavby, ale nevyžaduje zmenu/doplnenie PD teraz). ' +
+        'Prázdne pole [], ak dokument žiadne konkrétne podmienky neuvádza\n' +
         '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska\n\n' +
         'Ak niektorý údaj nie je v texte, použi null (okrem pripomienky, tam prázdne pole). ' +
         'Odpovedaj LEN validným JSON objektom, bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
       var raw = volajGemini(prompt);
       var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
       var data = JSON.parse(json);
-      // Gemini vracia pripomienky ako pole holých textov - obalíme na objekty s miestom na odškrtnutie
-      // a komentár (done/komentar sú čisto UI stav, dopĺňa/mení ich až Jozef v index.html, nie Gemini).
-      var pripomienkyObj = (Array.isArray(data.pripomienky) ? data.pripomienky : []).map(function(text) {
-        return { text: text, done: false, komentar: '' };
+      // done je čisto UI stav, dopĺňa/mení ho až Jozef v index.html, nie Gemini. Gemini by mal vrátiť
+      // objekty {text,typ}, ale ak by vrátil holý text (staršie správanie promptu), spadni naň.
+      var pripomienkyObj = (Array.isArray(data.pripomienky) ? data.pripomienky : []).map(function(p) {
+        if (typeof p === 'string') return { text: p, typ: null, done: false };
+        return { text: p.text || '', typ: p.typ || null, done: false };
       });
       zapisDoSupabaseVyjadrenie({
         cislo: cislo,
