@@ -405,10 +405,20 @@ function renderSpecialistView() {
       const catMap = {};
       sorted.forEach(r => { const c = profCat(r.profession); if (!catMap[c]) catMap[c] = []; catMap[c].push(r); });
       const cats = Object.entries(catMap).sort(([a], [b]) => a.localeCompare(b, 'sk'));
-      const content = cats.map(([cat, catReqs]) =>
-        `<div style="font-size:15px;font-weight:600;color:var(--text);padding:10px 0 8px;border-bottom:1px solid var(--border);margin-bottom:4px">${cat}</div>` +
-        catReqs.map(r => renderReqCard(r)).join('')
-      ).join('');
+      const content = cats.map(([cat, catReqs]) => {
+        // Otvorené (nedohodnuté) dopyty tej istej profesie naprieč fázami majú rovnaký link na
+        // podklady (jeden spoločný priečinok projektu, nie per-fáza) - Jozef: "netreba to tam
+        // viackrát, len raz" - zoskupené do JEDNEJ karty s viacerými kolonkami na ceny za fázy,
+        // namiesto samostatnej karty (a samostatného rozkliknutia) pre každú fázu zvlášť.
+        // Dohodnuté/vybavené (result) karty ostávajú samostatné, nezávisle od tohto zoskupenia.
+        const resultReqs = catReqs.filter(r => isResultReq(r));
+        const openReqs = catReqs.filter(r => !isResultReq(r));
+        const openGroups = {};
+        openReqs.forEach(r => { const k = r.profession || cat; if (!openGroups[k]) openGroups[k] = []; openGroups[k].push(r); });
+        return `<div style="font-size:15px;font-weight:600;color:var(--text);padding:10px 0 8px;border-bottom:1px solid var(--border);margin-bottom:4px">${cat}</div>` +
+          resultReqs.map(r => renderReqCard(r)).join('') +
+          Object.values(openGroups).map(group => renderOpenGroupCard(group)).join('');
+      }).join('');
 
       const projKey = proj.cislo || proj.name || '';
       return `<details data-proj="${projKey}" style="margin-bottom:8px;border-radius:10px;overflow:hidden;border:1px solid var(--border)">
@@ -494,55 +504,86 @@ function renderReqCard(r) {
       </div>
     </div>`;
   }
+}
 
-  // Open request — quote form
-  const hasQuote = !!qt;
-  const deadline = r.deadline ? new Date(r.deadline + 'T12:00:00').toLocaleDateString('sk-SK') : null;
-  const safeId = s => 'sp_' + r.id.replace(/-/g,'') + '_' + s.replace(/[^a-z0-9]/gi,'_');
-  const projDl = r.deadline ? new Date(r.deadline + 'T12:00:00') : null;
-  const priceRows = phases.map(ph => `<tr>
-    <td class="phase-name">${ph}</td>
+// Zistí, či je dopyt "result" karta (dohodnuté/vybavené) - tie sa nikdy nezoskupujú,
+// vždy ostávajú samostatné (renderReqCard).
+function isResultReq(r) {
+  const { invs, qts } = _specCtx;
+  const inv = invs.find(i => i.request_id === r.id);
+  const qt = inv ? qts.find(q => q.invitation_id === inv.id) : null;
+  return inv?.status === 'selected' || (inv?.status === 'rejected' && !!qt);
+}
+
+// Otvorené dopyty tej istej profesie naprieč fázami (samostatné requests riadky, jeden za fázu -
+// pozri CLAUDE.md "Dopyty") zdieľajú jeden priečinok s podkladmi - zobrazené raz, nie per fáza.
+// groupKey = všetky reqId zoradené a spojené - jeden toggle pre celú skupinu (toggleCard funguje
+// generiky, len prepína membership v _toggledCards podľa stringu, nezávisí od toho, že ide o grupu).
+function renderOpenGroupCard(group) {
+  const { invs, qts } = _specCtx;
+  const groupKey = group.map(r => r.id).sort().join('|');
+  const gid = 'g_' + groupKey.replace(/[^a-z0-9]/gi, '_');
+  const first = group[0];
+  const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
+
+  const rows = [];
+  group.forEach(r => {
+    const inv = invs.find(i => i.request_id === r.id);
+    const qt = inv ? qts.find(q => q.invitation_id === inv.id) : null;
+    const phases = Array.isArray(r.phases) && r.phases.length ? r.phases : [r.profession];
+    const safeId = s => 'sp_' + r.id.replace(/-/g,'') + '_' + s.replace(/[^a-z0-9]/gi,'_');
+    phases.forEach(ph => rows.push({ reqId: r.id, phase: ph, qt, safeId, deadline: r.deadline }));
+  });
+  const hasAnyQuote = rows.some(x => !!x.qt);
+  const defaultOpen = false;
+  const isOpen = _toggledCards.has(groupKey) ? !defaultOpen : defaultOpen;
+  const phBadges = rows.map(x => `<span class="badge">${x.phase}</span>`).join(' ');
+  const earliestDeadline = rows.map(x => x.deadline).filter(Boolean).sort()[0];
+  const deadlineStr = earliestDeadline ? new Date(earliestDeadline + 'T12:00:00').toLocaleDateString('sk-SK') : null;
+  const sharedNotes = rows.find(x => x.qt?.notes)?.qt?.notes || '';
+
+  const priceRows = rows.map(x => `<tr>
+    <td class="phase-name">${x.phase}</td>
     <td><div class="price-inp-wrap">
-      <input type="number" id="${safeId(ph)}" min="0" step="100" placeholder="0" value="${qt?.prices?.[ph] ?? ''}">
+      <input type="number" id="${x.safeId(x.phase)}" min="0" step="100" placeholder="0" value="${x.qt?.prices?.[x.phase] ?? ''}">
       <span>€ bez DPH</span>
     </div></td>
   </tr>`).join('');
 
   return `<div class="req-card">
-    <div class="req-card-hdr" onclick="toggleCard('${r.id}')">
+    <div class="req-card-hdr" onclick="toggleCard('${groupKey}')">
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;color:var(--text2);margin-bottom:5px">${r.profession}</div>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:5px">${first.profession}</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap">${phBadges}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
-        ${deadline ? `<span style="font-size:12px;font-weight:600;color:var(--orange)">⏱ ${deadline}</span>` : ''}
-        ${hasQuote ? '<span class="sent-badge">✓ Ponuka odoslaná</span>' : ''}
+        ${deadlineStr ? `<span style="font-size:12px;font-weight:600;color:var(--orange)">⏱ ${deadlineStr}</span>` : ''}
+        ${hasAnyQuote ? '<span class="sent-badge">✓ Ponuka odoslaná</span>' : ''}
         <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
       </div>
     </div>
     <div style="display:${isOpen ? 'block' : 'none'}">
       <div class="req-card-body">
-        ${r.folder_url || r.folder_url_work ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          ${r.folder_url ? `<a href="${r.folder_url}" target="_blank" class="link-btn">📁 Podklady na nacenenie</a>` : ''}
-          ${r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : ''}
+        ${first.folder_url || first.folder_url_work ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          ${first.folder_url ? `<a href="${first.folder_url}" target="_blank" class="link-btn">📁 Podklady na nacenenie</a>` : ''}
+          ${first.folder_url_work ? `<a href="${first.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : ''}
         </div>` : ''}
-        ${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}
-        ${hasQuote ? '<div class="alert alert-info" style="margin-bottom:14px">Ponuka bola odoslaná. Môžete ju upraviť a znova odoslať.</div>' : ''}
-        <div id="squotemsg_${r.id}"></div>
+        ${first.notes ? `<p class="note" style="margin-bottom:14px">${first.notes}</p>` : ''}
+        ${hasAnyQuote ? '<div class="alert alert-info" style="margin-bottom:14px">Ponuka bola odoslaná. Môžete ju upraviť a znova odoslať.</div>' : ''}
+        <div id="squotemsg_${gid}"></div>
         <table class="price-table">
           <thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead>
           <tbody>${priceRows}</tbody>
         </table>
-        ${(projDl || r.podklady_datum || r.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-          ${projDl ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📅 Termín fázy: <strong>${projDl.toLocaleDateString('sk-SK')}</strong></span>` : ''}
-          ${r.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${fmtD(r.podklady_datum)}</strong></span>` : ''}
-          ${r.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : ''}
+        ${(first.podklady_datum || first.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+          ${first.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${fmtD(first.podklady_datum)}</strong></span>` : ''}
+          ${first.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${fmtD(first.hotovo_datum)}</strong></span>` : ''}
         </div>` : ''}
         <div class="frow">
           <label>Poznámka (voliteľné)</label>
-          <textarea class="finput" id="snotes_${r.id}" rows="2" placeholder="Podmienky, výhrady, otázky...">${qt?.notes || ''}</textarea>
+          <textarea class="finput" id="gnotes_${gid}" rows="2" placeholder="Podmienky, výhrady, otázky...">${sharedNotes}</textarea>
         </div>
-        <button class="submit-btn" onclick="submitSpecQuote('${r.id}')">${hasQuote ? 'Aktualizovať ponuku' : 'Odoslať ponuku'}</button>
+        <button class="submit-btn" onclick="submitSpecQuoteGroup('${groupKey}')">${hasAnyQuote ? 'Aktualizovať ponuku' : 'Odoslať ponuku'}</button>
       </div>
     </div>
   </div>`;
@@ -554,44 +595,51 @@ function toggleCard(reqId) {
 }
 function setSpecFilter(f) { _profFilter = f; _toggledCards.clear(); renderSpecialistView(); }
 
-async function submitSpecQuote(reqId) {
+// Odošle ponuku za všetky fázy jednej zoskupenej karty (jedna profesia, viacero samostatných
+// requests riadkov - jeden per fáza) naraz, so zdieľanou poznámkou. Sekvenčne, nie paralelne -
+// počet fáz na jednu profesiu je bežne 1-3, zložitosť paralelizácie by sa tu neoplatila.
+async function submitSpecQuoteGroup(groupKey) {
   const { spec, reqs, invs, qts } = _specCtx;
-  const req = reqs.find(r => r.id === reqId);
-  const phases = Array.isArray(req?.phases) ? req.phases : [];
-  const safeId = s => 'sp_' + reqId.replace(/-/g,'') + '_' + s.replace(/[^a-z0-9]/gi,'_');
-  const msgEl = document.getElementById('squotemsg_' + reqId);
-
-  const prices = {};
-  phases.forEach(ph => {
-    const v = document.getElementById(safeId(ph))?.value;
-    prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
-  });
-  const notes    = document.getElementById('snotes_' + reqId)?.value.trim() || '';
+  const reqIds = groupKey.split('|');
+  const gid = 'g_' + groupKey.replace(/[^a-z0-9]/gi, '_');
+  const msgEl = document.getElementById('squotemsg_' + gid);
+  const notes = document.getElementById('gnotes_' + gid)?.value.trim() || '';
   const deadline = null; // pole "Váš termín odovzdania" bolo na žiadosť odstránené z formulára
 
-  let inv = invs.find(i => i.request_id === reqId);
-  if (!inv) {
-    const { data: newInv, error: invErr } = await sb.from('invitations')
-      .insert({ request_id: reqId, specialist_id: spec.id, status: 'submitted' })
-      .select().single();
-    if (invErr) { if (msgEl) msgEl.innerHTML = `<div class="alert alert-err">Chyba: ${invErr.message}</div>`; return; }
-    inv = newInv;
-    _specCtx.invs.push(inv);
+  for (const reqId of reqIds) {
+    const req = reqs.find(r => r.id === reqId);
+    const phases = Array.isArray(req?.phases) && req.phases.length ? req.phases : [req?.profession];
+    const safeId = s => 'sp_' + reqId.replace(/-/g,'') + '_' + s.replace(/[^a-z0-9]/gi,'_');
+    const prices = {};
+    phases.forEach(ph => {
+      const v = document.getElementById(safeId(ph))?.value;
+      prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
+    });
+
+    let inv = invs.find(i => i.request_id === reqId);
+    if (!inv) {
+      const { data: newInv, error: invErr } = await sb.from('invitations')
+        .insert({ request_id: reqId, specialist_id: spec.id, status: 'submitted' })
+        .select().single();
+      if (invErr) { if (msgEl) msgEl.innerHTML = `<div class="alert alert-err">Chyba: ${invErr.message}</div>`; return; }
+      inv = newInv;
+      _specCtx.invs.push(inv);
+    }
+
+    const existing = qts.find(q => q.invitation_id === inv.id);
+    const payload = { prices, notes, deadline, submitted_at: new Date().toISOString() };
+    const { error } = existing
+      ? await sb.from('quotes').update(payload).eq('id', existing.id)
+      : await sb.from('quotes').insert({ ...payload, invitation_id: inv.id });
+    if (error) { if (msgEl) msgEl.innerHTML = `<div class="alert alert-err">Chyba: ${error.message}</div>`; return; }
+
+    await sb.from('invitations').update({ status: 'submitted' }).eq('id', inv.id);
+    inv.status = 'submitted';
+    if (existing) { Object.assign(existing, payload); }
+    else { _specCtx.qts.push({ ...payload, invitation_id: inv.id, id: 'tmp' }); }
   }
 
-  const existing = qts.find(q => q.invitation_id === inv.id);
-  const payload = { prices, notes, deadline, submitted_at: new Date().toISOString() };
-  const { error } = existing
-    ? await sb.from('quotes').update(payload).eq('id', existing.id)
-    : await sb.from('quotes').insert({ ...payload, invitation_id: inv.id });
-  if (error) { if (msgEl) msgEl.innerHTML = `<div class="alert alert-err">Chyba: ${error.message}</div>`; return; }
-
-  await sb.from('invitations').update({ status: 'submitted' }).eq('id', inv.id);
-  inv.status = 'submitted';
-  if (existing) { Object.assign(existing, payload); }
-  else { _specCtx.qts.push({ ...payload, invitation_id: inv.id, id: 'tmp' }); }
-
-  _toggledCards.delete(reqId);
+  _toggledCards.delete(groupKey);
   renderSpecialistView();
 }
 
