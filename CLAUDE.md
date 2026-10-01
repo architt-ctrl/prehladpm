@@ -643,7 +643,7 @@ Súvisiaca, zatiaľ neriešená požiadavka: Jozef sa pýtal aj na „zoznam pri
 
 ### Nahratie vyjadrenia priamo investorom/projektantom cez zdieľaný link (📤, 2026-10-01)
 
-**Cieľ (Jozef):** na `vyjadrenia.html` (klientsky zdieľaný link, pozri [[feedback_stable_shared_links]] v pamäti — URL sa nesmie meniť, posiela sa investorovi/projektantom) pridať tlačidlo, ktorým vie investor/projektant sám nahrať ďalšie vyjadrenie priamo do Drive priečinka projektu, bez toho aby musel posielať mail Jozefovi. Zároveň sa má nahraný súbor **hneď** spracovať (OCR+Gemini), nie len čakať na najbližší hodinový trigger.
+**Cieľ (Jozef):** na `vyjadrenia.html` (klientsky zdieľaný link — URL sa nesmie meniť, posiela sa investorovi/projektantom) pridať tlačidlo, ktorým vie investor/projektant sám nahrať ďalšie vyjadrenie priamo do Drive priečinka projektu, bez toho aby musel posielať mail Jozefovi. Zároveň sa má nahraný súbor **hneď** spracovať (OCR+Gemini), nie len čakať na najbližší hodinový trigger.
 
 **`akcia_uploadVyjadrenie`** (`Code.gs`, `{cislo, fileName, mimeType, fileBase64}`): nájde priečinok projektu → `20_KOORDINACIA/VYJADRENIA` (get-or-create cez existujúci `ziskajAlebaVytvorPodpriecinok`, rovnaký vzor ako `spracujProjektVyjadrenia`) → `Utilities.base64Decode` + `createFile` → **hneď zavolá `spracujProjektVyjadrenia(cislo, projFolder, {zostava:3})`** (zdieľaná funkcia, rovnaká ako pri „🔄 Skontrolovať teraz"/hodinovom triggeri) — cursor (`spracovane_vyjadrenia`) zabezpečí, že sa spracuje len tento nový súbor, nie znova staré. Registrované v `doPost` ako `'uploadVyjadrenie'`.
 
