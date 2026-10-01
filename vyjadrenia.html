@@ -35,7 +35,7 @@
     .card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px}
     .card-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
     .organ{font-size:14px;font-weight:600}
-    .cislo-vyj{font-weight:400;color:var(--text3);font-size:13px}
+    .cislo-vyj{display:block;font-weight:400;color:var(--text3);font-size:12px;margin-top:2px}
     .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:9px;white-space:nowrap;flex-shrink:0}
     .b-suhlasne{background:var(--grn-bg);border:1px solid var(--grn-bd);color:var(--green)}
     .b-podmienecne{background:var(--ora-bg);border:1px solid var(--ora-bd);color:var(--orange)}
@@ -128,9 +128,10 @@ function render() {
     const open = singleId ? true : openSet.has(r.id);
     return `<div class="card">
       <div class="card-head">
-        <span class="organ">${esc(r.organ || 'Neznámy pôvodca')}${r.cislo_vyjadrenia ? ` <span class="cislo-vyj">· č. ${esc(r.cislo_vyjadrenia)}</span>` : ''}</span>
+        <span class="organ">${esc(r.organ || 'Neznámy pôvodca')}</span>
         ${badgeHtml(r.stav)}
       </div>
+      ${r.cislo_vyjadrenia ? `<div class="cislo-vyj">č. ${esc(r.cislo_vyjadrenia)}</div>` : ''}
       <div class="meta">
         ${r.datum_dokumentu ? 'Dokument: ' + esc(r.datum_dokumentu) : ''}
         ${r.termin_reakcie ? `<span class="${dlClass(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${esc(r.termin_reakcie)}</span>` : ''}

@@ -3495,9 +3495,10 @@ function renderVyjadreniaModal() {
     <div style="border-bottom:1px solid var(--border);padding:10px 0;display:flex;gap:8px;align-items:flex-start">
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}${r.cislo_vyjadrenia ? ` <span style="font-weight:400;color:var(--text3)">· č. ${r.cislo_vyjadrenia}</span>` : ''}</div>
+          <div style="font-size:13px;font-weight:600">${r.organ || 'Neznámy pôvodca'}</div>
           ${vyjadrenieStavBadge(r.stav)}
         </div>
+        ${r.cislo_vyjadrenia ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">č. ${r.cislo_vyjadrenia}</div>` : ''}
         <div style="font-size:11px;color:var(--text3);margin-top:2px">
           ${r.datum_dokumentu ? 'Dokument: ' + r.datum_dokumentu : ''}
           ${r.termin_reakcie ? `<span style="${vyjadrenieDlStyle(r.termin_reakcie)}">${r.datum_dokumentu ? ' · ' : ''}Termín: ${r.termin_reakcie}</span>` : ''}
