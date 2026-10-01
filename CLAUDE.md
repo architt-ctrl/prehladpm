@@ -900,11 +900,17 @@ Specialist-facing portal. Tri módy podľa URL parametra:
 
 **`renderReqCard(r)`** — zvláda všetky stavy:
 - `selected` alebo `rejected + qt` → result card (zelený/sivý border-left, ✅/ℹ️, rozbaľovateľné ceny + info)
-- ostatné → form card (zadanie cien, termín, poznámka, submit button)
-- `toggleCard(reqId)` — toggle `_openCards` Set, re-render (nahrádza `toggleReqCard` + `toggleResultCard`)
-- `submitSpecQuote(reqId)` — ak invitation neexistuje, vytvorí ju; upsertuje quote; `_openCards.delete(reqId)`; re-render
+- ostatné → form card (zadanie cien, poznámka, submit button)
 - `profCat(p)` — rovnaká logika ako v ponuky.html
 - **Zachovanie open stavu projektov**: pred `innerHTML =` sa uloží `openProjs = Set` z `details[data-proj][open]`; po renderi sa obnoví cez `d.open = true`. Každý `<details>` má `data-proj="${cislo || name}"`. Bez toho by kliknutie na dopyt zbalilo projekt.
+
+**Dohodnuté fázy sú default rozbalené (2026-10-01, Jozef: „nemusí dvakrát rozklikávať"):** result karty (`selected`/`rejected+qt`) sa pri otvorení projektu `<details>` zobrazujú **hneď rozbalené**, bez druhého kliknutia na samotnú kartu — zámerne len pre tieto, otvorené dopyty (formulár na cenu) ostávajú default zbalené ako predtým.
+- `_toggledCards` (premenované z `_openCards`) — set reqId, ktoré **odchýlili sa od svojho defaultu** (nie "sú otvorené", ale "boli prepnuté"). `renderReqCard`: `defaultOpen = status==='selected' || (status==='rejected' && qt)`, `isOpen = _toggledCards.has(r.id) ? !defaultOpen : defaultOpen`. `toggleCard(reqId)` len flipne membership v `_toggledCards`, nemusí vedieť status karty.
+- `submitSpecQuote(reqId)` po úspešnom odoslaní volá `_toggledCards.delete(reqId)` (predtým `_openCards.delete`) — vracia kartu na jej default (zbalenú, keďže formulár vždy default zbalený, aj po odoslaní).
+- `setSpecFilter(f)` čistí `_toggledCards.clear()` pri zmene filtra (predtým `_openCards.clear()`).
+- Overené headless testom: `selected`/`rejected+qt` karta má `display:block` hneď po renderi bez predchádzajúceho kliku; otvorený dopyt (formulár) má `display:none`; kliknutie prepne oba smery správne.
+
+**Formulár na zadanie ceny zjednodušený (2026-10-01, Jozef):** odstránené pole „Váš termín odovzdania" (input `sdl_{reqId}`, editovateľný dátum s auto-výpočtom `req.deadline - 7 dní`) a veta „Ak fázu neponúkate, nechajte pole prázdne." — `submitSpecQuote` teraz vždy ukladá `quotes.deadline = null` (komentár v kóde vysvetľuje prečo, nie tichá zmena). **Platí len pre Mód 2** (trhisko profesistu, `renderReqCard`/`submitSpecQuote`) — Mód 1 (`portal.html?token=UUID`, `renderForm`) má svoje vlastné rovnomenné pole „Váš termín odovzdania" a **ostáva nedotknuté**, Jozef sa pýtal konkrétne na profesistov modal (trhisko).
 
 **Mód 3 — zadanie pre tím:** `portal.html?task=UUID`
 - `initEmployeeView()` — nastaví `document.title = 'Zadanie pre tím'`; načíta `employee_tasks` podľa tokenu → špecialistu → všetky `selected` invitations → requests

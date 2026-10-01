@@ -105,7 +105,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const token = new URLSearchParams(location.search).get('token');
 const specialistToken = new URLSearchParams(location.search).get('specialist');
 const taskToken = new URLSearchParams(location.search).get('task');
-let _specCtx = null, _profFilter = 'own', _openCards = new Set();
+let _specCtx = null, _profFilter = 'own', _toggledCards = new Set();
 
 async function init() {
   if (taskToken) { await initEmployeeView(); return; }
@@ -445,7 +445,10 @@ function renderReqCard(r) {
   const inv = invs.find(i => i.request_id === r.id);
   const qt = inv ? qts.find(q => q.invitation_id === inv.id) : null;
   const status = inv?.status;
-  const isOpen = _openCards.has(r.id);
+  // Dohodnuté (selected) a vybavené (rejected+qt) karty sú rozbalené default - Jozef: "nech nemusí
+  // dvakrát rozklikávať" (projekt → fázu). Ostatné (otvorené dopyty, formulár na cenu) default zbalené.
+  const defaultOpen = status === 'selected' || (status === 'rejected' && !!qt);
+  const isOpen = _toggledCards.has(r.id) ? !defaultOpen : defaultOpen;
   const phases = Array.isArray(r.phases) ? r.phases : [];
   const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
   const phBadges = phases.map(p => `<span class="badge">${p}</span>`).join(' ');
@@ -497,8 +500,6 @@ function renderReqCard(r) {
   const deadline = r.deadline ? new Date(r.deadline + 'T12:00:00').toLocaleDateString('sk-SK') : null;
   const safeId = s => 'sp_' + r.id.replace(/-/g,'') + '_' + s.replace(/[^a-z0-9]/gi,'_');
   const projDl = r.deadline ? new Date(r.deadline + 'T12:00:00') : null;
-  const autoSpecDl = projDl ? new Date(projDl.getTime() - 7*24*3600000).toISOString().split('T')[0] : '';
-  const specDlVal = qt?.deadline || autoSpecDl;
   const priceRows = phases.map(ph => `<tr>
     <td class="phase-name">${ph}</td>
     <td><div class="price-inp-wrap">
@@ -532,16 +533,11 @@ function renderReqCard(r) {
           <thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead>
           <tbody>${priceRows}</tbody>
         </table>
-        <p class="hint" style="margin-bottom:14px">Ak fázu neponúkate, nechajte pole prázdne.</p>
         ${(projDl || r.podklady_datum || r.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
           ${projDl ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📅 Termín fázy: <strong>${projDl.toLocaleDateString('sk-SK')}</strong></span>` : ''}
           ${r.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${fmtD(r.podklady_datum)}</strong></span>` : ''}
           ${r.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : ''}
         </div>` : ''}
-        <div class="frow">
-          <label>Váš termín odovzdania${projDl ? ' <span style="font-size:11px;color:var(--text3);font-weight:400">(týždeň pred odovzdaním)</span>' : ''}</label>
-          <input class="finput" type="date" id="sdl_${r.id}" value="${specDlVal}">
-        </div>
         <div class="frow">
           <label>Poznámka (voliteľné)</label>
           <textarea class="finput" id="snotes_${r.id}" rows="2" placeholder="Podmienky, výhrady, otázky...">${qt?.notes || ''}</textarea>
@@ -553,10 +549,10 @@ function renderReqCard(r) {
 }
 
 function toggleCard(reqId) {
-  if (_openCards.has(reqId)) _openCards.delete(reqId); else _openCards.add(reqId);
+  if (_toggledCards.has(reqId)) _toggledCards.delete(reqId); else _toggledCards.add(reqId);
   renderSpecialistView();
 }
-function setSpecFilter(f) { _profFilter = f; _openCards.clear(); renderSpecialistView(); }
+function setSpecFilter(f) { _profFilter = f; _toggledCards.clear(); renderSpecialistView(); }
 
 async function submitSpecQuote(reqId) {
   const { spec, reqs, invs, qts } = _specCtx;
@@ -571,7 +567,7 @@ async function submitSpecQuote(reqId) {
     prices[ph] = v !== '' && v != null ? parseFloat(v) : null;
   });
   const notes    = document.getElementById('snotes_' + reqId)?.value.trim() || '';
-  const deadline = document.getElementById('sdl_' + reqId)?.value || null;
+  const deadline = null; // pole "Váš termín odovzdania" bolo na žiadosť odstránené z formulára
 
   let inv = invs.find(i => i.request_id === reqId);
   if (!inv) {
@@ -595,7 +591,7 @@ async function submitSpecQuote(reqId) {
   if (existing) { Object.assign(existing, payload); }
   else { _specCtx.qts.push({ ...payload, invitation_id: inv.id, id: 'tmp' }); }
 
-  _openCards.delete(reqId);
+  _toggledCards.delete(reqId);
   renderSpecialistView();
 }
 
