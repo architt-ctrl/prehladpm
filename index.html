@@ -2226,6 +2226,21 @@ async function renderDopytyModal() {
 function buildDopytDetailHtml(r) {
   const c = _dopytyCtx.invCache[r.id] || { invs: [], quotes: [] };
   const faza = _dopytyCtx.faza;
+  const datesHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--border)">
+    <div style="flex:1;min-width:110px">
+      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Termín fázy</label>
+      <input type="date" id="dp-deadline-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.deadline || ''}">
+    </div>
+    <div style="flex:1;min-width:110px">
+      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Podklady dáme</label>
+      <input type="date" id="dp-podklady-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.podklady_datum || ''}">
+    </div>
+    <div style="flex:1;min-width:110px">
+      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Chceme výsledok</label>
+      <input type="date" id="dp-hotovo-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.hotovo_datum || ''}">
+    </div>
+    <button onclick="saveDopytDates('${r.id}')" style="align-self:flex-end;background:var(--text);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">Uložiť termíny</button>
+  </div>`;
   const rows = c.invs.map(inv => {
     const sp = (specialistsList||[]).find(s => s.id === inv.specialist_id);
     const q = c.quotes.find(q => q.invitation_id === inv.id);
@@ -2288,6 +2303,7 @@ function buildDopytDetailHtml(r) {
   </div>`;
 
   return `
+    ${datesHtml}
     ${rows}
     <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px">+ Zapísať dohodnuté ručne (napr. cena prišla mailom)</div>
@@ -2306,6 +2322,23 @@ function buildDopytDetailHtml(r) {
         <button onclick="deleteDopyt('${r.id}')" style="margin-left:auto;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">✕ Vymazať dopyt</button>
       </div>
     </div>`;
+}
+
+// Termíny (deadline/podklady_datum/hotovo_datum) sa pri vytvorení dopytu cez batch formulár
+// nastavia len raz (podklady_datum spoločne pre fázu, hotovo_datum auto z termínu projektu, deadline
+// vôbec) - Jozef potreboval vedieť ich dodatočne upraviť priamo v tomto modáli, bez prechodu do
+// staršieho ponuky.html editora, ktorý tieto nové (cez index.html vytvorené) dopyty nemusí ukazovať.
+async function saveDopytDates(reqId) {
+  const deadline = document.getElementById('dp-deadline-' + reqId)?.value || null;
+  const podklady = document.getElementById('dp-podklady-' + reqId)?.value || null;
+  const hotovo = document.getElementById('dp-hotovo-' + reqId)?.value || null;
+  const { error } = await sb.from('requests').update({ deadline, podklady_datum: podklady, hotovo_datum: hotovo }).eq('id', reqId);
+  if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
+  const r = _dopytyCtx.reqs.find(x => x.id === reqId);
+  if (r) { r.deadline = deadline; r.podklady_datum = podklady; r.hotovo_datum = hotovo; }
+  showToast('Termíny uložené ✓', 'ok');
+  const detailEl = document.getElementById('dopyt-detail-' + reqId);
+  if (detailEl && r) detailEl.innerHTML = buildDopytDetailHtml(r);
 }
 
 async function selectDopytWinner(invId, reqId) {

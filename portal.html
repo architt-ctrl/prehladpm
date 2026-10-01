@@ -78,8 +78,7 @@
     .filter-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer}
     .filter-btn.on{background:var(--text);color:#f5f3ef;border-color:transparent}
     .req-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:10px}
-    .req-card-hdr{padding:14px 18px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;cursor:pointer;user-select:none}
-    .req-card-hdr:hover{background:var(--bg3)}
+    .req-card-hdr{padding:14px 18px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
     .req-card-body{padding:14px 18px 18px;border-top:1px solid var(--border)}
     .sent-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:8px;font-size:11px;font-weight:500;background:var(--grn-bg);color:var(--green);border:1px solid var(--grn-bd)}
   </style>
@@ -105,7 +104,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 const token = new URLSearchParams(location.search).get('token');
 const specialistToken = new URLSearchParams(location.search).get('specialist');
 const taskToken = new URLSearchParams(location.search).get('task');
-let _specCtx = null, _profFilter = 'own', _toggledCards = new Set();
+let _specCtx = null, _profFilter = 'own';
 
 async function init() {
   if (taskToken) { await initEmployeeView(); return; }
@@ -455,10 +454,6 @@ function renderReqCard(r) {
   const inv = invs.find(i => i.request_id === r.id);
   const qt = inv ? qts.find(q => q.invitation_id === inv.id) : null;
   const status = inv?.status;
-  // Dohodnuté (selected) a vybavené (rejected+qt) karty sú rozbalené default - Jozef: "nech nemusí
-  // dvakrát rozklikávať" (projekt → fázu). Ostatné (otvorené dopyty, formulár na cenu) default zbalené.
-  const defaultOpen = status === 'selected' || (status === 'rejected' && !!qt);
-  const isOpen = _toggledCards.has(r.id) ? !defaultOpen : defaultOpen;
   const phases = Array.isArray(r.phases) ? r.phases : [];
   const fmtD = d => new Date(d + 'T12:00:00').toLocaleDateString('sk-SK');
   const phBadges = phases.map(p => `<span class="badge">${p}</span>`).join(' ');
@@ -471,36 +466,31 @@ function renderReqCard(r) {
       return `<tr><td class="phase-name">${ph}</td><td style="text-align:right;font-weight:500">${v != null ? Number(v).toLocaleString('sk-SK') + ' € bez DPH' : '—'}</td></tr>`;
     }).join('') : '';
     return `<div class="req-card" style="border-left:3px solid ${sel ? '#1e7a4a' : '#c8bfb5'}">
-      <div class="req-card-hdr" onclick="toggleCard('${r.id}')">
+      <div class="req-card-hdr">
         <div style="flex:1;min-width:0">
           <div style="font-size:13px;color:var(--text2);margin-bottom:5px">${r.profession}</div>
           <div style="display:flex;gap:5px;flex-wrap:wrap">${phBadges}</div>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-          <span style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'}">
-            ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
-          </span>
-          <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
-        </div>
+        <span style="font-size:13px;font-weight:600;color:${sel ? '#1e7a4a' : 'var(--text3)'};flex-shrink:0">
+          ${sel ? '✅ Boli ste vybraný' : 'ℹ️ Vybraný bol iný projektant'}
+        </span>
       </div>
-      <div style="display:${isOpen ? 'block' : 'none'}">
-        <div class="req-card-body">
-          ${sel ? (() => {
-            const contact = r.project_cislo ? contacts?.[r.project_cislo] : null;
-            const infoItems = [
-              r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
-              r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
-              r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
-            ].filter(Boolean);
-            const contactLine = contact?.name
-              ? `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Zodpovedný projektant: <strong>${contact.name}</strong>${contact.email ? ` · <a href="mailto:${contact.email}" style="color:inherit">${contact.email}</a>` : ''}</div>`
-              : '';
-            return `${contactLine}${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
-          })() : ''}
-          ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
-            <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
-          ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
-        </div>
+      <div class="req-card-body">
+        ${sel ? (() => {
+          const contact = r.project_cislo ? contacts?.[r.project_cislo] : null;
+          const infoItems = [
+            r.folder_url_work ? `<a href="${r.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : null,
+            r.podklady_datum  ? `<span style="font-size:13px;color:var(--text2)">Podklady dostanete: <strong>${fmtD(r.podklady_datum)}</strong></span>` : null,
+            r.hotovo_datum    ? `<span style="font-size:13px;color:var(--text2)">Váš diel hotový do: <strong>${fmtD(r.hotovo_datum)}</strong></span>` : null,
+          ].filter(Boolean);
+          const contactLine = contact?.name
+            ? `<div style="font-size:13px;color:var(--text2);margin-bottom:10px">Zodpovedný projektant: <strong>${contact.name}</strong>${contact.email ? ` · <a href="mailto:${contact.email}" style="color:inherit">${contact.email}</a>` : ''}</div>`
+            : '';
+          return `${contactLine}${infoItems.length ? `<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px">${infoItems.join('')}</div>` : ''}${r.notes ? `<p class="note" style="margin-bottom:14px">${r.notes}</p>` : ''}`;
+        })() : ''}
+        ${qt && priceRows ? `<h3 style="font-size:14px;font-weight:600;margin-bottom:10px">Vaša odoslaná ponuka</h3>
+          <table class="price-table"><thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead><tbody>${priceRows}</tbody></table>` : ''}
+        ${qt?.notes ? `<p style="font-size:13px;color:var(--text2);margin-top:8px">Poznámka: ${qt.notes}</p>` : ''}
       </div>
     </div>`;
   }
@@ -517,8 +507,7 @@ function isResultReq(r) {
 
 // Otvorené dopyty tej istej profesie naprieč fázami (samostatné requests riadky, jeden za fázu -
 // pozri CLAUDE.md "Dopyty") zdieľajú jeden priečinok s podkladmi - zobrazené raz, nie per fáza.
-// groupKey = všetky reqId zoradené a spojené - jeden toggle pre celú skupinu (toggleCard funguje
-// generiky, len prepína membership v _toggledCards podľa stringu, nezávisí od toho, že ide o grupu).
+// groupKey = všetky reqId zoradené a spojené - identifikuje skupinu pri submite (submitSpecQuoteGroup).
 function renderOpenGroupCard(group) {
   const { invs, qts } = _specCtx;
   const groupKey = group.map(r => r.id).sort().join('|');
@@ -535,8 +524,6 @@ function renderOpenGroupCard(group) {
     phases.forEach(ph => rows.push({ reqId: r.id, phase: ph, qt, safeId, deadline: r.deadline }));
   });
   const hasAnyQuote = rows.some(x => !!x.qt);
-  const defaultOpen = false;
-  const isOpen = _toggledCards.has(groupKey) ? !defaultOpen : defaultOpen;
   const phBadges = rows.map(x => `<span class="badge">${x.phase}</span>`).join(' ');
   const earliestDeadline = rows.map(x => x.deadline).filter(Boolean).sort()[0];
   const deadlineStr = earliestDeadline ? new Date(earliestDeadline + 'T12:00:00').toLocaleDateString('sk-SK') : null;
@@ -551,7 +538,7 @@ function renderOpenGroupCard(group) {
   </tr>`).join('');
 
   return `<div class="req-card">
-    <div class="req-card-hdr" onclick="toggleCard('${groupKey}')">
+    <div class="req-card-hdr">
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;color:var(--text2);margin-bottom:5px">${first.profession}</div>
         <div style="display:flex;gap:5px;flex-wrap:wrap">${phBadges}</div>
@@ -559,41 +546,34 @@ function renderOpenGroupCard(group) {
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
         ${deadlineStr ? `<span style="font-size:12px;font-weight:600;color:var(--orange)">⏱ ${deadlineStr}</span>` : ''}
         ${hasAnyQuote ? '<span class="sent-badge">✓ Ponuka odoslaná</span>' : ''}
-        <span style="font-size:16px;color:var(--text3)">${isOpen ? '▲' : '▼'}</span>
       </div>
     </div>
-    <div style="display:${isOpen ? 'block' : 'none'}">
-      <div class="req-card-body">
-        ${first.folder_url || first.folder_url_work ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          ${first.folder_url ? `<a href="${first.folder_url}" target="_blank" class="link-btn">📁 Podklady na nacenenie</a>` : ''}
-          ${first.folder_url_work ? `<a href="${first.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : ''}
-        </div>` : ''}
-        ${first.notes ? `<p class="note" style="margin-bottom:14px">${first.notes}</p>` : ''}
-        ${hasAnyQuote ? '<div class="alert alert-info" style="margin-bottom:14px">Ponuka bola odoslaná. Môžete ju upraviť a znova odoslať.</div>' : ''}
-        <div id="squotemsg_${gid}"></div>
-        <table class="price-table">
-          <thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead>
-          <tbody>${priceRows}</tbody>
-        </table>
-        ${(first.podklady_datum || first.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-          ${first.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${fmtD(first.podklady_datum)}</strong></span>` : ''}
-          ${first.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${fmtD(first.hotovo_datum)}</strong></span>` : ''}
-        </div>` : ''}
-        <div class="frow">
-          <label>Poznámka (voliteľné)</label>
-          <textarea class="finput" id="gnotes_${gid}" rows="2" placeholder="Podmienky, výhrady, otázky...">${sharedNotes}</textarea>
-        </div>
-        <button class="submit-btn" onclick="submitSpecQuoteGroup('${groupKey}')">${hasAnyQuote ? 'Aktualizovať ponuku' : 'Odoslať ponuku'}</button>
+    <div class="req-card-body">
+      ${first.folder_url || first.folder_url_work ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        ${first.folder_url ? `<a href="${first.folder_url}" target="_blank" class="link-btn">📁 Podklady na nacenenie</a>` : ''}
+        ${first.folder_url_work ? `<a href="${first.folder_url_work}" target="_blank" class="link-btn">📂 Podklady na vypracovanie</a>` : ''}
+      </div>` : ''}
+      ${first.notes ? `<p class="note" style="margin-bottom:14px">${first.notes}</p>` : ''}
+      ${hasAnyQuote ? '<div class="alert alert-info" style="margin-bottom:14px">Ponuka bola odoslaná. Môžete ju upraviť a znova odoslať.</div>' : ''}
+      <div id="squotemsg_${gid}"></div>
+      <table class="price-table">
+        <thead><tr><th>Fáza</th><th style="text-align:right">Cena</th></tr></thead>
+        <tbody>${priceRows}</tbody>
+      </table>
+      ${(first.podklady_datum || first.hotovo_datum) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
+        ${first.podklady_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">📁 Podklady: <strong>${fmtD(first.podklady_datum)}</strong></span>` : ''}
+        ${first.hotovo_datum ? `<span style="background:var(--bg2);padding:4px 10px;border-radius:6px;font-size:13px">✅ Výsledok: <strong>${fmtD(first.hotovo_datum)}</strong></span>` : ''}
+      </div>` : ''}
+      <div class="frow">
+        <label>Poznámka (voliteľné)</label>
+        <textarea class="finput" id="gnotes_${gid}" rows="2" placeholder="Podmienky, výhrady, otázky...">${sharedNotes}</textarea>
       </div>
+      <button class="submit-btn" onclick="submitSpecQuoteGroup('${groupKey}')">${hasAnyQuote ? 'Aktualizovať ponuku' : 'Odoslať ponuku'}</button>
     </div>
   </div>`;
 }
 
-function toggleCard(reqId) {
-  if (_toggledCards.has(reqId)) _toggledCards.delete(reqId); else _toggledCards.add(reqId);
-  renderSpecialistView();
-}
-function setSpecFilter(f) { _profFilter = f; _toggledCards.clear(); renderSpecialistView(); }
+function setSpecFilter(f) { _profFilter = f; renderSpecialistView(); }
 
 // Odošle ponuku za všetky fázy jednej zoskupenej karty (jedna profesia, viacero samostatných
 // requests riadkov - jeden per fáza) naraz, so zdieľanou poznámkou. Sekvenčne, nie paralelne -
@@ -639,7 +619,6 @@ async function submitSpecQuoteGroup(groupKey) {
     else { _specCtx.qts.push({ ...payload, invitation_id: inv.id, id: 'tmp' }); }
   }
 
-  _toggledCards.delete(groupKey);
   renderSpecialistView();
 }
 
