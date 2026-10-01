@@ -155,6 +155,25 @@ function toggleNotesOpen(id) {
   render();
 }
 
+// Rovnaká logika ako sortVyjadrenia v index.html - musí ostať zhodná, inak sa poradie v zdieľanom
+// linku rozíde s interným modálom. Pripnuté > vyžaduje dopracovanie PD (podľa najbližšieho termínu)
+// > pripomienky zapracované > ostatné podľa dátumu dokumentu zostupne.
+function sortVyjadrenia(list) {
+  const rank = r => {
+    if (r.pripnute) return 0;
+    const st = pdStatus(r);
+    if (st === 'pending') return 1;
+    if (st === 'done') return 2;
+    return 3;
+  };
+  return list.slice().sort((a, b) => {
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 1) return (a.termin_reakcie || '9999-99-99').localeCompare(b.termin_reakcie || '9999-99-99');
+    return (b.datum_dokumentu || '').localeCompare(a.datum_dokumentu || '');
+  });
+}
+
 function render() {
   const main = document.getElementById('main');
   if (!rows.length) {
@@ -212,7 +231,7 @@ async function init() {
     document.getElementById('main').innerHTML = '<div class="empty err">Nepodarilo sa načítať: ' + esc(error.message) + '</div>';
     return;
   }
-  rows = data || [];
+  rows = sortVyjadrenia(data || []);
   const ids = rows.map(r => r.id);
   notesByVyjadrenie = {};
   if (ids.length) {
