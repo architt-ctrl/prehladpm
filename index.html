@@ -5028,6 +5028,8 @@ function buildCaflouTasksHtml(cislo) {
     const fazaTag = getTaskFazaTag(t);
     const personName = isExt ? specName : assignee;
     const personColor = specName ? 'var(--green)' : 'var(--text3)';
+    const collabIds = Array.isArray(t.user_ids) ? t.user_ids : [];
+    const collabNames = collabIds.map(uid => CAFLOU_USERS[uid] || `uid:${uid}`);
     const statusOpts = CAFLOU_TASK_STATUS_ORDER.map(s =>
       `<option value="${s}"${s === t.task_status_name ? ' selected' : ''}>${s}</option>`).join('');
     const fazaOpts = `<option value="">— bez typu —</option>` +
@@ -5069,6 +5071,7 @@ function buildCaflouTasksHtml(cislo) {
             ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
             : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
         ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
+        ${collabNames.length ? `<span title="Spolupracovníci: ${collabNames.join(', ')}" style="font-size:9px;color:var(--text3);flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:0 5px;white-space:nowrap">+${collabNames.length}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
         ${isExt ? (taskEmailCache[String(t.id)]
@@ -5105,6 +5108,12 @@ function buildCaflouTasksHtml(cislo) {
           <select id="tfaza-${editKey}" class="pd-sel" style="font-size:11px;flex-shrink:0" onclick="event.stopPropagation()">${fazaOpts}</select>
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:11px;color:var(--text3);flex-shrink:0;white-space:nowrap">Spolupracovníci:</span>
+          <select id="tcollab-${editKey}" multiple size="3" class="pd-sel" style="flex:1;font-size:11px" onclick="event.stopPropagation()">
+            ${Object.entries(CAFLOU_USERS).map(([id,n]) => `<option value="${id}"${collabIds.includes(Number(id))?' selected':''}>${n}</option>`).join('')}
+          </select>
         </div>
         ${(() => {
           const splitProfs = s => (s.profession||'').split(',').map(p=>p.trim()).filter(Boolean);
@@ -5323,6 +5332,8 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   const name  = document.getElementById('tn-' + key)?.value.trim();
   const uid   = document.getElementById('tu-' + key)?.value;
   const date  = document.getElementById('td-' + key)?.value;
+  const collabEl = document.getElementById('tcollab-' + key);
+  const collabIds = collabEl ? Array.from(collabEl.selectedOptions).map(o => parseInt(o.value)) : undefined;
   const extBtn = document.getElementById('ttype-' + key);
   const newExt = extBtn?.dataset.ext === '1';
   const fazaVal = document.getElementById('tfaza-' + key)?.value || null;
@@ -5353,6 +5364,7 @@ async function saveCaflouTaskEdit(cislo, task_id) {
   }
   if (name) t.name = name;
   t.target_user_id = uid ? parseInt(uid) : null;
+  if (collabIds !== undefined) t.user_ids = collabIds;
   t.end_time = date ? date + 'T17:00:00+02:00' : null;
   const harmBtn = document.getElementById('tharmon-' + key);
   const newHarmon = harmBtn ? harmBtn.dataset.on === '1' : (t.tags || []).includes('harmon');
@@ -5368,6 +5380,7 @@ async function saveCaflouTaskEdit(cislo, task_id) {
       body: JSON.stringify({ task: {
         ...(name ? { name } : {}),
         ...(uid ? { target_user_id: parseInt(uid) } : { target_user_id: null }),
+        ...(collabIds !== undefined ? { user_ids: collabIds } : {}),
         ...(date ? { end_time: date + 'T17:00:00+02:00' } : { end_time: null }),
         ...(descHtml !== undefined ? { description: descHtml } : {}),
         tags: t.tags,
