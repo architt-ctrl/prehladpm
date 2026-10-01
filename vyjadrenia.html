@@ -63,11 +63,9 @@
     .pozn-item{font-size:12px;color:var(--text2);padding:3px 0;border-top:1px solid var(--border);display:flex;gap:6px}
     .pozn-date{color:var(--text3);flex-shrink:0;font-size:11px}
     .upload-card{max-width:720px;margin:16px auto 0;padding:0 16px}
-    .upload-inner{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
-    .upload-title{font-size:13px;font-weight:600;margin-bottom:8px}
     .upload-btn{background:var(--text);color:#f5f3ef;border:none;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)}
     .upload-btn:disabled{opacity:.5;cursor:default}
-    .upload-status{font-size:12px;color:var(--text2);margin-top:8px}
+    .upload-status{font-size:12px;color:var(--text2);margin-top:6px}
     .upload-status.err{color:var(--red)}
     .upload-status.ok{color:var(--green)}
   </style>
@@ -83,12 +81,9 @@
 </div>
 
 <div class="upload-card" id="uploadCard" style="display:none">
-  <div class="upload-inner">
-    <div class="upload-title">Nahrať nové vyjadrenie</div>
-    <input type="file" id="uploadFile" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" capture="environment" style="display:none" onchange="onUploadFile()">
-    <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('uploadFile').click()">📤 Vybrať súbor a nahrať</button>
-    <div class="upload-status" id="uploadStatus"></div>
-  </div>
+  <input type="file" id="uploadFile" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" capture="environment" style="display:none" onchange="onUploadFile()">
+  <button class="upload-btn" id="uploadBtn" onclick="document.getElementById('uploadFile').click()">Nahrať vyjadrenie</button>
+  <div class="upload-status" id="uploadStatus"></div>
 </div>
 
 <div class="main" id="main">
