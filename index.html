@@ -2212,14 +2212,15 @@ async function renderDopytyModal() {
   // vytvárania nových dopytov (Jozef: "termín budem nastavovať pre všetkých naraz") - panel je
   // vždy navrchu, mimo "+ Pridať dopyt" formulára. Predvyplnenie: existujúca hodnota z ktoréhokoľvek
   // dopytu tejto fázy (sú zdieľané, tak stačí prvý), inak harmonogram/dnes pre podklady a
-  // "náš termín fázy" (p.deadline) mínus 2 týždne pre deadline.
-  const p = projects.find(x => x.cislo === cislo);
+  // Termín-podklady + 3 týždne pre deadline (2026-10-02, Jozef: pôvodný default "náš termín fázy
+  // mínus 2 týždne" vedel vyjsť na nezmyselný dátum, keď bol p.deadline vzdialený/chybný - väzba na
+  // Termín-podklady je spoľahlivejšia, lebo ten je už sám osebe rozumne predvyplnený).
   const harmDate = await getHarmPodkladyDatum(cislo, faza);
   const todayStr = new Date().toISOString().split('T')[0];
   const existingPodklady = fazaReqs.find(r => r.podklady_datum)?.podklady_datum;
   const existingDeadline = fazaReqs.find(r => r.hotovo_datum)?.hotovo_datum;
   const podkladyVal = existingPodklady || harmDate || todayStr;
-  const deadlineVal = existingDeadline || (p?.deadline ? new Date(p.deadline.getTime() - 14*86400000).toISOString().split('T')[0] : '');
+  const deadlineVal = existingDeadline || new Date(new Date(podkladyVal).getTime() + 21*86400000).toISOString().split('T')[0];
 
   const terminyPanel = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">
     <div style="flex:1;min-width:120px">
