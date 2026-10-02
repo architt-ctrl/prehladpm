@@ -1112,23 +1112,6 @@ nav {
   </div>
 </div>
 
-<!-- MODAL – PROJEKT (pridať/upraviť) -->
-<div class="overlay hidden" id="modal">
-  <div class="modal">
-    <h3 id="modalTitle">Projekt</h3>
-    <div class="mfields">
-      <div class="mf"><label>Číslo projektu</label><input id="mCislo" placeholder="24-031"></div>
-      <div class="mf full"><label>Názov projektu</label><input id="mNazov" placeholder="Bytový dom Nitra…"></div>
-      <div class="mf"><label>Projektant</label><input id="mProjectant" placeholder="Novák J."></div>
-      <div class="mf"><label>Deadline</label><input type="date" id="mDeadline"></div>
-    </div>
-    <div class="mactions">
-      <button class="btn-ghost" onclick="closeModal()">Zrušiť</button>
-      <button class="btn-primary" onclick="saveProject()">Uložiť</button>
-    </div>
-  </div>
-</div>
-
 <!-- MODAL – NOVÁ ÚLOHA -->
 <div class="overlay hidden" id="ulohaModal">
   <div class="modal">
@@ -3194,7 +3177,6 @@ function parseCaflouProject(p) {
     podfaza,
     podpodfaza:     '',
     projektant:     '',
-    lopta:          '',
     caflou_id:      p.id,
     caflou_task_ids: p.task_ids || [],
     caflou_status:  p.project_status_name || '',
@@ -3361,12 +3343,12 @@ function loadDemo() {
   const t = new Date(); t.setHours(0,0,0,0);
   const d = n => { const x=new Date(t); x.setDate(x.getDate()+n); return x; };
   projects = [
-    {cislo:'24-001',nazov:'Bytový dom Nitra',faza:'Projekcia',podfaza:'Projekt stavby',podpodfaza:'Koordinácia s profesiami',projektant:'Novák',lopta:'Klient',deadline:d(5),dniDead:5},
-    {cislo:'24-002',nazov:'RD Trenčín – Kubíčková',faza:'Inžiniering',podfaza:'',podpodfaza:'',projektant:'Horváth',lopta:'',deadline:d(28),dniDead:28},
-    {cislo:'24-003',nazov:'SSD Bratislava – Lamač',faza:'Projekcia',podfaza:'Stavebný zámer',podpodfaza:'Dopracovanie dokumentácie',projektant:'Novák',lopta:'PM',deadline:d(3),dniDead:3},
-    {cislo:'24-004',nazov:'Interiér Trnava',faza:'Štúdia',podfaza:'',podpodfaza:'',projektant:'Horváth',lopta:'Klient',deadline:d(2),dniDead:2},
-    {cislo:'23-001',nazov:'Školka Viničné',faza:'Archív',podfaza:'',podpodfaza:'',projektant:'Erik',lopta:'',deadline:null,dniDead:null},
-    {cislo:'23-002',nazov:'BD Sv Anton',faza:'Archív',podfaza:'',podpodfaza:'',projektant:'',lopta:'',deadline:null,dniDead:null},
+    {cislo:'24-001',nazov:'Bytový dom Nitra',faza:'Projekcia',podfaza:'Projekt stavby',podpodfaza:'Koordinácia s profesiami',projektant:'Novák',deadline:d(5),dniDead:5},
+    {cislo:'24-002',nazov:'RD Trenčín – Kubíčková',faza:'Inžiniering',podfaza:'',podpodfaza:'',projektant:'Horváth',deadline:d(28),dniDead:28},
+    {cislo:'24-003',nazov:'SSD Bratislava – Lamač',faza:'Projekcia',podfaza:'Stavebný zámer',podpodfaza:'Dopracovanie dokumentácie',projektant:'Novák',deadline:d(3),dniDead:3},
+    {cislo:'24-004',nazov:'Interiér Trnava',faza:'Štúdia',podfaza:'',podpodfaza:'',projektant:'Horváth',deadline:d(2),dniDead:2},
+    {cislo:'23-001',nazov:'Školka Viničné',faza:'Archív',podfaza:'',podpodfaza:'',projektant:'Erik',deadline:null,dniDead:null},
+    {cislo:'23-002',nazov:'BD Sv Anton',faza:'Archív',podfaza:'',podpodfaza:'',projektant:'',deadline:null,dniDead:null},
   ];
   renderAll();
 }
@@ -3401,10 +3383,6 @@ function renderProjects() {
               ${ifcIconHtml(p.cislo)}
               ${templateFolderIconHtml(p.cislo)}
               ${vyjadreniaIconHtml(p.cislo)}
-              <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
-                style="background:none;border:1px solid var(--border);border-radius:5px;
-                width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
-                display:flex;align-items:center;justify-content:center;flex-shrink:0;">✎</button>
             </div>
             <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>
           </div>`;
@@ -4239,10 +4217,6 @@ function projRowHtml(p) {
       ${ifcIconHtml(p.cislo)}
       ${templateFolderIconHtml(p.cislo)}
       ${vyjadreniaIconHtml(p.cislo)}
-      <button onclick="openEdit('${p.cislo}');event.stopPropagation();" title="Upraviť projekt"
-        style="background:none;border:1px solid var(--border);border-radius:5px;
-        width:28px;height:28px;cursor:pointer;font-size:14px;color:var(--text3);
-        display:flex;align-items:center;justify-content:center;flex-shrink:0;">✎</button>
     </div>
     <div class="proj-detail" id="detail-${p.cislo}">${buildDetailHtml(p)}</div>
   </div>`;
@@ -4255,7 +4229,6 @@ const PODFAZY = {
 
 function buildDetailHtml(p) {
   const denniky = (dennikMap[p.cislo] || []);
-  const lopta = p.lopta && ['PM','Šéf','Klient'].includes(p.lopta) ? p.lopta : '';
   const podfazyOpts = PODFAZY[p.podfaza] || [];
   return `
   <div class="pd-section">
@@ -4272,11 +4245,6 @@ function buildDetailHtml(p) {
     </div>
   </div>
   <div class="pd-section">
-    <div class="pd-label">Lopta</div>
-    <select class="pd-sel" onchange="saveProjLopta('${p.cislo}',this.value)">
-      <option value="">—</option>
-      ${['PM','Šéf','Klient'].map(l=>`<option${lopta===l?' selected':''}>${l}</option>`).join('')}
-    </select>
     ${p.faza!=='Archív'?`
     <select class="pd-sel" onchange="saveProjStav('${p.cislo}',this.value)">
       <option value="pripravovany"${(stavMap[p.cislo]||'pripravovany')==='pripravovany'?' selected':''}>Pripravovaný</option>
@@ -4685,11 +4653,6 @@ async function saveProjCaflouStatus(cislo, caflou_id, statusVal) {
   }
   showToast('Fáza uložená ✓', 'ok');
   renderProjects();
-}
-
-function saveProjLopta(cislo, val) {
-  const p = projects.find(x=>x.cislo===cislo); if (!p) return;
-  p.lopta = val;
 }
 
 async function saveProjStav(cislo, val) {
@@ -6036,48 +5999,6 @@ function openUlohaForm(cislo) {
   document.getElementById('ulohaModal')._mail = null;
 }
 
-// ── MODAL ─────────────────────────────────────────────────────────────────
-function openAddModal() {
-  document.getElementById('modalTitle').textContent = 'Nový projekt';
-  ['mCislo','mNazov','mProjectant'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('mDeadline').value='';
-  document.getElementById('modal').classList.remove('hidden');
-}
-
-function openEdit(cislo) {
-  const p = projects.find(x=>x.cislo===cislo); if (!p) return;
-  document.getElementById('modalTitle').textContent = p.cislo;
-  document.getElementById('mCislo').value      = p.cislo;
-  document.getElementById('mNazov').value      = p.nazov;
-  document.getElementById('mProjectant').value = p.projektant||'';
-  if (p.deadline) document.getElementById('mDeadline').value = p.deadline.toISOString().split('T')[0];
-  else document.getElementById('mDeadline').value = '';
-  document.getElementById('modal').classList.remove('hidden');
-}
-
-function closeModal() { document.getElementById('modal').classList.add('hidden'); }
-
-function saveProject() {
-  const cislo = document.getElementById('mCislo').value.trim();
-  if (!cislo) { showToast('Zadaj číslo projektu','err'); return; }
-  const t = new Date(); t.setHours(0,0,0,0);
-  const dl = document.getElementById('mDeadline').value;
-  const deadline = dl ? new Date(dl) : null;
-  const stary = projects.find(p=>p.cislo===cislo);
-  const proj = {
-    ...(stary || { faza: activeFaza, podfaza:'', podpodfaza:'', lopta:'' }),
-    cislo,
-    nazov:      document.getElementById('mNazov').value,
-    projektant: document.getElementById('mProjectant').value,
-    deadline,
-    dniDead: deadline ? Math.floor((deadline-t)/86400000) : null,
-  };
-  const idx = projects.findIndex(p=>p.cislo===cislo);
-  const isNew = idx < 0;
-  if (isNew) projects.push(proj); else projects[idx] = proj;
-  renderProjects(); closeModal();
-  showToast('Projekt '+cislo+' uložený','ok');
-}
 
 
 async function savePonukaToSheets(p) {
