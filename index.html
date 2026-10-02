@@ -2060,6 +2060,23 @@ async function syncResponsibleContacts() {
 // ── Dopyty (cenové ponuky pre profesie) ─────────────────────────────────────
 const PONUKY_PROFESSIONS = ['DOPRAVA','ELI','PBS','PLYN','STATIKA','technologie','UK','VN','VZT','ZTI'];
 const PONUKY_FAZY = ['Studia','SZ','DSP/PS','RP'];
+const PONUKY_FAZA_TO_TASK_TAG = { 'Studia':'AŠ', 'SZ':'SZ', 'RP':'RP' }; // DSP/PS riešené osobitne, pozri dopytFazaToTaskTag
+// Fáza-tag novej Caflou úlohy sa musí odvodiť z FÁZY DOPYTU (záložka, na ktorej je Jozef práve v modáli
+// Dopyty), NIE z aktuálnej fázy projektu (p.caflou_status) - opravené 2026-10-02, Jozef nahlásil, že
+// úlohy vznikajúce k dopytu dostali iný fáza-tag než fáza, pre ktorú dopyt zakladal (bug bol: pôvodný kód
+// bral fazaTag = CAFLOU_STATUS_TO_FAZA_TAG[p.caflou_status], teda reálnu/aktuálnu fázu projektu, ignorujúc
+// na ktorej záložke dopytov Jozef reálne je). 'DSP/PS' je jediný prípad, kde PONUKY_FAZY zlučuje dva
+// samostatné task-tagy (DSP/PS) - tu sa použije presná aktuálna fáza projektu LEN na rozlíšenie DSP vs PS,
+// a to len ak sa projekt skutočne nachádza v jednej z nich; inak zostáva bez tagu (Jozef si ho doplní
+// ručne na úlohe, rovnaký kompromis ako pri inej known ambiguite tejto dvojice, pozri "Dopyty" v CLAUDE.md).
+function dopytFazaToTaskTag(faza, p) {
+  if (faza === 'DSP/PS') {
+    if (p?.caflou_status === '3_DSP') return 'DSP';
+    if (p?.caflou_status === '3_PS') return 'PS';
+    return null;
+  }
+  return PONUKY_FAZA_TO_TASK_TAG[faza] || null;
+}
 const PONUKY_FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stavebný zámer', 'DSP/PS':'DSP/PS', 'RP':'Realizačný projekt' };
 
 // caflou_status (raw Caflou status kľúč) rozlišuje DSP/PS/RP presne — na rozdiel od
@@ -2674,7 +2691,7 @@ async function saveDopytyBatch() {
   const podkladyDatum = document.getElementById('dopyt-faza-podklady')?.value || null;
   const hotovoDatum = document.getElementById('dopyt-faza-deadline')?.value || null;
   const folderUrl = await getKoordinaciaFolderUrl(cislo);
-  const fazaTag = CAFLOU_STATUS_TO_FAZA_TAG[p.caflou_status] || null;
+  const fazaTag = dopytFazaToTaskTag(faza, p);
 
   let tasksCreated = 0;
   const rows = [];
