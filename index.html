@@ -2376,8 +2376,34 @@ async function saveFazaTerminy(cislo, faza) {
     const rf = Array.isArray(r.phases) ? r.phases[0] : r.phases;
     if (rf === faza) { r.podklady_datum = podklady; r.hotovo_datum = deadline; }
   });
+  syncDeadlineToTasks(cislo, faza, deadline);
   showToast('Termíny pre fázu uložené ✓', 'ok');
   await renderDopytyModal();
+}
+
+// Deadline dopytu (requests.hotovo_datum) je jediný zdroj pravdy pre termín (end_time) naväzanej
+// Caflou úlohy - jednosmerná synchronizácia dopyt → úloha (Jozef, 2026-10-02: "termín na úlohe nech
+// je iba prepísaný deadline z dopytu"). Editovanie termínu priamo na úlohe (task edit forma) NEPREPÍŠE
+// Deadline dopytu späť - vedomé rozhodnutie, Deadline je spoločný pre všetky dopyty fázy, spätný zápis
+// z jednej konkrétnej úlohy by bol nejednoznačný pri viacerých profesiách/úlohách v tej istej fáze.
+async function syncDeadlineToTasks(cislo, faza, deadline) {
+  const taskIds = [...new Set(_dopytyCtx.reqs
+    .filter(r => (Array.isArray(r.phases) ? r.phases[0] : r.phases) === faza && r.caflou_task_id)
+    .map(r => r.caflou_task_id))];
+  if (!taskIds.length || !cfg.caflou_key) return;
+  const endTime = deadline ? deadline + 'T17:00:00+02:00' : null;
+  const cached = caflouTasksCache[cislo];
+  if (cached) {
+    cached.forEach(t => { if (taskIds.includes(t.id)) t.end_time = endTime; });
+    refreshUlohy(cislo);
+  }
+  await Promise.all(taskIds.map(id =>
+    fetch(`https://app.caflou.com/api/v1/${cfg.caflou_id}/tasks/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${cfg.caflou_key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: { end_time: endTime } })
+    }).catch(() => {})
+  ));
 }
 
 async function selectDopytWinner(invId, reqId) {
@@ -2656,7 +2682,7 @@ async function getKoordinaciaFolderUrl(cislo) {
 }
 
 // Vytvorí externú Caflou úlohu (tag 'ext' + fáza-tag podľa aktuálneho stavu projektu) a vráti jej id, alebo null pri zlyhaní.
-async function createExtCaflouTask(p, name, fazaTag) {
+async function createExtCaflouTask(p, name, fazaTag, endTime) {
   if (!p?.caflou_id || !cfg.caflou_key) return null;
   try {
     const tags = ['ext', fazaTag].filter(Boolean);
@@ -2667,6 +2693,7 @@ async function createExtCaflouTask(p, name, fazaTag) {
         name, project_id: p.caflou_id,
         task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
         tags,
+        ...(endTime ? { end_time: endTime } : {}),
       }})
     });
     if (!r.ok) return null;
@@ -2692,11 +2719,14 @@ async function saveDopytyBatch() {
   const hotovoDatum = document.getElementById('dopyt-faza-deadline')?.value || null;
   const folderUrl = await getKoordinaciaFolderUrl(cislo);
   const fazaTag = dopytFazaToTaskTag(faza, p);
+  // Nová úloha vzniká hneď s termínom = Deadline zo spoločného panela (jednosmerná synchronizácia
+  // dopyt → úloha, pozri syncDeadlineToTasks pri zmene Deadline na už existujúcich dopytoch).
+  const newTaskEndTime = hotovoDatum ? hotovoDatum + 'T17:00:00+02:00' : null;
 
   let tasksCreated = 0;
   const rows = [];
   for (const prof of profs) {
-    const taskId = await createExtCaflouTask(p, prof, fazaTag);
+    const taskId = await createExtCaflouTask(p, prof, fazaTag, newTaskEndTime);
     if (taskId) tasksCreated++;
     rows.push({
       project_cislo: cislo,
