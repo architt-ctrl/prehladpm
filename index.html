@@ -2372,8 +2372,16 @@ function buildDopytDetailHtml(r) {
 async function saveFazaTerminy(cislo, faza) {
   const podklady = document.getElementById('dopyt-faza-podklady')?.value || null;
   const deadline = document.getElementById('dopyt-faza-deadline')?.value || null;
+  // .contains('phases', [faza]) hádzalo "invalid input syntax for type json" - `phases` je jsonb
+  // stĺpec, supabase-js ale pri array hodnote vždy posiela Postgres array-literal syntax ({SZ}), nie
+  // JSON ([ "SZ" ]), čo na jsonb stĺpci zlyhá (2026-10-02). Filtrovanie preto rovno cez `.in('id',...)`
+  // na už načítaných _dopytyCtx.reqs (rovnaký klientský vzor ako všade inde v appke, pozri ponuky.html).
+  const ids = _dopytyCtx.reqs
+    .filter(r => (Array.isArray(r.phases) ? r.phases[0] : r.phases) === faza)
+    .map(r => r.id);
+  if (!ids.length) { showToast('Zatiaľ žiadny dopyt v tejto fáze — termíny sa uplatnia pri vytvorení nového', 'ok'); return; }
   const { error } = await sb.from('requests').update({ podklady_datum: podklady, hotovo_datum: deadline })
-    .eq('project_cislo', cislo).contains('phases', [faza]);
+    .in('id', ids);
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
   _dopytyCtx.reqs.forEach(r => {
     const rf = Array.isArray(r.phases) ? r.phases[0] : r.phases;
@@ -2749,10 +2757,17 @@ async function saveDopytyBatch() {
   if (tasksCreated) delete caflouTasksCache[cislo];
 
   // Zosúladiť podklady_datum vo VŠETKÝCH dopytoch tejto fázy (aj už existujúcich, nielen novovytvorených)
+  // - .contains('phases',[faza]) tu hádzalo rovnakú "invalid input syntax for type json" chybu ako
+  // v saveFazaTerminy (jsonb stĺpec, pozri komentár tam); fire-and-forget ju len ticho prehltával.
   if (podkladyDatum) {
-    sb.from('requests').update({ podklady_datum: podkladyDatum })
-      .eq('project_cislo', cislo).contains('phases', [faza])
-      .then(null, () => {});
+    const existingIds = _dopytyCtx.reqs
+      .filter(r => (Array.isArray(r.phases) ? r.phases[0] : r.phases) === faza)
+      .map(r => r.id);
+    if (existingIds.length) {
+      sb.from('requests').update({ podklady_datum: podkladyDatum })
+        .in('id', existingIds)
+        .then(null, () => {});
+    }
   }
 
   showToast(`Vytvorených ${profs.length} dopytov${tasksCreated < profs.length ? ` (Caflou úloha sa vytvorila pri ${tasksCreated}/${profs.length})` : ''} ✓`, 'ok');
@@ -5125,13 +5140,13 @@ function buildCaflouTasksHtml(cislo) {
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
-        ${isHarmon ? (t.task_status_name === 'Hotové'
+        ${!isExt && isHarmon ? (t.task_status_name === 'Hotové'
           ? planPHtml('none', 'Hotová úloha — v Plánovaní práce sa nepočíta')
           : t.id in planTaskLate
             ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
             : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
-        ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
-        ${collabNames.length ? `<span title="Spolupracovníci: ${collabNames.join(', ')}" style="font-size:9px;color:var(--text3);flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:0 5px;white-space:nowrap">+${collabNames.length}</span>` : ''}
+        ${!isExt && personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
+        ${!isExt && collabNames.length ? `<span title="Spolupracovníci: ${collabNames.join(', ')}" style="font-size:9px;color:var(--text3);flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:0 5px;white-space:nowrap">+${collabNames.length}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
         ${isExt ? (taskEmailCache[String(t.id)]
