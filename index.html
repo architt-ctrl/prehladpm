@@ -4186,7 +4186,6 @@ function buildDetailHtml(p) {
         <option value="">— kto —</option>
         ${Object.entries(CAFLOU_USERS).map(([id,n])=>`<option value="${id}">${n}</option>`).join('')}
       </select>
-      <input id="uf-prof-${p.cislo}" class="dennik-input" placeholder="Profesia (napr. Statik, Elektro...)" style="font-size:13px;display:none">
       <select id="uf-faza-${p.cislo}" class="pd-sel" style="font-size:12px">
         <option value="">— bez typu zadania —</option>
         ${TASK_FAZA_TAGS.map(f=>`<option value="${f}">${f} – ${TASK_FAZA_LABEL[f]}</option>`).join('')}
@@ -4992,47 +4991,6 @@ async function bulkDeleteTasks(cislo) {
     headers: { Authorization: `Bearer ${cfg.caflou_key}` }
   }).catch(() => {})));
 }
-async function createDopytFromTask(cislo, taskId) {
-  const p = projects.find(x => x.cislo === cislo); if (!p) return;
-  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
-  const t = tasks.find(x => x.id === taskId); if (!t) return;
-  const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
-  const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
-  const profession = uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '';
-  const detected = projFazaKod(p);
-  const faza = PONUKY_FAZY.includes(detected) ? detected : PONUKY_FAZY[0];
-  try {
-    const { error } = await sb.from('requests').insert({
-      project_cislo: p.cislo, project_name: p.nazov,
-      profession, phases: [faza], current_phase: faza, notes: t.name, status: 'active',
-      caflou_task_id: taskId,
-    });
-    if (error) throw new Error(error.message);
-    showToast('Dopyt vytvorený ✓', 'ok');
-  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
-}
-
-async function bulkCreateDopyty(cislo) {
-  const selSet = caflouTaskSelected[cislo]; if (!selSet?.size) return;
-  const tasks = caflouTasksCache[cislo]; if (!tasks) return;
-  const p = projects.find(x => x.cislo === cislo); if (!p) return;
-  const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
-  const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
-  const detected = projFazaKod(p);
-  const faza = PONUKY_FAZY.includes(detected) ? detected : PONUKY_FAZY[0];
-  const rows = tasks.filter(t => selSet.has(t.id)).map(t => ({
-    project_cislo: p.cislo, project_name: p.nazov,
-    profession: uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || '',
-    phases: [faza], current_phase: faza, notes: t.name, status: 'active',
-    caflou_task_id: t.id,
-  }));
-  try {
-    const { error } = await sb.from('requests').insert(rows);
-    if (error) throw new Error(error.message);
-    showToast(`${rows.length} ${rows.length === 1 ? 'dopyt vytvorený' : 'dopyty vytvorené'} ✓`, 'ok');
-  } catch(e) { showToast('Chyba: ' + e.message, 'err'); }
-}
-
 // Popis úlohy z Caflou je rich-text HTML (často zo Wordu) - na editáciu v appke sa zobrazuje
 // ako čistý text (DOM-based strip, bezpečnejšie než regex a mimochodom odstraňuje aj XSS riziko
 // pri zobrazovaní), pri ukladaní späť sa jednoducho zabalí do <p>/<br> (formátovanie zo zdroja
@@ -5113,10 +5071,6 @@ function buildCaflouTasksHtml(cislo) {
     const checkboxHtml = selectMode ? `<input type="checkbox" ${isChecked?'checked':''} onclick="event.stopPropagation();toggleTaskSelection('${cislo}',${t.id})"
       style="width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--text)">` : '';
     const actionBtns = selectMode ? '' : `
-        ${isExt ? `<button onclick="event.stopPropagation();createDopytFromTask('${cislo}',${t.id})"
-          title="Vytvoriť dopyt" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
-          width:22px;height:22px;cursor:pointer;font-size:11px;color:var(--text3);
-          display:flex;align-items:center;justify-content:center">📋</button>` : ''}
         <button onclick="event.stopPropagation();finishCaflouTask('${cislo}',${t.id})"
           title="Ukončiť" style="flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
           width:22px;height:22px;cursor:pointer;font-size:12px;color:var(--text3);
@@ -5284,9 +5238,6 @@ function buildCaflouTasksHtml(cislo) {
       <button onclick="event.stopPropagation();bulkDeleteTasks('${cislo}')" ${selCount===0?'disabled':''}
         style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--red)44;background:none;color:var(--red);${selCount===0?'opacity:0.4':''}">
         ✕ Vymazať</button>
-      <button onclick="event.stopPropagation();bulkCreateDopyty('${cislo}')" ${selCount===0?'disabled':''}
-        style="font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer;border:1px solid var(--blue)44;background:none;color:var(--blue);${selCount===0?'opacity:0.4':''}">
-        📋 Dopyty</button>
     </div>`;
     return html + doneHtml + bulkBar;
   }
@@ -5871,8 +5822,6 @@ function toggleNewTaskExt(cislo) {
   btn.style.color = nowExt ? 'var(--green)' : 'var(--text3)';
   btn.style.borderColor = nowExt ? 'var(--green)' : 'var(--border)';
   document.getElementById('uf-user-' + cislo).style.display = nowExt ? 'none' : '';
-  const profEl = document.getElementById('uf-prof-' + cislo);
-  if (profEl) profEl.style.display = nowExt ? '' : 'none';
 }
 
 async function createCaflouTask(cislo) {
@@ -5882,7 +5831,6 @@ async function createCaflouTask(cislo) {
   const isExt   = extBtn?.dataset.ext === '1';
   const uid     = isExt ? null : (document.getElementById('uf-user-' + cislo)?.value || null);
   const date    = document.getElementById('uf-date-' + cislo)?.value;
-  const prof    = document.getElementById('uf-prof-' + cislo)?.value.trim();
   const fazaTag = document.getElementById('uf-faza-' + cislo)?.value || null;
   if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
   const tags = [isExt ? 'ext' : null, fazaTag].filter(Boolean);
@@ -5909,8 +5857,6 @@ async function createCaflouTask(cislo) {
     // reset ext toggle to Interné
     if (extBtn) { extBtn.dataset.ext = '0'; extBtn.textContent = 'Interné ✓'; extBtn.style.color = 'var(--text3)'; extBtn.style.borderColor = 'var(--border)'; }
     document.getElementById('uf-user-' + cislo).style.display = '';
-    const profEl = document.getElementById('uf-prof-' + cislo);
-    if (profEl) { profEl.value = ''; profEl.style.display = 'none'; }
     const fazaEl = document.getElementById('uf-faza-' + cislo);
     if (fazaEl) fazaEl.value = '';
     document.getElementById('pd-ulohy-form-' + cislo).style.display = 'none';

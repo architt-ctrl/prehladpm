@@ -310,11 +310,13 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 - **PDF OCR cez Drive API v3**: multipart upload `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&convert=true` s `Authorization: Bearer ScriptApp.getOAuthToken()` → skonvertuje PDF na Google Doc → číta text cez `DocumentApp.openById()` → zmaže temp súbor
 - **`makeCopy()` namiesto `DocumentApp.create()`** — zachováva fonty, okraje, rozloženie stránky zo šablóny. ID šablón: `VZOR_ZOZNAM_ID`, `VZOR_SUHRN_ID` (konštanty v Code.gs)
 
-### Externý profesista → automatický dopyt → automatické priradenie
+### Externý profesista → automatický dopyt → automatické priradenie (ODSTRÁNENÉ, 2026-10-02)
 
-Pri vytváraní úlohy v dashboarde: dropdown obsahuje aj **"— externý profesista —"** (value=`ext`). Po výbere sa zobrazí pole Profesia. Pri odoslaní sa vytvorí Caflou úloha + automaticky INSERT do Supabase `requests` (projekt, profesia, názov úlohy v notes, **`caflou_task_id`**). Draft dopyt sa objaví v ponuky.html.
+**Táto sekcia popisovala dávno neplatné správanie** — Jozef pri bežnej práci narazil na pozostatky: tlačidlo 📋 "Vytvoriť dopyt" pri jednotlivej externej úlohe (`createDopytFromTask`) a 📋 "Dopyty" v bulk lište pri výbere viacerých úloh (`bulkCreateDopyty`) vytvárali `requests` riadok priamo z existujúcej Caflou úlohy, **obídúc celý aktuálny tok dopytov** (žiadny `folder_url`, žiadne `podklady_datum`/`hotovo_datum`, fáza sa brala z aktuálnej fázy projektu, nie z výberu užívateľa) — Jozef: "to je tušim napojené ešte na staré dopyty, ktoré už nepoužívame". Pri tej príležitosti sa zistilo, že aj popisovaný dropdown „— externý profesista —"/pole „Profesia" v rýchlom formulári na vytvorenie úlohy (`createCaflouTask`) bolo už **mŕtve** — pole `uf-prof-{cislo}` sa síce zobrazilo pri prepnutí na "Externé", ale jeho hodnota sa nikde nepoužívala (nezapisovala sa ani do úlohy, ani do žiadneho dopytu).
 
-`createDopytFromTask` aj `bulkCreateDopyty` ukladajú `caflou_task_id` do requestu. Keď sa v ponuky.html vyberie víťaz (`selectWinner`), automaticky sa zapíše do `task_specialists` — v dashboarde sa profesista objaví priamo na úlohe pri nasledujúcom načítaní.
+**Odstránené:** `createDopytFromTask`, `bulkCreateDopyty` (vrátane oboch tlačidiel, ktoré ich volali), pole `uf-prof-{cislo}` a jeho show/hide logika v `toggleNewTaskExt`/`createCaflouTask`.
+
+**Jediný aktuálny spôsob, ako vznikne dopyt pre profesiu, je teraz výhradne cez „📨 Dopyty" modal** (pozri "Dopyty" nižšie) — buď `saveDopytyBatch` (vytvorí novú Caflou úlohu + dopyt naraz), alebo „+ Priradiť dopyt k existujúcej úlohe" (Dohodnutá spolupráca, pre úlohy ktoré už existujú/sú dohodnuté mimo systému).
 
 ### Notifikačné badges
 
