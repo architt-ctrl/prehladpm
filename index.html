@@ -2088,7 +2088,7 @@ async function openDopytyModal(cislo) {
   const faza = PONUKY_FAZY.includes(detectedFaza) ? detectedFaza : PONUKY_FAZY[0];
   if (!specialistsList) await loadSpecialists();
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
-  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {}, dohodaOpen: false, dohodaTasks: null, editingInv: null };
+  _dopytyCtx = { cislo, faza, reqs: reqs || [], newProfs: new Set(), open: new Set(), invCache: {}, dohodaOpen: false, dohodaTasks: null, editingInv: null, addOpen: false };
   await renderDopytyModal();
 }
 
@@ -2155,6 +2155,14 @@ async function switchDopytyFaza(faza) {
   await renderDopytyModal();
 }
 
+// "+ Pridať dopyt" (zoznam profesií) je zámerne zbalené default - Jozef: "chcel by som tam vidieť
+// iba dopyty ktoré máme vytvorené a nie furt celý zoznam možných profesií" - zoznam sa ukáže len
+// na vyžiadanie (prvé vytvorenie dopytov pre fázu, alebo neskoršie doplnenie ďalšej profesie).
+async function toggleAddDopytForm() {
+  _dopytyCtx.addOpen = !_dopytyCtx.addOpen;
+  await renderDopytyModal();
+}
+
 async function renderDopytyModal() {
   const { cislo, faza, reqs } = _dopytyCtx;
 
@@ -2183,24 +2191,48 @@ async function renderDopytyModal() {
     ${prof}${profCounts[prof] ? ` <span style="color:var(--text3);font-weight:400">(už ${profCounts[prof]}×)</span>` : ''}
   </label>`).join('');
 
+  // Termín-podklady a Deadline sú SPOLOČNÉ pre všetky profesie danej fázy, úplne nezávislé od
+  // vytvárania nových dopytov (Jozef: "termín budem nastavovať pre všetkých naraz") - panel je
+  // vždy navrchu, mimo "+ Pridať dopyt" formulára. Predvyplnenie: existujúca hodnota z ktoréhokoľvek
+  // dopytu tejto fázy (sú zdieľané, tak stačí prvý), inak harmonogram/dnes pre podklady a
+  // "náš termín fázy" (p.deadline) mínus 2 týždne pre deadline.
+  const p = projects.find(x => x.cislo === cislo);
   const harmDate = await getHarmPodkladyDatum(cislo, faza);
   const todayStr = new Date().toISOString().split('T')[0];
+  const existingPodklady = fazaReqs.find(r => r.podklady_datum)?.podklady_datum;
+  const existingDeadline = fazaReqs.find(r => r.hotovo_datum)?.hotovo_datum;
+  const podkladyVal = existingPodklady || harmDate || todayStr;
+  const deadlineVal = existingDeadline || (p?.deadline ? new Date(p.deadline.getTime() - 14*86400000).toISOString().split('T')[0] : '');
+
+  const terminyPanel = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">
+    <div style="flex:1;min-width:120px">
+      <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">Termín-podklady</label>
+      <input type="date" id="dopyt-faza-podklady" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${podkladyVal}">
+    </div>
+    <div style="flex:1;min-width:120px">
+      <label style="font-size:11px;color:var(--text3);display:block;margin-bottom:2px">Deadline</label>
+      <input type="date" id="dopyt-faza-deadline" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${deadlineVal}">
+    </div>
+    <button onclick="saveFazaTerminy('${cislo}','${faza}')" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Uložiť pre všetky profesie</button>
+  </div>`;
 
   const el = document.getElementById('dopytyContent');
   el.innerHTML = `
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${tabs}</div>
+    ${terminyPanel}
     <div style="padding:0">${rows}</div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <div class="pd-label">+ Nové dopyty pre ${PONUKY_FAZA_LABEL[faza]}</div>
-      ${checkboxes}
-      <div style="display:flex;align-items:center;gap:6px;margin:8px 0">
-        <input id="dopyt-custom-prof" class="pd-sel" placeholder="Vlastná profesia…" style="flex:1;font-size:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleAddDopytForm()">
+        <span class="pd-label" style="margin:0">+ Pridať dopyt pre ${PONUKY_FAZA_LABEL[faza]}</span>
+        <span id="add-dopyt-arrow" style="font-size:11px;color:var(--text3)">${_dopytyCtx.addOpen ? '▾' : '▸'}</span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <label style="font-size:12px;color:var(--text2)">Podklady aktuálne od:</label>
-        <input id="dopyt-podklady-datum" type="date" class="pd-sel" style="font-size:12px" value="${harmDate || todayStr}">
+      <div id="add-dopyt-form" style="display:${_dopytyCtx.addOpen ? 'block' : 'none'};margin-top:8px">
+        ${_dopytyCtx.addOpen ? `${checkboxes}
+        <div style="display:flex;align-items:center;gap:6px;margin:8px 0">
+          <input id="dopyt-custom-prof" class="pd-sel" placeholder="Vlastná profesia…" style="flex:1;font-size:12px">
+        </div>
+        <button onclick="saveDopytyBatch()" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">Vytvoriť dopyty</button>` : ''}
       </div>
-      <button onclick="saveDopytyBatch()" style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:13px;font-weight:600;cursor:pointer">Vytvoriť dopyty</button>
     </div>
     <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
       <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="toggleDohodaForm()">
@@ -2226,21 +2258,6 @@ async function renderDopytyModal() {
 function buildDopytDetailHtml(r) {
   const c = _dopytyCtx.invCache[r.id] || { invs: [], quotes: [] };
   const faza = _dopytyCtx.faza;
-  const datesHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--border)">
-    <div style="flex:1;min-width:110px">
-      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Termín fázy</label>
-      <input type="date" id="dp-deadline-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.deadline || ''}">
-    </div>
-    <div style="flex:1;min-width:110px">
-      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Podklady dáme</label>
-      <input type="date" id="dp-podklady-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.podklady_datum || ''}">
-    </div>
-    <div style="flex:1;min-width:110px">
-      <label style="font-size:10px;color:var(--text3);display:block;margin-bottom:2px">Chceme výsledok</label>
-      <input type="date" id="dp-hotovo-${r.id}" class="pd-sel" style="font-size:12px;width:100%;box-sizing:border-box" value="${r.hotovo_datum || ''}">
-    </div>
-    <button onclick="saveDopytDates('${r.id}')" style="align-self:flex-end;background:var(--text);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">Uložiť termíny</button>
-  </div>`;
   const rows = c.invs.map(inv => {
     const sp = (specialistsList||[]).find(s => s.id === inv.specialist_id);
     const q = c.quotes.find(q => q.invitation_id === inv.id);
@@ -2303,7 +2320,6 @@ function buildDopytDetailHtml(r) {
   </div>`;
 
   return `
-    ${datesHtml}
     ${rows}
     <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">
       <div style="font-size:11px;color:var(--text2);margin-bottom:4px">+ Zapísať dohodnuté ručne (napr. cena prišla mailom)</div>
@@ -2328,17 +2344,23 @@ function buildDopytDetailHtml(r) {
 // nastavia len raz (podklady_datum spoločne pre fázu, hotovo_datum auto z termínu projektu, deadline
 // vôbec) - Jozef potreboval vedieť ich dodatočne upraviť priamo v tomto modáli, bez prechodu do
 // staršieho ponuky.html editora, ktorý tieto nové (cez index.html vytvorené) dopyty nemusí ukazovať.
-async function saveDopytDates(reqId) {
-  const deadline = document.getElementById('dp-deadline-' + reqId)?.value || null;
-  const podklady = document.getElementById('dp-podklady-' + reqId)?.value || null;
-  const hotovo = document.getElementById('dp-hotovo-' + reqId)?.value || null;
-  const { error } = await sb.from('requests').update({ deadline, podklady_datum: podklady, hotovo_datum: hotovo }).eq('id', reqId);
+// Termín-podklady (podklady_datum) a Deadline (hotovo_datum) sú JEDNA dvojica dátumov spoločná
+// pre všetky profesie v danej fáze (nie per profesia) - Jozef: "pre jednu fázu máme pre všetkých
+// profesistov jeden termín pre podklady a jeden deadline". Deadline = náš termín fázy (p.deadline)
+// minus 2 týždne (predtým sa toto počítalo len jednorazovo pri vytvorení ako hotovo_datum, teraz je
+// to editovateľné tu a platí rovnako pre všetky dopyty fázy).
+async function saveFazaTerminy(cislo, faza) {
+  const podklady = document.getElementById('dopyt-faza-podklady')?.value || null;
+  const deadline = document.getElementById('dopyt-faza-deadline')?.value || null;
+  const { error } = await sb.from('requests').update({ podklady_datum: podklady, hotovo_datum: deadline })
+    .eq('project_cislo', cislo).contains('phases', [faza]);
   if (error) { showToast('Chyba: ' + error.message, 'err'); return; }
-  const r = _dopytyCtx.reqs.find(x => x.id === reqId);
-  if (r) { r.deadline = deadline; r.podklady_datum = podklady; r.hotovo_datum = hotovo; }
-  showToast('Termíny uložené ✓', 'ok');
-  const detailEl = document.getElementById('dopyt-detail-' + reqId);
-  if (detailEl && r) detailEl.innerHTML = buildDopytDetailHtml(r);
+  _dopytyCtx.reqs.forEach(r => {
+    const rf = Array.isArray(r.phases) ? r.phases[0] : r.phases;
+    if (rf === faza) { r.podklady_datum = podklady; r.hotovo_datum = deadline; }
+  });
+  showToast('Termíny pre fázu uložené ✓', 'ok');
+  await renderDopytyModal();
 }
 
 async function selectDopytWinner(invId, reqId) {
@@ -2647,8 +2669,10 @@ async function saveDopytyBatch() {
   if (!profs.length) { showToast('Vyber aspoň jednu profesiu', 'err'); return; }
 
   const p = projects.find(x => x.cislo === cislo);
-  const podkladyDatum = document.getElementById('dopyt-podklady-datum').value || null;
-  const hotovoDatum = p.deadline ? new Date(p.deadline.getTime() - 10*86400000).toISOString().split('T')[0] : null;
+  // Termíny sa už nepýtajú tu - berú sa z nezávislého spoločného panela navrchu modálu (Termín-
+  // podklady/Deadline), nech nové dopyty hneď dedia tie isté hodnoty ako ostatné profesie fázy.
+  const podkladyDatum = document.getElementById('dopyt-faza-podklady')?.value || null;
+  const hotovoDatum = document.getElementById('dopyt-faza-deadline')?.value || null;
   const folderUrl = await getKoordinaciaFolderUrl(cislo);
   const fazaTag = CAFLOU_STATUS_TO_FAZA_TAG[p.caflou_status] || null;
 
@@ -2685,6 +2709,7 @@ async function saveDopytyBatch() {
   const { data: reqs } = await sb.from('requests').select('*').eq('project_cislo', cislo).order('created_at', { ascending: false });
   _dopytyCtx.reqs = reqs || [];
   _dopytyCtx.newProfs = new Set();
+  _dopytyCtx.addOpen = false;
   await renderDopytyModal();
 }
 
