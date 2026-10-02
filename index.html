@@ -5045,7 +5045,9 @@ function buildCaflouTasksHtml(cislo) {
   if (!allActive.length && !doneCount) return '<div style="font-size:11px;color:var(--text3);padding:4px 0">Žiadne úlohy</div>';
   const curFilter = caflouTaskFazaFilter[cislo] || null;
   const active = curFilter ? allActive.filter(t => getTaskFazaTag(t) === curFilter) : allActive;
-  const usedTags = [...new Set(allActive.map(getTaskFazaTag).filter(Boolean))];
+  // Zoradené podľa postupnosti fáz (TASK_FAZA_TAGS), nie podľa poradia vzniku úloh - inak by
+  // štítky skákali (napr. RP vľavo, PS vpravo), keď bola RP úloha vytvorená skôr než PS (2026-10-02).
+  const usedTags = TASK_FAZA_TAGS.filter(tag => allActive.some(t => getTaskFazaTag(t) === tag));
   const selectMode = !!caflouTaskSelectMode[cislo];
   const selSet = caflouTaskSelected[cislo] || new Set();
   const selToggleBtn = `<button onclick="event.stopPropagation();toggleTaskSelectMode('${cislo}')"

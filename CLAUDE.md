@@ -234,6 +234,7 @@ Každá Caflou úloha môže mať v `tags` jeden z `TASK_FAZA_TAGS = ['AŠ','SZ'
 - `getTaskFazaTag(t)` — vytiahne fáza-tag z `t.tags`
 - `caflouTaskFazaFilter[cislo]` — per-projekt filter, `setTaskFazaFilter(cislo, tag)` prepína (klik na už aktívny filter ho zruší)
 - Netagované úlohy sú viditeľné vždy, bez ohľadu na aktívny filter (aj v bulk-select cez `bulkSelectAll`)
+- **Filter-štítky zoradené podľa postupnosti fáz, nie podľa poradia vzniku úloh (opravené 2026-10-02):** `usedTags` v `buildCaflouTasksHtml` bolo `[...new Set(allActive.map(getTaskFazaTag).filter(Boolean))]` — poradie štítkov tak zodpovedalo tomu, v akom poradí sa v `allActive` prvýkrát objavila úloha s daným tagom (typicky poradie vzniku úloh v Caflou), nie chronologickej postupnosti fáz. Jozef nahlásil konkrétny prípad: RP úloha vznikla skôr než PS, takže štítky ukazovali „RP PS" zľava doprava namiesto „PS RP". Opravené na `TASK_FAZA_TAGS.filter(tag => allActive.some(t => getTaskFazaTag(t) === tag))` — vždy v poradí `AŠ, SZ, DSP, PS, RP, INŽ`, len vynechá tagy, ktoré sa v projekte nevyskytujú.
 
 ### Šablóny úloh (`task_templates`)
 
