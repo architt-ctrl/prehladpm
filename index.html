@@ -2079,6 +2079,74 @@ function dopytFazaToTaskTag(faza, p) {
 }
 const PONUKY_FAZA_LABEL = { 'Studia':'Štúdia', 'SZ':'Stavebný zámer', 'DSP/PS':'DSP/PS', 'RP':'Realizačný projekt' };
 
+// Reverzné mapovanie k dopytFazaToTaskTag - z fáza-tagu NA úlohe uhádne, do ktorej PONUKY_FAZY záložky
+// patrí. INŽ nemá zodpovedajúcu záložku (Inžiniering nie je v Dopytoch, pozri vyššie) - taká úloha
+// padne na fallback (aktuálna fáza projektu) v guessDopytFaza.
+const TASK_TAG_TO_PONUKY_FAZA = { 'AŠ':'Studia', 'SZ':'SZ', 'DSP':'DSP/PS', 'PS':'DSP/PS', 'RP':'RP' };
+function guessDopytFaza(t, p) {
+  const tag = getTaskFazaTag(t);
+  if (tag && TASK_TAG_TO_PONUKY_FAZA[tag]) return TASK_TAG_TO_PONUKY_FAZA[tag];
+  const detected = projFazaKod(p);
+  return PONUKY_FAZY.includes(detected) ? detected : PONUKY_FAZY[0];
+}
+
+// Automaticky vytvorí dopyt pre KAŽDÚ externú úlohu projektu, ktorá ho ešte nemá (2026-10-02, Jozef:
+// "chcem aby každá ext úloha mala automaticky vytvorený dopyt a aby termíny a profesisti boli linknutí
+// aj existujúca úloha") - rieši staršie/priamo v Caflou založené externé úlohy spred toho, než bolo
+// vytváranie externých úloh zúžené výhradne na modál Dopyty (pozri "Externý profesista..." vyššie).
+// Fire-and-forget na konci loadCaflouTasks, tichý no-op keď nie je čo robiť. Profesia sa uhádne z
+// názvu úlohy (rovnaká heuristika ako mal zrušený createDopytFromTask), fáza z fáza-tagu úlohy
+// (guessDopytFaza), termín (hotovo_datum/"Deadline") sa prevezme z existujúceho t.end_time úlohy ak ho
+// má (reálne už nastavený termín je dôveryhodnejší než generický default) - od tohto momentu ďalej ho
+// už drží dopyt (syncDeadlineToTasks). Ak má úloha už priradeného profesistu (extSpecOverride/
+// task_specialists), zapíše sa rovno ako vybraný víťaz (žiadna ponuka nemusí prebehnúť znova).
+async function autoLinkExtTasksToDopyty(cislo, tasks) {
+  const extTasks = (tasks||[]).filter(t => !t.finished && (t.tags||[]).includes('ext'));
+  if (!extTasks.length) return;
+  const p = projects.find(x => x.cislo === cislo);
+  if (!p) return;
+  try {
+    const { data: existing } = await sb.from('requests').select('caflou_task_id')
+      .eq('project_cislo', cislo).not('caflou_task_id', 'is', null);
+    const linkedIds = new Set((existing||[]).map(r => Number(r.caflou_task_id)));
+    const unlinked = extTasks.filter(t => !linkedIds.has(Number(t.id)));
+    if (!unlinked.length) return;
+
+    if (!specialistsList) await loadSpecialists();
+    const splitProfs = s => (s.profession||'').split(',').map(pr=>pr.trim()).filter(Boolean);
+    const uniqueProfs = [...new Set((specialistsList||[]).flatMap(splitProfs))].sort();
+    const folderUrl = await getKoordinaciaFolderUrl(cislo);
+
+    let created = 0;
+    for (const t of unlinked) {
+      const faza = guessDopytFaza(t, p);
+      const profession = uniqueProfs.find(pr => t.name.toLowerCase().includes(pr.toLowerCase())) || t.name;
+      const specName = extSpecOverride[String(t.id)] || '';
+      const sp = specName ? (specialistsList||[]).find(s => s.name === specName) : null;
+      const podkladyDatum = await getHarmPodkladyDatum(cislo, faza) || new Date().toISOString().split('T')[0];
+      const hotovoDatum = t.end_time ? t.end_time.substring(0, 10)
+        : new Date(new Date(podkladyDatum).getTime() + 21*86400000).toISOString().split('T')[0];
+
+      const { data: req, error: reqErr } = await sb.from('requests').insert({
+        project_cislo: cislo, project_name: p.nazov,
+        profession, phases: [faza], current_phase: faza,
+        caflou_task_id: t.id, folder_url: folderUrl,
+        podklady_datum: podkladyDatum, hotovo_datum: hotovoDatum,
+        status: sp ? 'closed' : 'active',
+      }).select('id').single();
+      if (reqErr || !req) continue;
+
+      if (sp) {
+        const { data: inv } = await sb.from('invitations')
+          .insert({ request_id: req.id, specialist_id: sp.id, status: 'selected' }).select('id').single();
+        if (inv) await sb.from('quotes').insert({ invitation_id: inv.id, prices: {}, submitted_at: new Date().toISOString() });
+      }
+      created++;
+    }
+    if (created) showToast(`Automaticky vytvorených ${created} ${created===1?'dopyt':'dopytov'} pre staršie externé úlohy ✓`, 'ok');
+  } catch(e) {}
+}
+
 // caflou_status (raw Caflou status kľúč) rozlišuje DSP/PS/RP presne — na rozdiel od
 // p.podfaza, ktoré má pre 3_DSP/3_PS/4_RP rovnakú hodnotu "Projekt stavby" (pozri CAFLOU_STATUS_MAP)
 const CAFLOU_STATUS_TO_PONUKY_FAZA = {
@@ -4892,6 +4960,9 @@ async function loadCaflouTasks(cislo, caflou_id) {
 
     await Promise.all([loadSpecOverrides, loadEmailThreads, loadNotes, loadPonukyStatus]);
     el.innerHTML = buildCaflouTasksHtml(cislo);
+    // Fire-and-forget, nezávisí na vykreslení vyššie - úlohy samotné sa nemenia, len pribudnú dopyty
+    // na pozadí v Supabase (viditeľné až pri otvorení modálu "📨 Dopyty").
+    autoLinkExtTasksToDopyty(cislo, all);
   } catch(e) {
     el.innerHTML = `<div style="font-size:11px;color:var(--red);padding:4px 0">Chyba: ${e.message}</div>`;
   }
