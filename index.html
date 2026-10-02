@@ -2288,7 +2288,14 @@ async function renderDopytyModal() {
   const existingPodklady = fazaReqs.find(r => r.podklady_datum)?.podklady_datum;
   const existingDeadline = fazaReqs.find(r => r.hotovo_datum)?.hotovo_datum;
   const podkladyVal = existingPodklady || harmDate || todayStr;
-  const deadlineVal = existingDeadline || new Date(new Date(podkladyVal).getTime() + 21*86400000).toISOString().split('T')[0];
+  // Odhadnutý default pre Deadline sa ponúkne LEN pri úplne novej fáze (žiadny dopyt ešte neexistuje) -
+  // 2026-10-02, Jozef: "na niektoré fázy máme dohodnutú cenu, ale termín ešte nie je určený... v tomto
+  // prípade nechcem uvádzať žiadny termín, aby s tým neboli problémy". Keď fáza už dopyty má, pole
+  // rešpektuje ich skutočný (aj prázdny) stav - inak by sa pri každom opätovnom otvorení modálu cez
+  // vedome prázdny Deadline znova podsúval odhad, a klik na "Uložiť" by ho omylom natrvalo zapísal.
+  const deadlineVal = fazaReqs.length
+    ? (existingDeadline || '')
+    : new Date(new Date(podkladyVal).getTime() + 21*86400000).toISOString().split('T')[0];
 
   const terminyPanel = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">
     <div style="flex:1;min-width:120px">
