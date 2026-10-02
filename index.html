@@ -5221,13 +5221,13 @@ function buildCaflouTasksHtml(cislo) {
           style="flex-shrink:0;font-size:10px;border:1px solid ${col}44;border-radius:5px;
           background:${col}22;color:${col};font-weight:600;padding:2px 4px;cursor:pointer;outline:none">${statusOpts}</select>
         ${fazaTag ? `<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;flex-shrink:0;color:#fff;background:${TASK_FAZA_COLOR[fazaTag]}">${fazaTag}</span>` : ''}
-        ${!isExt && isHarmon ? (t.task_status_name === 'Hotové'
+        ${isHarmon ? (t.task_status_name === 'Hotové'
           ? planPHtml('none', 'Hotová úloha — v Plánovaní práce sa nepočíta')
           : t.id in planTaskLate
             ? (planTaskLate[t.id] ? planPHtml('late', 'V Plánovaní práce — nestíha termín') : planPHtml('ok', 'V Plánovaní práce — stíha termín'))
             : planPHtml('none', 'Tag harmon — v Plánovaní práce sa zobrazí po „Načítať z Caflou"')) : ''}
-        ${!isExt && personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
-        ${!isExt && collabNames.length ? `<span title="Spolupracovníci: ${collabNames.join(', ')}" style="font-size:9px;color:var(--text3);flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:0 5px;white-space:nowrap">+${collabNames.length}</span>` : ''}
+        ${personName ? `<span style="font-size:10px;color:${personColor};flex-shrink:0;font-weight:${specName?'500':'400'}">${personName}</span>` : ''}
+        ${collabNames.length ? `<span title="Spolupracovníci: ${collabNames.join(', ')}" style="font-size:9px;color:var(--text3);flex-shrink:0;border:1px solid var(--border);border-radius:8px;padding:0 5px;white-space:nowrap">+${collabNames.length}</span>` : ''}
         ${deadStr}
         ${taskPonukySet.has(t.id) ? `<a href="ponuky.html?task_id=${t.id}" onclick="event.stopPropagation()" title="Čaká cenová ponuka – klik otvori dopyt" style="flex-shrink:0;font-size:10px;color:var(--green);font-weight:600;text-decoration:none;border:1px solid var(--grn-bd);background:var(--grn-bg);border-radius:5px;padding:1px 6px">ponuka ↗</a>` : ''}
         ${isExt ? (taskEmailCache[String(t.id)]
@@ -5254,18 +5254,18 @@ function buildCaflouTasksHtml(cislo) {
         <textarea id="tdesc-${editKey}" class="dennik-input" placeholder="Popis úlohy…"
           style="font-size:12px;min-height:70px;resize:vertical;width:100%;box-sizing:border-box">${escapeHtmlForTag(taskDescToPlainText(t.description))}</textarea>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          <select id="tu-${editKey}" class="pd-sel" style="flex:1;min-width:120px;font-size:12px">${selOpts}</select>
+          <select id="tu-${editKey}" class="pd-sel" style="flex:1;min-width:120px;font-size:12px;display:${isExt?'none':''}">${selOpts}</select>
           <input id="td-${editKey}" type="date" value="${curDate}" class="pd-sel" style="font-size:12px;flex:1;min-width:110px">
           <button id="ttype-${editKey}" data-ext="${isExt?'1':'0'}" onclick="event.stopPropagation();toggleTaskExtBtn('${editKey}')"
             style="background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--text3);white-space:nowrap">${isExt?'Externé ✓':'Interné ✓'}</button>
           <button id="tharmon-${editKey}" data-on="${isHarmon?'1':'0'}" onclick="event.stopPropagation();toggleTaskHarmonBtn('${editKey}')"
             title="Zaradiť úlohu do Plánovania práce (tag harmon v Caflou)"
-            style="background:${isHarmon?'var(--blu-bg)':'none'};border:1px solid ${isHarmon?'var(--blue)':'var(--border)'};border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:${isHarmon?'var(--blue)':'var(--text3)'};white-space:nowrap"><b style="font-weight:800;font-size:13px">P</b> ${isHarmon?'Plánovať ✓':'Plánovať'}</button>
+            style="display:${isExt?'none':''};background:${isHarmon?'var(--blu-bg)':'none'};border:1px solid ${isHarmon?'var(--blue)':'var(--border)'};border-radius:7px;padding:4px 8px;font-size:11px;cursor:pointer;color:${isHarmon?'var(--blue)':'var(--text3)'};white-space:nowrap"><b style="font-weight:800;font-size:13px">P</b> ${isHarmon?'Plánovať ✓':'Plánovať'}</button>
           <select id="tfaza-${editKey}" class="pd-sel" style="font-size:11px;flex-shrink:0" onclick="event.stopPropagation()">${fazaOpts}</select>
           <button onclick="event.stopPropagation();saveCaflouTaskEdit('${cislo}',${t.id})"
             style="background:var(--text);color:#fff;border:none;border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600">Uložiť</button>
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div id="tcollab-row-${editKey}" style="display:${isExt?'none':'flex'};gap:6px;align-items:center">
           <span style="font-size:11px;color:var(--text3);flex-shrink:0;white-space:nowrap">Spolupracovníci:</span>
           <select id="tcollab-${editKey}" multiple size="3" class="pd-sel" style="flex:1;font-size:11px" onclick="event.stopPropagation()">
             ${Object.entries(CAFLOU_USERS).map(([id,n]) => `<option value="${id}"${collabIds.includes(Number(id))?' selected':''}>${n}</option>`).join('')}
@@ -5562,6 +5562,15 @@ function toggleTaskExtBtn(editKey) {
   btn.style.borderColor = nowExt ? 'var(--green)' : 'var(--border)';
   const specSection = document.getElementById('tspec-section-' + editKey);
   if (specSection) specSection.style.display = nowExt ? 'flex' : 'none';
+  // Priradenie internistu, Plánovanie práce ani spolupracovníci nemajú zmysel pri externej úlohe
+  // (2026-10-02, Jozef: "kolonku pridelenie - tam kde dávam internistov - a tiež spolupracovníkov
+  // a tiež možnosť plánovať, lebo plánujem iba internistov") - skryté symetricky s tspec-section vyššie.
+  const assigneeSel = document.getElementById('tu-' + editKey);
+  if (assigneeSel) assigneeSel.style.display = nowExt ? 'none' : '';
+  const harmonBtn = document.getElementById('tharmon-' + editKey);
+  if (harmonBtn) harmonBtn.style.display = nowExt ? 'none' : '';
+  const collabRow = document.getElementById('tcollab-row-' + editKey);
+  if (collabRow) collabRow.style.display = nowExt ? 'none' : 'flex';
 }
 
 async function deleteCaflouTask(cislo, task_id) {
