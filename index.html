@@ -4207,11 +4207,7 @@ function buildDetailHtml(p) {
     <div id="pd-ulohy-${p.cislo}"><div style="font-size:11px;color:var(--text3);padding:4px 0">Načítavam...</div></div>
     <div id="pd-ulohy-form-${p.cislo}" style="display:none;margin-top:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px;gap:6px;display:none;flex-direction:column">
       <input id="uf-name-${p.cislo}" class="dennik-input" placeholder="Názov úlohy" style="font-size:13px">
-      <div style="display:flex;gap:6px;align-items:center">
-        <button id="uf-ext-btn-${p.cislo}" data-ext="0" onclick="toggleNewTaskExt('${p.cislo}')"
-          style="font-size:11px;padding:2px 9px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--text3);cursor:pointer;white-space:nowrap;flex-shrink:0">Interné ✓</button>
-        <input id="uf-date-${p.cislo}" type="date" class="pd-sel" style="font-size:12px;flex:1">
-      </div>
+      <input id="uf-date-${p.cislo}" type="date" class="pd-sel" style="font-size:12px">
       <select id="uf-user-${p.cislo}" class="pd-sel" style="font-size:12px">
         <option value="">— kto —</option>
         ${Object.entries(CAFLOU_USERS).map(([id,n])=>`<option value="${id}">${n}</option>`).join('')}
@@ -5590,7 +5586,6 @@ function _syncTmplEdit() {
   _tmplEditTasks = _tmplEditTasks.map((_, idx) => ({
     name: document.getElementById(`ttr-name-${idx}`)?.value?.trim() || '',
     faza: document.getElementById(`ttr-faza-${idx}`)?.value || null,
-    ext:  document.getElementById(`ttr-ext-${idx}`)?.dataset.ext === '1',
   }));
 }
 
@@ -5602,10 +5597,6 @@ function renderTmplEditForm() {
     <div style="display:flex;gap:5px;align-items:center;margin-bottom:4px">
       <input id="ttr-name-${idx}" value="${(t.name||'').replace(/"/g,'&quot;')}" placeholder="Názov úlohy"
         class="pd-sel" style="flex:1;font-size:12px">
-      <select id="ttr-faza-${idx}" class="pd-sel" style="font-size:11px;width:58px">${fazaOpts(t.faza)}</select>
-      <button id="ttr-ext-${idx}" data-ext="${t.ext?'1':'0'}" onclick="toggleTmplTaskExt(${idx})"
-        style="font-size:10px;padding:2px 7px;border-radius:6px;border:1px solid var(--border);background:none;
-        color:${t.ext?'var(--green)':'var(--text3)'};cursor:pointer;white-space:nowrap;flex-shrink:0">${t.ext?'Ext':'Int'}</button>
       <button onclick="removeTmplTaskRow(${idx})"
         style="width:22px;height:22px;flex-shrink:0;background:none;border:1px solid var(--border);border-radius:5px;
         cursor:pointer;font-size:12px;color:var(--red)">✕</button>
@@ -5632,15 +5623,9 @@ function renderTmplEditForm() {
     </div>`;
 }
 
-function toggleTmplTaskExt(idx) {
-  _syncTmplEdit();
-  _tmplEditTasks[idx].ext = !_tmplEditTasks[idx].ext;
-  renderTmplEditForm();
-}
-
 function addTmplTaskRow() {
   _syncTmplEdit();
-  _tmplEditTasks.push({ name: '', faza: null, ext: false });
+  _tmplEditTasks.push({ name: '', faza: null });
   renderTmplEditForm();
   setTimeout(() => document.getElementById(`ttr-name-${_tmplEditTasks.length - 1}`)?.focus(), 50);
 }
@@ -5656,7 +5641,7 @@ async function saveTmplEdit() {
   if (!_tmplEditName.trim()) { showToast('Zadaj názov šablóny', 'err'); return; }
   const name = _tmplEditName.trim();
   const tasks = _tmplEditTasks.filter(t => t.name.trim()).map(t => ({
-    name: t.name.trim(), faza: t.faza || null, ext: !!t.ext
+    name: t.name.trim(), faza: t.faza || null
   }));
   try {
     if (_tmplEditId) {
@@ -5711,7 +5696,6 @@ function renderTmplPicker(cislo, tmplId) {
       <input type="checkbox" checked data-idx="${idx}" style="width:14px;height:14px;accent-color:var(--text)">
       <span style="flex:1">${t.name}</span>
       ${fazaCol ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;color:#fff;background:${fazaCol}">${t.faza}</span>` : ''}
-      <span style="font-size:10px;color:${t.ext?'var(--green)':'var(--text3)'}">${t.ext?'Ext':'Int'}</span>
     </label>`;
   }).join('');
 }
@@ -5738,7 +5722,7 @@ async function applyTmplTasks(cislo) {
           name: task.name,
           task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
           project_id: p.caflou_id,
-          tags: [task.ext ? 'ext' : null, task.faza || null].filter(Boolean),
+          tags: [task.faza || null].filter(Boolean),
         }})
       });
       if (r.ok) {
@@ -5844,26 +5828,18 @@ async function addTaskNote(cislo, taskId) {
   refreshUlohy(cislo);
 }
 
-function toggleNewTaskExt(cislo) {
-  const btn = document.getElementById('uf-ext-btn-' + cislo); if (!btn) return;
-  const nowExt = btn.dataset.ext !== '1';
-  btn.dataset.ext = nowExt ? '1' : '0';
-  btn.textContent = nowExt ? 'Externé ✓' : 'Interné ✓';
-  btn.style.color = nowExt ? 'var(--green)' : 'var(--text3)';
-  btn.style.borderColor = nowExt ? 'var(--green)' : 'var(--border)';
-  document.getElementById('uf-user-' + cislo).style.display = nowExt ? 'none' : '';
-}
-
+// Rýchly formulár vytvára VÝHRADNE interné úlohy (2026-10-02, Jozef: "externá úloha by bez dopytu ani
+// nemala existovať") - predtým tu bol Interné/Externé prepínač, ktorý umožňoval vytvoriť externú úlohu
+// úplne mimo systému dopytov (bez folder_url, termínov, prepojenia na profesistu). Jediná cesta k
+// externej úlohe je teraz modal "📨 Dopyty" (saveDopytyBatch).
 async function createCaflouTask(cislo) {
   const p = projects.find(x => x.cislo === cislo); if (!p?.caflou_id) return;
   const name    = document.getElementById('uf-name-' + cislo)?.value.trim();
-  const extBtn  = document.getElementById('uf-ext-btn-' + cislo);
-  const isExt   = extBtn?.dataset.ext === '1';
-  const uid     = isExt ? null : (document.getElementById('uf-user-' + cislo)?.value || null);
+  const uid     = document.getElementById('uf-user-' + cislo)?.value || null;
   const date    = document.getElementById('uf-date-' + cislo)?.value;
   const fazaTag = document.getElementById('uf-faza-' + cislo)?.value || null;
   if (!name) { showToast('Zadaj názov úlohy', 'err'); return; }
-  const tags = [isExt ? 'ext' : null, fazaTag].filter(Boolean);
+  const tags = [fazaTag].filter(Boolean);
   const body = { task: {
     name, project_id: p.caflou_id,
     task_status_id: CAFLOU_TASK_STATUS_IDS['Nové'],
@@ -5884,9 +5860,6 @@ async function createCaflouTask(cislo) {
     document.getElementById('uf-name-' + cislo).value = '';
     document.getElementById('uf-date-' + cislo).value = '';
     document.getElementById('uf-user-' + cislo).value = '';
-    // reset ext toggle to Interné
-    if (extBtn) { extBtn.dataset.ext = '0'; extBtn.textContent = 'Interné ✓'; extBtn.style.color = 'var(--text3)'; extBtn.style.borderColor = 'var(--border)'; }
-    document.getElementById('uf-user-' + cislo).style.display = '';
     const fazaEl = document.getElementById('uf-faza-' + cislo);
     if (fazaEl) fazaEl.value = '';
     document.getElementById('pd-ulohy-form-' + cislo).style.display = 'none';

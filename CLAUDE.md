@@ -240,7 +240,8 @@ Každá Caflou úloha môže mať v `tags` jeden z `TASK_FAZA_TAGS = ['AŠ','SZ'
 Supabase tabuľka `task_templates (id uuid, name text, tasks jsonb, created_at timestamptz)` — `tasks` je pole `{name, faza, ext}` (faza = jeden z `TASK_FAZA_TAGS` alebo `null`, ext = bool).
 
 - `taskTemplates` — cachované v pamäti (`null` = nenačítané), `loadTaskTemplates()` fetchne raz zo Supabase
-- **Správa šablón:** `openTmplMgr()` → `#tmplMgrModal`, zoznam (`renderTmplMgrList`) + editor jednej šablóny (`openTmplEdit`/`renderTmplEditForm`) — riadky úloh s názvom, fáza-selectom a Interné/Externé prepínačom (`toggleTmplTaskExt`), `saveTmplEdit`/`deleteTmpl`
+- **Správa šablón:** `openTmplMgr()` → `#tmplMgrModal`, zoznam (`renderTmplMgrList`) + editor jednej šablóny (`openTmplEdit`/`renderTmplEditForm`) — riadky úloh s názvom a fáza-selectom, `saveTmplEdit`/`deleteTmpl`
+- **Interné/Externé prepínač v šablóne odstránený (2026-10-02):** úloha v šablóne mala pôvodne aj `ext` bool (`toggleTmplTaskExt`), takže `applyTmplTasks` vedela vytvoriť externú Caflou úlohu úplne mimo systému dopytov (bez `folder_url`/termínov/prepojenia na profesistu) — Jozef: "externá úloha by bez dopytu ani nemala existovať". Odteraz `{name, faza}` bez `ext`, `applyTmplTasks` vytvára vždy len interné úlohy (`tags: [faza].filter(Boolean)`, žiadny `ext`). Staré šablóny uložené so starým `{..., ext:true}` tvarom fungujú ďalej — pole `ext` sa už len ignoruje, nepadá na ňom nič.
 - **Aplikovanie na projekt:** tlačidlo **"📋 Šablóna"** v detaile projektu → `openTmplPicker(cislo)` → vyber šablónu → `renderTmplPicker` ukáže checkboxy jej úloh (predvolene všetky zaškrtnuté) → `applyTmplTasks(cislo)` vytvorí v Caflou reálnu úlohu pre každú zaškrtnutú (`POST /tasks`, `tags: [ext?'ext':null, faza].filter(Boolean)`), doplní `p.caflou_task_ids`, invaliduje cache a znovu načíta úlohy projektu
 
 **Prepojenie na harmonogram (ROZPRACOVANÉ, len návrh z konverzácie 2026-07-08, nič ešte neimplementované):**
@@ -317,6 +318,8 @@ Tlačidlo **Zápisky** v headeri → `openChronoModal()` → `#chronoModal`.
 **Odstránené:** `createDopytFromTask`, `bulkCreateDopyty` (vrátane oboch tlačidiel, ktoré ich volali), pole `uf-prof-{cislo}` a jeho show/hide logika v `toggleNewTaskExt`/`createCaflouTask`.
 
 **Jediný aktuálny spôsob, ako vznikne dopyt pre profesiu, je teraz výhradne cez „📨 Dopyty" modal** (pozri "Dopyty" nižšie) — buď `saveDopytyBatch` (vytvorí novú Caflou úlohu + dopyt naraz), alebo „+ Priradiť dopyt k existujúcej úlohe" (Dohodnutá spolupráca, pre úlohy ktoré už existujú/sú dohodnuté mimo systému).
+
+**Druhé kolo, ešte v ten istý deň — zrušený Interné/Externé prepínač aj z rýchleho formulára úlohy a zo šablón (2026-10-02, Jozef: "externá úloha by bez dopytu ani nemala existovať"):** po odstránení `createDopytFromTask`/`bulkCreateDopyty` vyššie zostávali ešte dve miesta, kde šlo vytvoriť externú Caflou úlohu úplne mimo systému dopytov — rýchly formulár "Pridať" v detaile projektu (`toggleNewTaskExt`/`createCaflouTask`, prepínač Interné/Externé) a šablóny úloh (`toggleTmplTaskExt`, pole `ext` na úlohe v šablóne, pozri "Šablóny úloh" vyššie). Oba teraz vytvárajú **vždy len interné** úlohy — `createCaflouTask` nemá prepínač ani `tags:['ext']` vôbec, `applyTmplTasks` ignoruje prípadné staré `ext:true` v uložených šablónach. **Jediná cesta k externej úlohe je teraz výhradne „📨 Dopyty".** Prepínač Interné/Externé v **edit forme existujúcej** úlohy (`toggleTaskExtBtn`, pozri "Interné/Externé kategórie" vyššie) ostáva nedotknutý — rieši preklasifikovanie úloh, ktoré do appky prišli inou cestou (vytvorené priamo v Caflou, alebo staré úlohy spred tejto zmeny), nie vytváranie nových.
 
 ### Notifikačné badges
 
