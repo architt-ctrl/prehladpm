@@ -2322,15 +2322,17 @@ function buildDopytDetailHtml(r) {
     </div>`;
   }).join('') || '<div style="font-size:12px;color:var(--text3);padding:4px 0">Zatiaľ žiadna ponuka.</div>';
 
+  // Striktne vyfiltrované len na profesistov danej profesie (nie len "zoradené navrch", ako predtým) -
+  // Jozef: "ked vyberam profesistu na ZTI nemam vyfiltrovaných iba profesistov ktorí robia ZTI".
+  // Rovnaký vzor rozdelenia profession-stringu ako filterSpecDropdown (task edit forma) - konzistentné
+  // so zvyškom appky, žiadna "iné profesie" úniková skupina (ak profesista chýba, treba ho doplniť/
+  // opraviť profesiu v ponuky.html, nie obchádzať filter tu).
+  const splitProfsForSpec = s => (s.profession||'').split(',').map(p=>p.trim()).filter(Boolean);
   const usedSpecIds = new Set(c.invs.map(i => i.specialist_id));
   const specOptions = (specialistsList||[])
-    .filter(s => !usedSpecIds.has(s.id))
-    .sort((a,b) => {
-      const am = (a.profession||'').includes(r.profession) ? 0 : 1;
-      const bm = (b.profession||'').includes(r.profession) ? 0 : 1;
-      return am - bm || a.name.localeCompare(b.name,'sk');
-    })
-    .map(s => `<option value="${s.id}">${s.name}${s.profession ? ' – ' + s.profession : ''}</option>`).join('');
+    .filter(s => !usedSpecIds.has(s.id) && splitProfsForSpec(s).includes(r.profession))
+    .sort((a,b) => a.name.localeCompare(b.name,'sk'))
+    .map(s => `<option value="${s.id}">${s.name}</option>`).join('');
 
   const priceInputs = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
     <label style="font-size:11px;color:var(--text2);min-width:70px">${PONUKY_FAZA_LABEL[faza] || faza}</label>
