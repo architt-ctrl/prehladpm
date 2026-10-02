@@ -2357,6 +2357,8 @@ function buildDopytDetailHtml(r) {
           <span style="flex:1;font-weight:500">${sp?.name || '?'}</span>
           <input type="number" id="dp-editprice-${inv.id}" class="pd-sel" style="font-size:12px;width:110px" value="${price ?? ''}" placeholder="0 €">
         </div>
+        <textarea id="dp-editnote-${inv.id}" class="dennik-input" placeholder="Poznámka…"
+          style="font-size:12px;width:100%;box-sizing:border-box;min-height:50px;resize:vertical;margin-bottom:6px">${(q?.notes||'').replace(/</g,'&lt;')}</textarea>
         <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2);margin-bottom:6px;cursor:pointer">
           <input type="checkbox" id="dp-editexp-${inv.id}" ${hasExpense ? 'checked' : ''} style="margin:0">
           Aktualizovať aj výdavok v Caflou ${hasExpense ? '(zmaže starý, založí nový)' : '(založí nový)'}
@@ -2378,15 +2380,22 @@ function buildDopytDetailHtml(r) {
     } else if (inv.status === 'selected') {
       actions = `<span style="font-size:11px;color:var(--green);font-weight:600">✓ vybraný</span>
         ${hasExpense ? '<span style="font-size:12px" title="Výdavok zapísaný v Caflou">💶</span>' : ''}
-        <button onclick="toggleEditDopytPrice('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Upraviť cenu</button>
+        <button onclick="toggleEditDopytPrice('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Upraviť</button>
         <button onclick="cancelDopytWinner('${inv.id}','${r.id}')" style="font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--text2)">Zrušiť</button>`;
     } else if (inv.status === 'rejected') {
       actions = `<span style="font-size:11px;color:var(--text3)">neúspešný</span>`;
     }
-    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px">
-      <span style="flex:1">${sp?.name || '?'}</span>
-      <span style="min-width:80px;text-align:right;font-weight:500">${priceTxt}</span>
-      <span style="display:flex;gap:4px;flex-shrink:0">${actions}</span>
+    // Poznámka (quotes.notes) zobrazená pod riadkom, ak existuje - inak sa pri už dohodnutom dopyte
+    // (status "selected") nedala vôbec vidieť/doplniť (Jozef, 2026-10-02: "k už dohodnutému dopytu
+    // neviem doplniť poznámku"). Editácia ide cez rovnaké "Upraviť" tlačidlo ako cena (vyššie).
+    const noteHtml = q?.notes ? `<div style="font-size:11px;color:var(--text2);padding:0 0 4px 0;white-space:pre-wrap">${q.notes.replace(/</g,'&lt;')}</div>` : '';
+    return `<div style="padding:5px 0">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+        <span style="flex:1">${sp?.name || '?'}</span>
+        <span style="min-width:80px;text-align:right;font-weight:500">${priceTxt}</span>
+        <span style="display:flex;gap:4px;flex-shrink:0">${actions}</span>
+      </div>
+      ${noteHtml}
     </div>`;
   }).join('') || '<div style="font-size:12px;color:var(--text3);padding:4px 0">Zatiaľ žiadna ponuka.</div>';
 
@@ -2615,6 +2624,7 @@ async function saveEditDopytPrice(invId, reqId) {
   const faza = _dopytyCtx.faza;
   const v = document.getElementById('dp-editprice-' + invId)?.value;
   const updateExpense = document.getElementById('dp-editexp-' + invId)?.checked;
+  const notes = document.getElementById('dp-editnote-' + invId)?.value.trim() || null;
   const newPrice = (v !== '' && v != null) ? Number(v) : null;
 
   const c = await loadDopytInvitations(reqId);
@@ -2633,10 +2643,10 @@ async function saveEditDopytPrice(invId, reqId) {
       newTransferId = await createCaflouExpense(req.caflou_task_id, sp.caflou_company_id, newPrice, `${sp.name} – ${req.profession || ''} – ${faza}`);
     }
     const transferIds = newTransferId ? { [faza]: newTransferId } : {};
-    await sb.from('quotes').update({ prices, caflou_transfer_ids: transferIds }).eq('id', q.id);
+    await sb.from('quotes').update({ prices, notes, caflou_transfer_ids: transferIds }).eq('id', q.id);
     showToast(newTransferId ? 'Cena aj výdavok aktualizované ✓' : 'Cena aktualizovaná, výdavok sa nevytvoril', newTransferId ? 'ok' : 'err');
   } else {
-    await sb.from('quotes').update({ prices }).eq('id', q.id);
+    await sb.from('quotes').update({ prices, notes }).eq('id', q.id);
     showToast('Cena aktualizovaná ✓', 'ok');
   }
 
