@@ -974,13 +974,20 @@ create table employee_tasks (
 - Jeden záznam na špecialistu (unique constraint)
 - `order_data` — rezervované, momentálne sa nepoužíva (poradie projektov je podľa deadline)
 
-### sync-fazy.ps1
+### sync-fazy.ps1 — NAHRADENÉ Apps Script triggerom `syncFazy` (2026-10-14)
 
-PowerShell script that reads projects from Caflou and creates `.lnk` shortcuts in `H:\Spoločné disky\1_PROJEKTY\_Fazy\` grouped by phase. Run after any phase change in Caflou. Uses wildcard path `H:\Spo*disky\...` to avoid PowerShell 5.1 diacritics encoding issues.
+**Pôvodne:** PowerShell script, ktorý Jozef ručne spúšťal (desktop skratka `Sync Fazy.lnk`, `-NoExit -ExecutionPolicy Bypass`) po každej zmene fázy v Caflou — čítal projekty z Caflou a vytváral Windows `.lnk` skratky v `H:\Spoločné disky\1_PROJEKTY\_Fazy\` zoskupené podľa fázy (wildcard path `H:\Spo*disky\...` kvôli PowerShell 5.1 problémom s diakritikou v ceste).
 
-Shortcut on desktop: `Sync Fazy.lnk` (runs with `-NoExit -ExecutionPolicy Bypass`).
+**Prečo zmena:** Jozef chcel to isté automaticky, cez trigger, bez nutnosti ručne spúšťať skript na svojom počítači. **Priamy port do Apps Scriptu nie je možný** — Apps Script bezí na Google serveroch, nemá prístup k lokálnemu `H:` disku ani k `WScript.Shell` COM objektu, ktorý vytváral `.lnk` súbory (tie sú principiálne lokálny-filesystem koncept). Namiesto toho `syncFazy()` (`Code.gs`) vytvára **natívne Google Drive skratky** (`mimeType: application/vnd.google-apps.shortcut`, cez raw Drive API v3 s `ScriptApp.getOAuthToken()` — rovnaký vzor ako `driveApiVytvorPriecinky`) priamo v `_Fazy` priečinku na Shared Drive (nie na lokálnom mounte) — tie sa cez Google Drive for Desktop zosynchronizujú nadol a v Prieskumníkovi vyzerajú/fungujú veľmi podobne ako `.lnk` (ikona skratky, klik otvorí cieľový priečinok). Rozhodnuté s Jozefom (AskUserQuestion) — vybral Drive-natívne skratky + hodinový trigger (rovnaká perióda ako `sledujMaily`/`sledujKomentare`).
 
-Project folders are named `2024-021-NazovProjektu` (4-digit year), Caflou uses `24-021` (2-digit) — the script handles this conversion.
+**Logika 1:1 prevzatá z pôvodného `.ps1`** (mapovanie status/typ → fáza-priečinok, diakritika-stripping, regex zhoda čísla projektu s priečinkom) — overené Node simuláciou nad 8 syntetickými prípadmi (vrátane "neznámy status"/"priečinok nenájdený" edge-case), nie naostro (žiadny Apps Script prístup v danej session).
+
+- `FAZY_STATUS_MAP`/`FAZY_TYPE_MAP`/`FAZY_PRIECINKY` (`Code.gs`) — identické mapovanie ako pôvodné `$StatusMap`/`$TypeMap`/`$FazovePriecinky` v `.ps1`.
+- `syncFazy()` — get-or-create `_Fazy` + všetkých 8 fázových podpriečinkov (`ziskajAlebaVytvorPodpriecinok`), zmaže staré skratky v každom (`file.getMimeType() === 'application/vnd.google-apps.shortcut'` → `setTrashed(true)`), fetchne všetky Caflou projekty (rovnaká paginácia ako `nacitajProjektyCaflou`), pre každý určí fázu (`finished` → Archiv, inak `FAZY_TYPE_MAP` → `FAZY_STATUS_MAP`), nájde priečinok projektu (`cisloNaPrefix` + regex zhoda, rovnaký `\b` word-boundary vzor ako `.ps1`), vytvorí skratku (`vytvorDriveShortcut`). Chyby/preskočené projekty (neznámy status, nenájdený priečinok) len `Logger.log`, nič nehádže — appka (index.html) sa na tento trigger nijako nenapája, nemá kde zobraziť toast.
+- **Netreba redeploy** — `syncFazy` nie je `doPost` akcia, bežná gotcha o redeployi pri zmene webapp endpointu sa netýka (rovnako ako `sledujMaily`/`sledujKomentare`/`sledujPrilohy`). **Treba ale** (1) nahradiť celý obsah Apps Script editora aktuálnym `Code.gs` (Ctrl+A → paste, rovnaký vzor ako pri iných triggeroch) a (2) ručne nastaviť nový time-driven trigger (Triggers → Add Trigger → `syncFazy` → Time-driven → Hour timer → Every hour).
+- **Pôvodný `sync-fazy.ps1` a desktop skratka `Sync Fazy.lnk` ostávajú v repe/na počítači nedotknuté** (zámerne nezmazané, rovnaká opatrnosť ako pri iných "vyradených" nástrojoch v tomto repe) — po nastavení triggeru sú redundantné, Jozef ich môže ďalej nepoužívať, netreba nič aktívne odstraňovať.
+
+Project folders are named `2024-021-NazovProjektu` (4-digit year), Caflou uses `24-021` (2-digit) — both the old script and the new trigger handle this conversion the same way (`cisloNaPrefix`).
 
 ### suhrn.html
 

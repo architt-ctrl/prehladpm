@@ -120,6 +120,122 @@ function nacitajProjektyCaflou() {
   return map;
 }
 
+// ── SYNC FÁZY — nahradenie sync-fazy.ps1, Drive-natívne skratky namiesto .lnk (2026-10-14) ──
+// Apps Script bezí na Google serveroch, nemá prístup k lokálnemu H: disku ani WScript.Shell
+// COM objektu (ten vytváral .lnk) - namiesto Windows skratiek vytvára NATÍVNE Google Drive
+// skratky (mimeType application/vnd.google-apps.shortcut) priamo v _Fazy priečinku na Shared
+// Drive - tie sa cez Google Drive for Desktop zosynchronizujú a v Prieskumníkovi fungujú
+// rovnako (ikona skratky, klik otvorí cieľový priečinok). Pôvodný sync-fazy.ps1 (lokálny
+// PowerShell, .lnk, ručné spúšťanie) ostáva v repe len ako záloha/referencia.
+var FAZY_STATUS_MAP = {
+  '0_podklady': 'Studia-Architektura',
+  '1_studia': 'Studia-Architektura',
+  '2_sz': 'Projekcia-SZ',
+  '3_dsp': 'Projekcia-PS',
+  '3_ps': 'Projekcia-PS',
+  '4_rp': 'Projekcia-RP',
+  '5_inziniering': 'Inziniering',
+  '6_autorsky dozor': 'Inziniering'
+};
+var FAZY_TYPE_MAP = {
+  'interier': 'Studia-Interior',
+  'uzemne plany': 'Projekcia-UP'
+};
+var FAZY_PRIECINKY = ['Studia-Architektura', 'Studia-Interior', 'Projekcia-SZ', 'Projekcia-PS', 'Projekcia-RP', 'Projekcia-UP', 'Inziniering', 'Archiv'];
+
+function fazaStripDiakritika(s) {
+  if (!s) return '';
+  return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+function vytvorDriveShortcut(parentFolderId, targetFolderId, name, token) {
+  var resp = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + token },
+    payload: JSON.stringify({
+      name: name,
+      mimeType: 'application/vnd.google-apps.shortcut',
+      parents: [parentFolderId],
+      shortcutDetails: { targetId: targetFolderId }
+    }),
+    muteHttpExceptions: true
+  });
+  return JSON.parse(resp.getContentText());
+}
+
+function syncFazy() {
+  var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+  var fazyRoot = ziskajAlebaVytvorPodpriecinok(root, '_Fazy');
+  var token = ScriptApp.getOAuthToken();
+
+  // priprav cieľové priečinky + zmaž staré skratky v každom (rovnaký "zmaž a vytvor znova" vzor ako pôvodný .ps1)
+  var cielPriecinky = {};
+  FAZY_PRIECINKY.forEach(function(name) {
+    var f = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
+    cielPriecinky[name] = f;
+    var fi = f.getFiles();
+    while (fi.hasNext()) {
+      var file = fi.next();
+      if (file.getMimeType() === 'application/vnd.google-apps.shortcut') file.setTrashed(true);
+    }
+  });
+
+  var projekty = [];
+  var page = 1;
+  while (true) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/projects?per=100&page=' + page, {
+      headers: { Authorization: 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    var d = JSON.parse(resp.getContentText());
+    (d.results || []).forEach(function(p) { if (!p.trash && !p.template) projekty.push(p); });
+    if (!d.next_page) break;
+    page++;
+  }
+
+  var vsetkyFoldre = [];
+  var rfi = root.getFolders();
+  while (rfi.hasNext()) {
+    var rf = rfi.next();
+    var n = rf.getName();
+    if (n !== '__strom_suborov' && n !== '_Fazy') vsetkyFoldre.push(rf);
+  }
+
+  var vytvorene = 0, nenajdene = [];
+  projekty.forEach(function(p) {
+    var cislo = p.order_number;
+    if (!cislo) return;
+
+    var fazaDir;
+    if (p.finished) {
+      fazaDir = 'Archiv';
+    } else {
+      var statusKey = fazaStripDiakritika(p.project_status_name);
+      var typeKey = fazaStripDiakritika(p.project_type_name);
+      if (FAZY_TYPE_MAP[typeKey]) fazaDir = FAZY_TYPE_MAP[typeKey];
+      else if (FAZY_STATUS_MAP[statusKey]) fazaDir = FAZY_STATUS_MAP[statusKey];
+      else { nenajdene.push(cislo + ' (neznámy status: ' + p.project_status_name + ')'); return; }
+    }
+
+    var prefix = cisloNaPrefix(cislo);
+    var re = new RegExp('^(' + prefix + '|' + cislo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')\\b');
+    var folder = null;
+    for (var i = 0; i < vsetkyFoldre.length; i++) {
+      if (re.test(vsetkyFoldre[i].getName())) { folder = vsetkyFoldre[i]; break; }
+    }
+    if (!folder) { nenajdene.push(cislo + ' (priečinok nenájdený)'); return; }
+
+    var cielFolder = cielPriecinky[fazaDir];
+    var meno = cislo + ' ' + p.name;
+    var vysl = vytvorDriveShortcut(cielFolder.getId(), folder.getId(), meno, token);
+    if (vysl.id) vytvorene++;
+    else nenajdene.push(cislo + ' (shortcut zlyhal: ' + JSON.stringify(vysl).slice(0, 150) + ')');
+  });
+
+  Logger.log('syncFazy: vytvorené ' + vytvorene + ' skratiek' + (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
+}
+
 function formatDatumSk(iso) {
   var dt = new Date(iso);
   return dt.getDate() + '.' + (dt.getMonth() + 1) + '.' + dt.getFullYear();
