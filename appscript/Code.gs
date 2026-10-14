@@ -148,20 +148,53 @@ function fazaStripDiakritika(s) {
   return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
 
-function vytvorDriveShortcut(parentFolderId, targetFolderId, name, token) {
-  var resp = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id', {
-    method: 'post',
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + token },
-    payload: JSON.stringify({
-      name: name,
-      mimeType: 'application/vnd.google-apps.shortcut',
-      parents: [parentFolderId],
-      shortcutDetails: { targetId: targetFolderId }
-    }),
-    muteHttpExceptions: true
+function chunkArray(arr, size) {
+  var out = [];
+  for (var i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// Paralelné mazanie (PATCH trashed:true) - Drive API súbežnosť toleruje bez problému
+// (rovnaký princíp ako driveApiVytvorPriecinky), na rozdiel od sekvenčného DriveApp
+// setTrashed() volania súbor po súbore, ktoré bolo pri ~desiatkach skratiek citeľne pomalé.
+function driveApiTrashFiles(fileIds, token) {
+  chunkArray(fileIds, 50).forEach(function(chunk) {
+    var requests = chunk.map(function(id) {
+      return {
+        url: 'https://www.googleapis.com/drive/v3/files/' + id + '?supportsAllDrives=true',
+        method: 'patch',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + token },
+        payload: JSON.stringify({ trashed: true }),
+        muteHttpExceptions: true
+      };
+    });
+    UrlFetchApp.fetchAll(requests);
   });
-  return JSON.parse(resp.getContentText());
+}
+
+// Paralelné vytvorenie Drive skratiek - items: [{name, parentFolderId, targetFolderId}]
+function driveApiVytvorShortcuty(items, token) {
+  var vysledky = [];
+  chunkArray(items, 50).forEach(function(chunk) {
+    var requests = chunk.map(function(it) {
+      return {
+        url: 'https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id',
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + token },
+        payload: JSON.stringify({
+          name: it.name,
+          mimeType: 'application/vnd.google-apps.shortcut',
+          parents: [it.parentFolderId],
+          shortcutDetails: { targetId: it.targetFolderId }
+        }),
+        muteHttpExceptions: true
+      };
+    });
+    UrlFetchApp.fetchAll(requests).forEach(function(r) { vysledky.push(JSON.parse(r.getContentText())); });
+  });
+  return vysledky;
 }
 
 function syncFazy() {
@@ -169,19 +202,22 @@ function syncFazy() {
   var fazyRoot = ziskajAlebaVytvorPodpriecinok(root, '_Fazy');
   var token = ScriptApp.getOAuthToken();
 
-  // priprav cieľové priečinky + zmaž staré skratky v každom (rovnaký "zmaž a vytvor znova" vzor ako pôvodný .ps1)
+  // priprav cieľové priečinky + zbieraj ID všetkých starých súborov na zmazanie (len enumerácia,
+  // žiadne mazanie zatiaľ - mazanie bezí naraz paralelne nižšie)
   var cielPriecinky = {};
+  var naZmazanie = [];
   FAZY_PRIECINKY.forEach(function(name) {
     var f = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
     cielPriecinky[name] = f;
-    // Zmaž VŠETKY súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
-    // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
-    // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
-    // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
-    // presne to spôsobilo "všetko 2x").
     var fi = f.getFiles();
-    while (fi.hasNext()) fi.next().setTrashed(true);
+    while (fi.hasNext()) naZmazanie.push(fi.next().getId());
   });
+  // Zmaž VŠETKY staré súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
+  // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
+  // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
+  // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
+  // presne to spôsobilo "všetko 2x").
+  driveApiTrashFiles(naZmazanie, token);
 
   var projekty = [];
   var page = 1;
@@ -204,7 +240,8 @@ function syncFazy() {
     if (n !== '__strom_suborov' && n !== '_Fazy') vsetkyFoldre.push(rf);
   }
 
-  var vytvorene = 0, nenajdene = [];
+  // Priprav zoznam skratiek na vytvorenie (len mapovanie v pamäti, žiadne Drive volanie zatiaľ)
+  var naVytvorenie = [], nenajdene = [];
   projekty.forEach(function(p) {
     var cislo = p.order_number;
     if (!cislo) return;
@@ -228,11 +265,16 @@ function syncFazy() {
     }
     if (!folder) { nenajdene.push(cislo + ' (priečinok nenájdený)'); return; }
 
-    var cielFolder = cielPriecinky[fazaDir];
-    var meno = cislo + ' ' + p.name;
-    var vysl = vytvorDriveShortcut(cielFolder.getId(), folder.getId(), meno, token);
-    if (vysl.id) vytvorene++;
-    else nenajdene.push(cislo + ' (shortcut zlyhal: ' + JSON.stringify(vysl).slice(0, 150) + ')');
+    naVytvorenie.push({ name: cislo + ' ' + p.name, parentFolderId: cielPriecinky[fazaDir].getId(), targetFolderId: folder.getId() });
+  });
+
+  // Vytvor všetky skratky naraz paralelne (rovnaký dôvod ako mazanie vyššie - pri ~desiatkach
+  // sekvenčných POST volaní to bolo citeľne pomalé, Jozef nahlásil "dosť dlho to trvá")
+  var vysledky = driveApiVytvorShortcuty(naVytvorenie, token);
+  var vytvorene = 0;
+  vysledky.forEach(function(v, i) {
+    if (v && v.id) vytvorene++;
+    else nenajdene.push(naVytvorenie[i].name + ' (shortcut zlyhal: ' + JSON.stringify(v).slice(0, 150) + ')');
   });
 
   Logger.log('syncFazy: vytvorené ' + vytvorene + ' skratiek' + (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
