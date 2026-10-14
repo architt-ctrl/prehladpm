@@ -3595,10 +3595,14 @@ async function bulkCheckProjectFolders() {
 }
 
 // ── VYJADRENIA A STANOVISKÁ OD ÚRADOV / SPRÁVCOV SIETÍ ──────────────────────
-// Apps Script trigger sledujVyjadrenia (appscript/Code.gs) sleduje priečinok
-// 20_KOORDINACIA/VYJADRENIA v každom projekte, nové súbory prečíta cez OCR+Gemini
-// a zapíše do Supabase project_vyjadrenia. Tu sa len bulk-loaduje počet + najbližší
-// termin_reakcie pre odznak na riadku; detail sa fetchuje lazy pri otvorení modálu.
+// Apps Script trigger sledujVyjadrenia (appscript/Code.gs) sleduje OSOBITNE pre každú fázu
+// priečinky 30_FAZY/FS3A_ZAMER_STAVBY/02_INZINIERING/02_VYJADRENIA a
+// 30_FAZY/FS3A_PROJEKT_STAVBY/02_INZINIERING/02_VYJADRENIA (prerobené z pôvodného jedného
+// spoločného 20_KOORDINACIA/VYJADRENIA 2026-10-14, podľa správnej šablóny priečinka), nové
+// súbory prečíta cez OCR+Gemini a zapíše do Supabase project_vyjadrenia s poľom faza. Tu sa
+// len bulk-loaduje počet + najbližší termin_reakcie pre odznak na riadku; detail sa fetchuje
+// lazy pri otvorení modálu.
+const VYJADRENIA_FAZA_LABEL = { 'FS3A_ZAMER_STAVBY': 'Stavebný zámer', 'FS3A_PROJEKT_STAVBY': 'Projekt stavby' };
 async function loadVyjadreniaMap() {
   const { data } = await sb.from('project_vyjadrenia').select('cislo,termin_reakcie');
   vyjadreniaMap = {};
@@ -3738,6 +3742,7 @@ function renderVyjadreniaModal() {
           ${vyjadrenieStavBadge(r.stav)}
           ${pdStatusBadge(pdStatus)}
         </div>
+        ${r.faza ? `<div style="font-size:10px;color:var(--text3);margin-top:2px">${VYJADRENIA_FAZA_LABEL[r.faza] || r.faza}</div>` : ''}
         ${r.cislo_vyjadrenia ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">č. ${r.cislo_vyjadrenia}</div>` : ''}
         <div style="font-size:11px;color:var(--text3);margin-top:2px">
           ${r.datum_dokumentu ? 'Dokument: ' + r.datum_dokumentu : ''}
@@ -3764,7 +3769,7 @@ function renderVyjadreniaModal() {
         <button onclick="deleteVyjadrenie('${r.id}')" title="Vymazať" style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px">✕</button>
       </div>
     </div>`;
-  }).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 20_KOORDINACIA/VYJADRENIA.</div>';
+  }).join('') : '<div style="font-size:12px;color:var(--text3);padding:8px 0">Zatiaľ žiadne vyjadrenia — appka ich sama pridá, keď pribudne nový súbor do 30_FAZY/{Stavebný zámer alebo Projekt stavby}/02_INZINIERING/02_VYJADRENIA.</div>';
   el.innerHTML = `
     <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:8px">
       ${rows.length ? `<button onclick="shareVyjadreniaLink('${cislo}')" title="Skopírovať odkaz na zoznam pre klienta (bez interných tlačidiel)" style="background:none;border:1px solid var(--blue);border-radius:7px;padding:5px 10px;font-size:11px;cursor:pointer;color:var(--blue)">🔗 Zdieľať s klientom</button>` : ''}

@@ -1464,18 +1464,45 @@ function testPeople() {
   Logger.log(JSON.stringify(resp));
 }
 
-// ── VYJADRENIA A STANOVISKÁ OD ÚRADOV / SPRÁVCOV SIETÍ (2026-09-30) ───────────
-// Sleduje priečinok 20_KOORDINACIA/VYJADRENIA v každom projekte (get-or-create,
-// takže ho netreba ručne zakladať v starších projektoch), nové súbory prečíta cez
-// OCR (fileToText) + Gemini a zapíše ako záznam do Supabase project_vyjadrenia.
-// Vedomé rozhodnutie (Jozef): žiadny status-workflow, len organ/dátum/termín/zhrnutie
-// + odkaz na súbor.
+// ── VYJADRENIA A STANOVISKÁ OD ÚRADOV / SPRÁVCOV SIETÍ (2026-09-30, prerobené na fázové
+// priečinky 2026-10-14) ───────────────────────────────────────────────────────────────
+// Pôvodne sledoval jeden spoločný priečinok 20_KOORDINACIA/VYJADRENIA na projekt. Jozef
+// upresnil, že "po správnosti" vyjadrenia patria osobitne do každej fázy, presne podľa
+// šablóny projektového priečinka: 30_FAZY/FS3A_ZAMER_STAVBY/02_INZINIERING/02_VYJADRENIA
+// a 30_FAZY/FS3A_PROJEKT_STAVBY/02_INZINIERING/02_VYJADRENIA (jediné dve fázy, ktoré v
+// šablóne tento podpriečinok majú - Jozef rozhodol, že Štúdia/Výber zhotoviteľa/Odovzdanie
+// sa riešiť nemajú, zodpovedá to realite procesu - vyjadrenia od úradov/správcov sietí sa
+// riešia práve počas povoľovania v SZ/PS). Nové súbory prečíta cez OCR (fileToText) +
+// Gemini a zapíše ako záznam do Supabase project_vyjadrenia, s poľom faza = názov
+// fázového priečinka, kde sa súbor fyzicky nachádzal. Staré záznamy zo spoločného
+// priečinka presúva jednorazová migrácia presunVyjadreniaPodlaFazy() nižšie.
+
+var VYJADRENIA_FAZY = ['FS3A_ZAMER_STAVBY', 'FS3A_PROJEKT_STAVBY'];
 
 // Drive priečinok "2026-026-Nazov" → dashboard "26-026". Reverzná funkcia k cisloNaPrefix,
 // ktorá predtým v repe nikde neexistovala.
 function folderNameNaCislo(name) {
   var m = String(name || '').match(/^20(\d{2})-(\d{3})/);
   return m ? (m[1] + '-' + m[2]) : null;
+}
+
+// 30_FAZY/{fazaDir}/02_INZINIERING/02_VYJADRENIA - get-or-create celej cesty, takže aj
+// projekty, ktoré napr. nemajú 02_INZINIERING vôbec, dostanú chýbajúce priečinky automaticky.
+function najdiVyjadreniaFazaFolder(projFolder, fazaDir) {
+  var fazyRoot = ziskajAlebaVytvorPodpriecinok(projFolder, '30_FAZY');
+  var fazaFolder = ziskajAlebaVytvorPodpriecinok(fazyRoot, fazaDir);
+  var inzFolder = ziskajAlebaVytvorPodpriecinok(fazaFolder, '02_INZINIERING');
+  return ziskajAlebaVytvorPodpriecinok(inzFolder, '02_VYJADRENIA');
+}
+
+// Aktuálny Caflou status projektu → ktorá z VYJADRENIA_FAZY (alebo null, ak projekt
+// momentálne nie je v SZ ani PS - napr. RP/Štúdia/Inžiniering/Archív). Zdieľa
+// fazaStripDiakritika so syncFazy().
+function urciVyjadreniaFazu(statusName) {
+  var statusKey = fazaStripDiakritika(statusName);
+  if (statusKey === '2_sz') return 'FS3A_ZAMER_STAVBY';
+  if (statusKey === '3_dsp' || statusKey === '3_ps') return 'FS3A_PROJEKT_STAVBY';
+  return null;
 }
 
 function zapisDoSupabaseVyjadrenie(entry) {
@@ -1507,102 +1534,99 @@ function spracujProjektVyjadrenia(cislo, projFolder, budget) {
   var spracovaneSet = {};
   spracovane.forEach(function(id) { spracovaneSet[id] = true; });
 
-  var koordFolder = ziskajAlebaVytvorPodpriecinok(projFolder, '20_KOORDINACIA');
-  var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
-
-  // DOČASNÁ DIAGNOSTIKA (2026-09-30) - koľko súborov appka reálne vidí v priečinku
-  var debugAllFiles = [];
-  var fiDebug = vyjFolder.getFiles();
-  while (fiDebug.hasNext()) { var fd = fiDebug.next(); debugAllFiles.push(fd.getName() + '|' + fd.getId()); }
-
   var novych = 0;
   var errors = [];
-  var debug = {
-    projFolderId: projFolder.getId(),
-    koordFolderId: koordFolder.getId(),
-    vyjFolderId: vyjFolder.getId(),
-    cursorSize: spracovane.length,
-    cursorIds: spracovane,
-    filesSeen: debugAllFiles
-  };
-  var fi = vyjFolder.getFiles();
-  while (fi.hasNext() && budget.zostava > 0) {
-    var file = fi.next();
-    var id = file.getId();
-    if (spracovaneSet[id]) continue;
-    budget.zostava--;
+  var debug = { cursorSize: spracovane.length, folders: [] };
 
-    try {
-      // Súbor nastavíme ako "ktokoľvek s odkazom" hneď pri spracovaní - link v Supabase (file_url) tak
-      // funguje aj pre klienta cez vyjadrenia.html (priečinok VYJADRENIA samotný verejne zdieľaný nie
-      // je), rovnaký princíp ako pri 🧊 IFC náhľade (akcia_findIfcFile).
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      var text = fileToText(id, file.getMimeType());
-      var prompt =
-        'Nasledujúci text je naskenované stanovisko/vyjadrenie od úradu alebo správcu ' +
-        'inžinierskych sietí k projektu stavby. Extrahuj z neho JSON objekt s poľami:\n' +
-        '- organ: názov úradu/inštitúcie/správcu siete, ktorý stanovisko vydal\n' +
-        '- cislo_vyjadrenia: číslo/spisová značka/jednacie číslo dokumentu (napr. "OU-BA-OSZP3-2026/012345"), ' +
-        'alebo null ak nie je uvedené\n' +
-        '- kontakt: meno (a telefón ak je uvedený) osoby, ktorá stanovisko vypracovala alebo je na ' +
-        'ňom podpísaná ako kontaktná osoba (napr. "Ing. Jana Nováková, 0901 234 567"), alebo null ak nie je uvedené\n' +
-        '- kontakt_email: e-mailová adresa tej istej kontaktnej osoby, ak je v dokumente uvedená ' +
-        '(samostatne od poľa kontakt, kvôli klikateľnému odkazu), inak null\n' +
-        '- datum_dokumentu: dátum vydania dokumentu vo formáte YYYY-MM-DD, alebo null ak nie je uvedený\n' +
-        '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
-        'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
-        'formáte YYYY-MM-DD - použi ktorýkoľvek z týchto dvoch, ak je v texte uvedený, inak null\n' +
-        '- stav: jedno slovo hodnotiace celkový výsledok stanoviska - presne jedna z hodnôt ' +
-        '"súhlasné" (bezpodmienečný súhlas, od nás sa už nič ďalšie nežiada), "podmienečné" ' +
-        '(súhlas viazaný na splnenie podmienok/pripomienok, ALEBO odosielateľ od nás niečo žiada ' +
-        'predtým než sa vec posunie ďalej - napr. žiada doplnenie/úpravu podkladov, doplnenie ' +
-        'projektovej dokumentácie a pod. - teda čokoľvek, kde je na našej strane ešte nejaký krok), ' +
-        '"zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (čisto informatívne stanovisko, ' +
-        'ktoré nám len dáva podklady/informácie bez toho, aby od nás niečo žiadalo - napr. vyjadrenie ' +
-        'k existencii sietí, predloženie technických podmienok na pripojenie)\n' +
-        '- pripomienky: pole OBJEKTOV {text, typ} - konkrétne podmienky/pripomienky/požiadavky ' +
-        'uvedené v dokumente (každá položka = jedna vecná podmienka, text stručne preformulovaný, ' +
-        'nie doslovný odsek). typ je presne jedna z hodnôt "projekt" (pripomienka sa týka ' +
-        'projektovej dokumentácie - treba ju zapracovať/zohľadniť v PD skôr než sa postúpi do ' +
-        'ďalšieho stupňa/konania) alebo "realizacia" (pripomienka sa týka až fyzickej realizácie ' +
-        'stavby - treba ju dodržať počas výstavby, ale nevyžaduje zmenu/doplnenie PD teraz). ' +
-        'Prázdne pole [], ak dokument žiadne konkrétne podmienky neuvádza\n' +
-        '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska\n\n' +
-        'Ak niektorý údaj nie je v texte, použi null (okrem pripomienky, tam prázdne pole). ' +
-        'Odpovedaj LEN validným JSON objektom, bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
-      var raw = volajGemini(prompt);
-      var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-      var data = JSON.parse(json);
-      // done je čisto UI stav, dopĺňa/mení ho až Jozef v index.html, nie Gemini. Gemini by mal vrátiť
-      // objekty {text,typ}, ale ak by vrátil holý text (staršie správanie promptu), spadni naň.
-      var pripomienkyObj = (Array.isArray(data.pripomienky) ? data.pripomienky : []).map(function(p) {
-        if (typeof p === 'string') return { text: p, typ: null, done: false };
-        return { text: p.text || '', typ: p.typ || null, done: false };
-      });
-      zapisDoSupabaseVyjadrenie({
-        cislo: cislo,
-        file_id: id,
-        file_name: file.getName(),
-        file_url: file.getUrl(),
-        organ: data.organ || null,
-        cislo_vyjadrenia: data.cislo_vyjadrenia || null,
-        kontakt: data.kontakt || null,
-        kontakt_email: data.kontakt_email || null,
-        datum_dokumentu: data.datum_dokumentu || null,
-        termin_reakcie: data.termin_reakcie || null,
-        stav: data.stav || null,
-        pripomienky: pripomienkyObj,
-        zhrnutie: data.zhrnutie || null
-      });
-      novych++;
-      spracovane.push(id);
-      spracovaneSet[id] = true;
-    } catch(e) {
-      var chybaText = file.getName() + ': ' + e.message;
-      Logger.log('Vyjadrenia - chyba pri spracovaní ' + chybaText + ' (' + cislo + ')');
-      errors.push(chybaText);
+  // Skenuje OBE fázové priečinky (VYJADRENIA_FAZY) naraz - appka nepotrebuje vedieť "aktuálnu
+  // fázu projektu", len fyzicky nájde súbory tam, kde reálne sú.
+  VYJADRENIA_FAZY.forEach(function(fazaDir) {
+    if (budget.zostava <= 0) return;
+    var vyjFolder = najdiVyjadreniaFazaFolder(projFolder, fazaDir);
+    var filesSeen = [];
+
+    var fi = vyjFolder.getFiles();
+    while (fi.hasNext() && budget.zostava > 0) {
+      var file = fi.next();
+      var id = file.getId();
+      filesSeen.push(file.getName() + '|' + id);
+      if (spracovaneSet[id]) continue;
+      budget.zostava--;
+
+      try {
+        // Súbor nastavíme ako "ktokoľvek s odkazom" hneď pri spracovaní - link v Supabase (file_url) tak
+        // funguje aj pre klienta cez vyjadrenia.html (priečinok VYJADRENIA samotný verejne zdieľaný nie
+        // je), rovnaký princíp ako pri 🧊 IFC náhľade (akcia_findIfcFile).
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        var text = fileToText(id, file.getMimeType());
+        var prompt =
+          'Nasledujúci text je naskenované stanovisko/vyjadrenie od úradu alebo správcu ' +
+          'inžinierskych sietí k projektu stavby. Extrahuj z neho JSON objekt s poľami:\n' +
+          '- organ: názov úradu/inštitúcie/správcu siete, ktorý stanovisko vydal\n' +
+          '- cislo_vyjadrenia: číslo/spisová značka/jednacie číslo dokumentu (napr. "OU-BA-OSZP3-2026/012345"), ' +
+          'alebo null ak nie je uvedené\n' +
+          '- kontakt: meno (a telefón ak je uvedený) osoby, ktorá stanovisko vypracovala alebo je na ' +
+          'ňom podpísaná ako kontaktná osoba (napr. "Ing. Jana Nováková, 0901 234 567"), alebo null ak nie je uvedené\n' +
+          '- kontakt_email: e-mailová adresa tej istej kontaktnej osoby, ak je v dokumente uvedená ' +
+          '(samostatne od poľa kontakt, kvôli klikateľnému odkazu), inak null\n' +
+          '- datum_dokumentu: dátum vydania dokumentu vo formáte YYYY-MM-DD, alebo null ak nie je uvedený\n' +
+          '- termin_reakcie: dátum, dokedy je nutné reagovať (napr. termín na doloženie úprav ' +
+          'projektovej dokumentácie) ALEBO dátum platnosti/skončenia platnosti vyjadrenia, vo ' +
+          'formáte YYYY-MM-DD - použi ktorýkoľvek z týchto dvoch, ak je v texte uvedený, inak null\n' +
+          '- stav: jedno slovo hodnotiace celkový výsledok stanoviska - presne jedna z hodnôt ' +
+          '"súhlasné" (bezpodmienečný súhlas, od nás sa už nič ďalšie nežiada), "podmienečné" ' +
+          '(súhlas viazaný na splnenie podmienok/pripomienok, ALEBO odosielateľ od nás niečo žiada ' +
+          'predtým než sa vec posunie ďalej - napr. žiada doplnenie/úpravu podkladov, doplnenie ' +
+          'projektovej dokumentácie a pod. - teda čokoľvek, kde je na našej strane ešte nejaký krok), ' +
+          '"zamietavé" (nesúhlas/zamietnutie), alebo "neutrálne" (čisto informatívne stanovisko, ' +
+          'ktoré nám len dáva podklady/informácie bez toho, aby od nás niečo žiadalo - napr. vyjadrenie ' +
+          'k existencii sietí, predloženie technických podmienok na pripojenie)\n' +
+          '- pripomienky: pole OBJEKTOV {text, typ} - konkrétne podmienky/pripomienky/požiadavky ' +
+          'uvedené v dokumente (každá položka = jedna vecná podmienka, text stručne preformulovaný, ' +
+          'nie doslovný odsek). typ je presne jedna z hodnôt "projekt" (pripomienka sa týka ' +
+          'projektovej dokumentácie - treba ju zapracovať/zohľadniť v PD skôr než sa postúpi do ' +
+          'ďalšieho stupňa/konania) alebo "realizacia" (pripomienka sa týka až fyzickej realizácie ' +
+          'stavby - treba ju dodržať počas výstavby, ale nevyžaduje zmenu/doplnenie PD teraz). ' +
+          'Prázdne pole [], ak dokument žiadne konkrétne podmienky neuvádza\n' +
+          '- zhrnutie: 1-2 vetové zhrnutie obsahu a záveru stanoviska\n\n' +
+          'Ak niektorý údaj nie je v texte, použi null (okrem pripomienky, tam prázdne pole). ' +
+          'Odpovedaj LEN validným JSON objektom, bez markdown, bez vysvetlení.\n\nTEXT DOKUMENTU:\n' + text;
+        var raw = volajGemini(prompt);
+        var json = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+        var data = JSON.parse(json);
+        // done je čisto UI stav, dopĺňa/mení ho až Jozef v index.html, nie Gemini. Gemini by mal vrátiť
+        // objekty {text,typ}, ale ak by vrátil holý text (staršie správanie promptu), spadni naň.
+        var pripomienkyObj = (Array.isArray(data.pripomienky) ? data.pripomienky : []).map(function(p) {
+          if (typeof p === 'string') return { text: p, typ: null, done: false };
+          return { text: p.text || '', typ: p.typ || null, done: false };
+        });
+        zapisDoSupabaseVyjadrenie({
+          cislo: cislo,
+          faza: fazaDir,
+          file_id: id,
+          file_name: file.getName(),
+          file_url: file.getUrl(),
+          organ: data.organ || null,
+          cislo_vyjadrenia: data.cislo_vyjadrenia || null,
+          kontakt: data.kontakt || null,
+          kontakt_email: data.kontakt_email || null,
+          datum_dokumentu: data.datum_dokumentu || null,
+          termin_reakcie: data.termin_reakcie || null,
+          stav: data.stav || null,
+          pripomienky: pripomienkyObj,
+          zhrnutie: data.zhrnutie || null
+        });
+        novych++;
+        spracovane.push(id);
+        spracovaneSet[id] = true;
+      } catch(e) {
+        var chybaText = file.getName() + ' (' + fazaDir + '): ' + e.message;
+        Logger.log('Vyjadrenia - chyba pri spracovaní ' + chybaText + ' (' + cislo + ')');
+        errors.push(chybaText);
+      }
     }
-  }
+    debug.folders.push({ faza: fazaDir, folderId: vyjFolder.getId(), filesSeen: filesSeen });
+  });
 
   if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
   props.setProperty('spracovane_vyjadrenia', JSON.stringify(spracovane));
@@ -1654,10 +1678,28 @@ function akcia_resetVyjadreniaCursor(req) {
   return { ok: true };
 }
 
+// Aktuálny project_status_name pre jedno cislo - jednorazové vyhľadanie v paginovanom
+// zozname Caflou projektov (early-exit pri nájdení), použité v akcia_uploadVyjadrenie
+// a v jednorazovej migrácii presunVyjadreniaPodlaFazy nižšie.
+function najdiCaflouProjektStatus(cislo) {
+  var page = 1;
+  while (true) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/projects?per=100&page=' + page, {
+      headers: { Authorization: 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    var d = JSON.parse(resp.getContentText());
+    var found = (d.results || []).filter(function(p) { return p.order_number === cislo; })[0];
+    if (found) return found.project_status_name;
+    if (!d.next_page) return null;
+    page++;
+  }
+}
+
 // Nahratie nového vyjadrenia priamo z klientského vyjadrenia.html (bez loginu, investor/projektant) -
-// uloží súbor do 20_KOORDINACIA/VYJADRENIA a hneď ho spracuje (OCR+Gemini), rovnaká logika ako
-// "🔄 Skontrolovať teraz" v index.html, len obmedzená na tento jeden nový súbor (budget.zostava malé,
-// cursor zabezpečí že sa neprocesujú staré/už spracované súbory znova).
+// zistí aktuálnu fázu projektu (SZ/PS) a uloží súbor do jej 02_INZINIERING/02_VYJADRENIA, hneď ho
+// spracuje (OCR+Gemini), rovnaká logika ako "🔄 Skontrolovať teraz" v index.html, len obmedzená na
+// tento jeden nový súbor (budget.zostava malé, cursor zabezpečí že sa neprocesujú staré súbory znova).
 function akcia_uploadVyjadrenie(req) {
   var cislo = String(req.cislo || '').trim();
   var fileName = String(req.fileName || 'vyjadrenie').trim();
@@ -1669,8 +1711,9 @@ function akcia_uploadVyjadrenie(req) {
     var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
     var projFolder = najdiProjektFolder(root, cislo);
     if (!projFolder) return { ok: false, error: 'Priečinok projektu sa na Drive nenašiel' };
-    var koordFolder = ziskajAlebaVytvorPodpriecinok(projFolder, '20_KOORDINACIA');
-    var vyjFolder = ziskajAlebaVytvorPodpriecinok(koordFolder, 'VYJADRENIA');
+    var fazaDir = urciVyjadreniaFazu(najdiCaflouProjektStatus(cislo));
+    if (!fazaDir) return { ok: false, error: 'Projekt momentálne nie je v fáze Stavebný zámer ani Projekt stavby - nahrávanie vyjadrení zatiaľ nie je pre tento projekt k dispozícii.' };
+    var vyjFolder = najdiVyjadreniaFazaFolder(projFolder, fazaDir);
     var bytes = Utilities.base64Decode(fileBase64);
     var blob = Utilities.newBlob(bytes, mimeType, fileName);
     vyjFolder.createFile(blob);
@@ -1679,6 +1722,99 @@ function akcia_uploadVyjadrenie(req) {
   } catch(e) {
     return { ok: false, error: e.message };
   }
+}
+
+// ── JEDNORAZOVÁ MIGRÁCIA: presun starých vyjadrení z 20_KOORDINACIA/VYJADRENIA do fázových
+// priečinkov (2026-10-14) ─────────────────────────────────────────────────────────────────
+// Spustiť RUČNE z Apps Script editora (Run > presunVyjadreniaPodlaFazy), len raz - presunie
+// fyzicky súbory z pôvodného spoločného priečinka do správneho fázového podľa AKTUÁLNEHO
+// Caflou statusu projektu (Jozef: "staré vyjadrenia by som chcel presunúť podľa toho, v akej
+// fáze sa projekt nachádza"), a prepíše faza aj na zodpovedajúcom riadku v Supabase (match
+// cez file_id). Projekty momentálne v inej fáze (RP, Štúdia, Inžiniering, Archív...) nemajú
+// jednoznačný cieľ - nič sa nepresúva, len sa nahlási v Logger, Jozef si ich vyrieši manuálne.
+// Idempotentné - opakované spustenie na už presunutý súbor je no-op (v starom priečinku už
+// nebude čo nájsť).
+function presunVyjadreniaPodlaFazy() {
+  var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+  var token = ScriptApp.getOAuthToken();
+
+  var projektyMap = {};
+  var page = 1;
+  while (true) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/projects?per=100&page=' + page, {
+      headers: { Authorization: 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    var d = JSON.parse(resp.getContentText());
+    (d.results || []).forEach(function(p) {
+      if (!p.trash && !p.template && p.order_number) projektyMap[p.order_number] = p;
+    });
+    if (!d.next_page) break;
+    page++;
+  }
+
+  var presunute = 0, nepresunute = [];
+  var rfi = root.getFolders();
+  while (rfi.hasNext()) {
+    var projFolder = rfi.next();
+    var name = projFolder.getName();
+    if (name === '__strom_suborov' || name === '_Fazy') continue;
+    var cislo = folderNameNaCislo(name);
+    if (!cislo) continue;
+
+    var koordFi = projFolder.getFoldersByName('20_KOORDINACIA');
+    if (!koordFi.hasNext()) continue;
+    var staryVyjFi = koordFi.next().getFoldersByName('VYJADRENIA');
+    if (!staryVyjFi.hasNext()) continue;
+    var staryFolder = staryVyjFi.next();
+
+    var subory = [];
+    var fi = staryFolder.getFiles();
+    while (fi.hasNext()) subory.push(fi.next());
+    if (!subory.length) continue;
+
+    var p = projektyMap[cislo];
+    var fazaDir = urciVyjadreniaFazu(p ? p.project_status_name : null);
+    if (!fazaDir) {
+      nepresunute.push(cislo + ' (' + subory.length + ' súborov, status: ' + (p ? p.project_status_name : 'projekt nenájdený v Caflou') + ')');
+      continue;
+    }
+
+    var cielFolder = najdiVyjadreniaFazaFolder(projFolder, fazaDir);
+    subory.forEach(function(file) {
+      var r = UrlFetchApp.fetch('https://www.googleapis.com/drive/v3/files/' + file.getId() +
+        '?addParents=' + cielFolder.getId() + '&removeParents=' + staryFolder.getId() + '&supportsAllDrives=true&fields=id', {
+        method: 'patch',
+        headers: { Authorization: 'Bearer ' + token },
+        muteHttpExceptions: true
+      });
+      var dd = JSON.parse(r.getContentText());
+      if (dd.id) {
+        presunute++;
+        aktualizujFazuVyjadreniaVSupabase(file.getId(), fazaDir);
+      } else {
+        nepresunute.push(cislo + ': ' + file.getName() + ' (presun zlyhal: ' + JSON.stringify(dd).slice(0, 120) + ')');
+      }
+    });
+  }
+
+  Logger.log('presunVyjadreniaPodlaFazy: presunutých ' + presunute + ' súborov' +
+    (nepresunute.length ? '. Nepresunuté/treba riešiť ručne: ' + nepresunute.join('; ') : ''));
+}
+
+function aktualizujFazuVyjadreniaVSupabase(fileId, fazaDir) {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/project_vyjadrenia?file_id=eq.' + encodeURIComponent(fileId), {
+    method: 'patch',
+    contentType: 'application/json',
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+      Prefer: 'return=minimal'
+    },
+    payload: JSON.stringify({ faza: fazaDir }),
+    muteHttpExceptions: true
+  });
+  if (resp.getResponseCode() >= 300) Logger.log('Chyba aktualizácie faza pre file_id ' + fileId + ': ' + resp.getContentText());
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
