@@ -174,11 +174,13 @@ function syncFazy() {
   FAZY_PRIECINKY.forEach(function(name) {
     var f = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
     cielPriecinky[name] = f;
+    // Zmaž VŠETKY súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
+    // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
+    // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
+    // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
+    // presne to spôsobilo "všetko 2x").
     var fi = f.getFiles();
-    while (fi.hasNext()) {
-      var file = fi.next();
-      if (file.getMimeType() === 'application/vnd.google-apps.shortcut') file.setTrashed(true);
-    }
+    while (fi.hasNext()) fi.next().setTrashed(true);
   });
 
   var projekty = [];
