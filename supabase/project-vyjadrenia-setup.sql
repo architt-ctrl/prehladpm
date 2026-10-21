@@ -18,7 +18,6 @@ create table if not exists project_vyjadrenia (
   pripomienky jsonb default '[]'::jsonb,
   zhrnutie text,
   pripnute boolean not null default false,
-  faza text,
   created_at timestamptz not null default now()
 );
 
@@ -37,12 +36,6 @@ alter table project_vyjadrenia add column if not exists pripomienky jsonb defaul
 -- pripnute (2026-10-01): ručné pripnutie vyjadrenia na vrch zoznamu (📌) - nezávislé od
 -- automatického zoraďovania podľa pripomienky[].typ='projekt' (pozri index.html sortVyjadrenia).
 alter table project_vyjadrenia add column if not exists pripnute boolean not null default false;
--- faza (2026-10-14): 'FS3A_ZAMER_STAVBY'|'FS3A_PROJEKT_STAVBY' - názov fázového priečinka
--- (30_FAZY/{faza}/02_INZINIERING/02_VYJADRENIA), kde sa súbor fyzicky nachádza. Pôvodne appka
--- sledovala jeden spoločný priečinok 20_KOORDINACIA/VYJADRENIA bez tohto rozlíšenia - staré
--- záznamy majú faza = null, kým ich nevyrieši jednorazová migrácia presunVyjadreniaPodlaFazy
--- (appscript/Code.gs).
-alter table project_vyjadrenia add column if not exists faza text;
 
 alter table project_vyjadrenia enable row level security;
 

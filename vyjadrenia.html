@@ -121,10 +121,6 @@ function badgeHtml(stav) {
   return `<span class="badge ${cls}">${esc(stav)}</span>`;
 }
 
-function fazaLabel(faza) {
-  return { 'FS3A_ZAMER_STAVBY': 'Stavebný zámer', 'FS3A_PROJEKT_STAVBY': 'Projekt stavby' }[faza] || faza;
-}
-
 function dlClass(termin) {
   if (!termin) return '';
   const d = Math.floor((new Date(termin) - new Date()) / 86400000);
@@ -211,7 +207,6 @@ function render() {
         ${badgeHtml(r.stav)}
         ${pdStatusBadge(pdStatus(r))}
       </div>
-      ${r.faza ? `<div class="cislo-vyj">${esc(fazaLabel(r.faza))}</div>` : ''}
       ${r.cislo_vyjadrenia ? `<div class="cislo-vyj">č. ${esc(r.cislo_vyjadrenia)}</div>` : ''}
       <div class="meta">
         ${r.datum_dokumentu ? 'Dokument: ' + esc(r.datum_dokumentu) : ''}
