@@ -803,6 +803,19 @@ function akcia_findProjectFolderName(req) {
 // aby ho vedel prečítať aj cudzí prehliadač bez prístupu do firemného Drive
 // (cez Drive API + API kľúč). Volané VŽDY nanovo pri klikutí na 🧊 v dashboarde
 // (žiadny trvalý cache-skip) — práve preto, aby výmena súboru bola vidno hneď.
+// Najnovšie upravený .ifc súbor priamo (neREKURZÍVNE) v danom priečinku, alebo null.
+function najdiNajnovsiIfc(folder) {
+  var files = folder.getFiles();
+  var ifcFile = null;
+  while (files.hasNext()) {
+    var file = files.next();
+    if (file.getName().toLowerCase().indexOf('.ifc') === file.getName().length - 4) {
+      if (!ifcFile || file.getLastUpdated().getTime() > ifcFile.getLastUpdated().getTime()) ifcFile = file;
+    }
+  }
+  return ifcFile;
+}
+
 function akcia_findIfcFile(req) {
   var cislo = String(req.cislo || '').trim();
   if (!cislo) return { ok: false, error: 'Chýba cislo' };
@@ -812,18 +825,16 @@ function akcia_findIfcFile(req) {
     if (!projFolder) return { ok: false, error: 'Priečinok projektu ' + cislo + ' sa na Drive nenašiel' };
     var ki = projFolder.getFoldersByName('20_KOORDINACIA');
     if (!ki.hasNext()) return { ok: false, error: 'Priečinok 20_KOORDINACIA sa v projekte nenašiel' };
-    var ai = ki.next().getFoldersByName('ARCHITEKTURA');
-    if (!ai.hasNext()) return { ok: false, error: 'Priečinok ARCHITEKTURA sa v 20_KOORDINACIA nenašiel' };
-    var archFolder = ai.next();
-    var files = archFolder.getFiles();
-    var ifcFile = null;
-    while (files.hasNext()) {
-      var file = files.next();
-      if (file.getName().toLowerCase().indexOf('.ifc') === file.getName().length - 4) {
-        if (!ifcFile || file.getLastUpdated().getTime() > ifcFile.getLastUpdated().getTime()) ifcFile = file;
-      }
+    var koordFolder = ki.next();
+
+    // Najprv priamo v 20_KOORDINACIA (Jozef, 2026-10-21) - až keď tam nič nie je, padá na
+    // pôvodné miesto v podpriečinku ARCHITEKTURA.
+    var ifcFile = najdiNajnovsiIfc(koordFolder);
+    if (!ifcFile) {
+      var ai = koordFolder.getFoldersByName('ARCHITEKTURA');
+      if (ai.hasNext()) ifcFile = najdiNajnovsiIfc(ai.next());
     }
-    if (!ifcFile) return { ok: false, error: 'V ARCHITEKTURA sa nenašiel žiadny .ifc súbor' };
+    if (!ifcFile) return { ok: false, error: 'V 20_KOORDINACIA ani v ARCHITEKTURA sa nenašiel žiadny .ifc súbor' };
     ifcFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     return { ok: true, fileId: ifcFile.getId(), name: ifcFile.getName() };
   } catch(e) {
