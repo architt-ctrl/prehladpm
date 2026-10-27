@@ -926,14 +926,27 @@ function sledujPrilohy() {
         return;
       }
 
-      attachments.forEach(function(att) { cielovyPriecinok.createFile(att); });
+      // Prílohy idú do podpriečinka s dátumom spracovania (nie dátumom mailu), nie priamo do
+      // profesijného priečinka - Jozef, 2026-10-27: pri opakovaných revíziách/dohodách si vie
+      // podľa dátumu hneď overiť, čo a kedy prišlo, bez prehľadávania celej zmesi súborov.
+      var datumPriecinok = ziskajAlebaVytvorPodpriecinok(cielovyPriecinok, formatDatumPriecinka(new Date()));
+      attachments.forEach(function(att) { datumPriecinok.createFile(att); });
       thread.addLabel(labelSpracovane);
-      Logger.log('Uložené (' + attachments.length + ' príloh) "' + subject + '" → ' + cielovyPriecinok.getName());
+      Logger.log('Uložené (' + attachments.length + ' príloh) "' + subject + '" → ' + cielovyPriecinok.getName() + '/' + datumPriecinok.getName());
     });
   });
 
   if (spracovane.length > 1000) spracovane = spracovane.slice(-1000);
   props.setProperty('spracovane_prilohy', JSON.stringify(spracovane));
+}
+
+// "2026-10-27" - dátum spracovania (nie dátum mailu) na podpriečinok prílohy v sledujPrilohy,
+// zámerne sortovateľný formát.
+function formatDatumPriecinka(d) {
+  var r = d.getFullYear();
+  var m = ('0' + (d.getMonth() + 1)).slice(-2);
+  var dd = ('0' + d.getDate()).slice(-2);
+  return r + '-' + m + '-' + dd;
 }
 
 // Vynecháva typické embedded logá/ikonky z mailových podpisov, ktoré Gmail niekedy
