@@ -202,23 +202,21 @@ function syncFazy() {
   var fazyRoot = ziskajAlebaVytvorPodpriecinok(root, '_Fazy');
   var token = ScriptApp.getOAuthToken();
 
-  // priprav cieľové priečinky + zbieraj ID všetkých starých súborov na zmazanie (len enumerácia,
-  // žiadne mazanie zatiaľ - mazanie bezí naraz paralelne nižšie)
+  // Len get-or-create cieľových priečinkov (nedeštruktívne) - mazanie starých skratiek sa
+  // presunulo až na koniec funkcie, pozri gotcha nižšie.
   var cielPriecinky = {};
-  var naZmazanie = [];
   FAZY_PRIECINKY.forEach(function(name) {
-    var f = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
-    cielPriecinky[name] = f;
-    var fi = f.getFiles();
-    while (fi.hasNext()) naZmazanie.push(fi.next().getId());
+    cielPriecinky[name] = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
   });
-  // Zmaž VŠETKY staré súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
-  // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
-  // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
-  // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
-  // presne to spôsobilo "všetko 2x").
-  driveApiTrashFiles(naZmazanie, token);
 
+  // Gotcha (2026-11-05, Jozef nahlásil "skratky k projektom mi zmizli"): pôvodne sa VŠETKY staré
+  // skratky zmazali HNEĎ na začiatku, ešte PRED fetchom projektov z Caflou. Caflou paginovaný
+  // /projects endpoint vie zlyhať/vrátiť čiastočnú odpoveď (rate limit, timeout - rovnaký
+  // zdokumentovaný problém ako pri /tasks/comments) a kód to nekontroloval (žiadny d.error check,
+  // predčasné `break` pri chýbajúcom next_page) - pri takom zlyhaní ostali priečinky vymazané
+  // a nahradili sa len čiastočným (alebo žiadnym) zoznamom. Teraz fetch beží PRVÝ, mazanie
+  // AŽ KEĎ je kompletný zoznam nových skratiek pripravený (na konci funkcie) - pri zlyhaní/
+  // podozrivo prázdnej odpovedi sa funkcia skončí skôr, než sa čohokoľvek v _Fazy dotkne.
   var projekty = [];
   var page = 1;
   while (true) {
@@ -227,9 +225,18 @@ function syncFazy() {
       muteHttpExceptions: true
     });
     var d = JSON.parse(resp.getContentText());
+    if (d.error) {
+      Logger.log('syncFazy: Caflou chyba na stránke ' + page + ' - ' + JSON.stringify(d.error) + ' - KONČÍM BEZ ZMENY (staré skratky ostávajú nedotknuté)');
+      return;
+    }
     (d.results || []).forEach(function(p) { if (!p.trash && !p.template) projekty.push(p); });
     if (!d.next_page) break;
     page++;
+  }
+
+  if (!projekty.length) {
+    Logger.log('syncFazy: Caflou vrátilo 0 projektov - KONČÍM BEZ ZMENY (bezpečnostná poistka, staré skratky ostávajú nedotknuté)');
+    return;
   }
 
   var vsetkyFoldre = [];
@@ -267,6 +274,21 @@ function syncFazy() {
 
     naVytvorenie.push({ name: cislo + ' ' + p.name, parentFolderId: cielPriecinky[fazaDir].getId(), targetFolderId: folder.getId() });
   });
+
+  // Mazanie starých skratiek AŽ TERAZ (pozri gotcha pri Caflou fetchi vyššie) - zoznam nových
+  // skratiek je už kompletne zostavený, takže okno medzi zmazaním a vytvorením nových je
+  // minimálne a nezávisí od toho, či Caflou fetch/mapovanie prebehlo bez problémov.
+  var naZmazanie = [];
+  FAZY_PRIECINKY.forEach(function(name) {
+    var fi = cielPriecinky[name].getFiles();
+    while (fi.hasNext()) naZmazanie.push(fi.next().getId());
+  });
+  // Zmaž VŠETKY staré súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
+  // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
+  // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
+  // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
+  // presne to spôsobilo "všetko 2x").
+  driveApiTrashFiles(naZmazanie, token);
 
   // Vytvor všetky skratky naraz paralelne (rovnaký dôvod ako mazanie vyššie - pri ~desiatkach
   // sekvenčných POST volaní to bolo citeľne pomalé, Jozef nahlásil "dosť dlho to trvá")
