@@ -154,18 +154,26 @@ function chunkArray(arr, size) {
   return out;
 }
 
-// Paralelné mazanie (PATCH trashed:true) - Drive API súbežnosť toleruje bez problému
-// (rovnaký princíp ako driveApiVytvorPriecinky), na rozdiel od sekvenčného DriveApp
+// Paralelné TRVALÉ mazanie (DELETE, nie PATCH trashed:true) - Drive API súbežnosť toleruje bez
+// problému (rovnaký princíp ako driveApiVytvorPriecinky), na rozdiel od sekvenčného DriveApp
 // setTrashed() volania súbor po súbore, ktoré bolo pri ~desiatkach skratiek citeľne pomalé.
+//
+// Gotcha (2026-11-05, Jozef nahlásil "skratky k projektom mi zmizli" - diagnostikované naostro
+// cez Drive UI chybu "Tejto položke nie je možné vytvoriť žiadne ďalšie zástupce"): pôvodne sa
+// staré skratky len presúvali do Koša (`trashed:true`), nikdy sa odtiaľ trvalo nemazali. Google
+// Drive má limit na počet skratiek smerujúcich na ten istý cieľ a položky v Koši sa doň STÁLE
+// počítajú - keďže syncFazy beží hodinovo a Kôš sa nikdy nevyprázdňoval, počet (aj trashnutých)
+// skratiek na jeden cieľový priečinok sa časom vyšplhal na limit a vytváranie nových skratiek
+// začalo zlyhávať so 403 Forbidden. Keďže tieto priečinky slúžia VÝHRADNE na vygenerované
+// skratky (nič iné sem nepatrí), trvalé mazanie je tu bezpečné - skratky sa aj tak každú hodinu
+// vytvárajú nanovo.
 function driveApiTrashFiles(fileIds, token) {
   chunkArray(fileIds, 50).forEach(function(chunk) {
     var requests = chunk.map(function(id) {
       return {
         url: 'https://www.googleapis.com/drive/v3/files/' + id + '?supportsAllDrives=true',
-        method: 'patch',
-        contentType: 'application/json',
+        method: 'delete',
         headers: { Authorization: 'Bearer ' + token },
-        payload: JSON.stringify({ trashed: true }),
         muteHttpExceptions: true
       };
     });
@@ -300,6 +308,36 @@ function syncFazy() {
   });
 
   Logger.log('syncFazy: vytvorené ' + vytvorene + ' skratiek' + (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
+}
+
+// JEDNORAZOVÁ čistiaca funkcia (2026-11-05) - spustiť RUČNE raz z editora, nie je to trigger.
+// Vyčistí backlog starých trashnutých skratiek, ktoré sa od zavedenia driveApiTrashFiles
+// (predtým PATCH trashed:true, teraz DELETE - pozri gotcha pri tej funkcii) nahromadili v Koši
+// zdieľaného disku a blokovali vytváranie nových skratiek ("Tejto položke nie je možné vytvoriť
+// žiadne ďalšie zástupce" - Google Drive počíta trashnuté položky do limitu skratiek na jeden
+// cieľ). Bežný beh syncFazy toto samo nevyrieši - DriveApp.getFiles() trashnuté položky
+// nevracia, takže ich nikdy "nevidí" na zmazanie. Hľadá LEN trashnuté Drive-natívne skratky
+// (mimeType shortcut) v celom zdieľanom disku "1_PROJEKTY" - nič iné (dokumenty, fotky...),
+// čo si Jozef zámerne vyhodil, sa nedotkne.
+function vycistiStareSkratkyVTrashi() {
+  var token = ScriptApp.getOAuthToken();
+  var ids = [];
+  var pageToken = null;
+  do {
+    var url = 'https://www.googleapis.com/drive/v3/files?corpora=drive&driveId=' + PROJECTS_DRIVE_ROOT_ID +
+      '&includeItemsFromAllDrives=true&supportsAllDrives=true&pageSize=1000' +
+      '&q=' + encodeURIComponent("trashed=true and mimeType='application/vnd.google-apps.shortcut'") +
+      '&fields=nextPageToken,files(id,name)' + (pageToken ? '&pageToken=' + pageToken : '');
+    var resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true });
+    var d = JSON.parse(resp.getContentText());
+    if (d.error) { Logger.log('vycistiStareSkratkyVTrashi: chyba - ' + JSON.stringify(d.error)); return; }
+    (d.files || []).forEach(function(f) { ids.push(f.id); });
+    pageToken = d.nextPageToken || null;
+  } while (pageToken);
+
+  Logger.log('vycistiStareSkratkyVTrashi: našlo sa ' + ids.length + ' trashnutých skratiek, mažem natrvalo...');
+  driveApiTrashFiles(ids, token);
+  Logger.log('vycistiStareSkratkyVTrashi: hotovo (' + ids.length + ' zmazaných)');
 }
 
 function formatDatumSk(iso) {
