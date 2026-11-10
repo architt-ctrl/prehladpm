@@ -3167,7 +3167,12 @@ async function migrateTaskSpecialists() {
 function parseCaflouProject(p) {
   const mapped = CAFLOU_STATUS_MAP[p.project_status_name] || { faza:'Štúdia', podfaza:'' };
   const faza    = p.finished ? 'Archív' : (CAFLOU_TYPE_FAZA[p.project_type_name] || mapped.faza);
-  const podfaza = p.finished ? '' : (CAFLOU_TYPE_PODFAZA[p.project_type_name] || mapped.podfaza);
+  // CAFLOU_TYPE_PODFAZA['Interiér'] platí len dokiaľ je projekt v Štúdiu — "Interiér" skupina existuje
+  // len v Štúdia taboch (ORDER vo renderProjects), nie v Projekcii/Inžinieringu. Keď Caflou status
+  // postúpi (napr. 3_PS → faza='Projekcia'), treba použiť bežnú status-based podfázu, inak projekt
+  // zmizne zo zoznamu úplne (bug nahlásený Jozefom 2026-11-10 na 26-019 RD Cupka Kittsee).
+  const podfazaOverride = (p.project_type_name === 'Interiér' && faza !== 'Štúdia') ? null : CAFLOU_TYPE_PODFAZA[p.project_type_name];
+  const podfaza = p.finished ? '' : (podfazaOverride || mapped.podfaza);
   const t = new Date(); t.setHours(0,0,0,0);
   const deadline = p.end_date ? new Date(p.end_date) : null;
   return {
@@ -4647,8 +4652,10 @@ async function saveProjCaflouStatus(cislo, caflou_id, statusVal) {
   } else {
     const mapped = CAFLOU_STATUS_MAP[statusVal]; if (!mapped) return;
     await caflouPatch(caflou_id, { project_status_id: mapped.id, finished: false });
-    p.faza         = CAFLOU_TYPE_FAZA[p.caflou_type] || mapped.faza;
-    p.podfaza      = CAFLOU_TYPE_PODFAZA[p.caflou_type] || mapped.podfaza;
+    p.faza = CAFLOU_TYPE_FAZA[p.caflou_type] || mapped.faza;
+    // rovnaká výjimka ako v parseCaflouProject — "Interiér" podfáza-override platí len v Štúdiu
+    const podfazaOverride = (p.caflou_type === 'Interiér' && p.faza !== 'Štúdia') ? null : CAFLOU_TYPE_PODFAZA[p.caflou_type];
+    p.podfaza      = podfazaOverride || mapped.podfaza;
     p.caflou_status = statusVal;
   }
   showToast('Fáza uložená ✓', 'ok');
