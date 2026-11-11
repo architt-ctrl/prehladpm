@@ -1109,6 +1109,10 @@ function sledujPrilohy() {
   var specialisti = nacitajSpecialistov();
   if (!Object.keys(specialisti).length) { Logger.log('Žiadni profesisti so zadaným emailom v Supabase'); return; }
 
+  // Fallback na kód projektu podľa NÁZVU v predmete (2026-11-11) — vytvorené len raz na celý
+  // beh, nie per mail, pozri vytvorNazvovyIndex.
+  var distinktivneSlova = vytvorNazvovyIndex(nacitajProjektyNazvy());
+
   var labelSpracovane = ziskajAlebaVytvorLabel(LABEL_PRILOHY_SPRACOVANE);
   var labelNeroztriedene = ziskajAlebaVytvorLabel(LABEL_PRILOHY_NEROZTRIEDENE);
   var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
@@ -1133,7 +1137,7 @@ function sledujPrilohy() {
 
       var subject = msg.getSubject() || '';
       var profesia = profesie.length === 1 ? profesie[0] : najdiProfesiuVPredmete(subject, profesie);
-      var cislo = najdiKodProjektuVPredmete(subject);
+      var cislo = najdiKodProjektuVPredmete(subject) || najdiProjektPodlaNazvu(subject, distinktivneSlova);
 
       if (!profesia || !cislo) {
         thread.addLabel(labelNeroztriedene);
@@ -1241,6 +1245,65 @@ function najdiKodProjektuVPredmete(predmet) {
   m = s.match(/(?:^|[^0-9])(\d{2})-(\d{3})(?!\d)/);
   if (m) return m[1] + '-' + m[2];
   return null;
+}
+
+// Fallback na kód projektu podľa NÁZVU v predmete, keď číslo chýba (2026-11-11, Jozef: "často sa
+// stáva, že sa nepoužije číslo len názov" — profesisti píšu raz celý názov, raz len jedno slovo
+// z neho, nedá sa to predvídať). Namiesto hardkódovaného stoplistu všeobecných slov (RD, dom,
+// interiér...) sa pre každý projekt vyberú len "distinktívne" slová z jeho názvu — tie, ktoré sa
+// v CELOM portfóliu vyskytujú v názve práve JEDNÉHO projektu. Všeobecné slová sa tak vylúčia
+// samy (vyskytujú sa vo viacerých názvoch), bez údržby zoznamu pri každom novom projekte.
+function vytvorNazvovyIndex(projekty) {
+  var slovoNaProjekty = {};
+  projekty.forEach(function(p) {
+    var unikatneSlova = {};
+    fazaStripDiakritika(p.nazov).split(/[^a-z0-9]+/).forEach(function(w) {
+      if (w.length >= 4) unikatneSlova[w] = true;
+    });
+    Object.keys(unikatneSlova).forEach(function(w) {
+      (slovoNaProjekty[w] = slovoNaProjekty[w] || {})[p.cislo] = true;
+    });
+  });
+  var distinktivne = {};
+  Object.keys(slovoNaProjekty).forEach(function(w) {
+    var cisla = Object.keys(slovoNaProjekty[w]);
+    if (cisla.length === 1) distinktivne[w] = cisla[0];
+  });
+  return distinktivne;
+}
+
+// Ak predmet obsahuje distinktívne slovo(á) patriace presne JEDNÉMU projektu → zhoda. Ak nič,
+// alebo slová z viacerých rôznych projektov naraz → null (rovnako bezpečné ako doteraz, ide
+// do Neroztriedene namiesto rizika uloženia do nesprávneho projektu).
+function najdiProjektPodlaNazvu(predmet, distinktivneSlova) {
+  var najdeneCisla = {};
+  fazaStripDiakritika(predmet).split(/[^a-z0-9]+/).forEach(function(w) {
+    if (w.length < 4) return;
+    var cislo = distinktivneSlova[w];
+    if (cislo) najdeneCisla[cislo] = true;
+  });
+  var cisla = Object.keys(najdeneCisla);
+  return cisla.length === 1 ? cisla[0] : null;
+}
+
+// Zoznam {cislo, nazov} všetkých aktívnych projektov, vstup pre vytvorNazvovyIndex. Volané raz
+// na beh sledujPrilohy (nie per mail) — rovnaká paginácia ako nacitajProjektyCaflou.
+function nacitajProjektyNazvy() {
+  var out = [];
+  var page = 1;
+  while (true) {
+    var resp = UrlFetchApp.fetch('https://app.caflou.com/api/v1/' + CAFLOU_ACCOUNT_ID + '/projects?per=100&page=' + page, {
+      headers: { 'Authorization': 'Bearer ' + CAFLOU_API_KEY },
+      muteHttpExceptions: true
+    });
+    var d = JSON.parse(resp.getContentText());
+    (d.results || []).forEach(function(p) {
+      if (!p.trash && !p.template && p.order_number && p.name) out.push({ cislo: p.order_number, nazov: p.name });
+    });
+    if (!d.next_page) break;
+    page++;
+  }
+  return out;
 }
 
 function najdiCielovyPriecinokPreProfesiu(root, cislo, profesiaSkratka) {
