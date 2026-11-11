@@ -1286,8 +1286,12 @@ function najdiProjektPodlaNazvu(predmet, distinktivneSlova) {
   return cisla.length === 1 ? cisla[0] : null;
 }
 
-// Zoznam {cislo, nazov} všetkých aktívnych projektov, vstup pre vytvorNazvovyIndex. Volané raz
-// na beh sledujPrilohy (nie per mail) — rovnaká paginácia ako nacitajProjektyCaflou.
+// Zoznam {cislo, nazov} všetkých aktívnych (nearchivovaných) projektov, vstup pre
+// vytvorNazvovyIndex. Volané raz na beh sledujPrilohy (nie per mail) — rovnaká paginácia ako
+// nacitajProjektyCaflou. `!p.finished` — archivované projekty zámerne vynechané (2026-11-11,
+// Jozef: "v archíve nemusí hľadať") — prílohy od profesistov sa týkajú bežiacej práce, nie
+// uzavretých projektov, a archívne názvy by navyše mohli zbytočne "spotrebovať" jedinečnosť
+// slova, ktoré by inak jednoznačne identifikovalo aktívny projekt.
 function nacitajProjektyNazvy() {
   var out = [];
   var page = 1;
@@ -1298,7 +1302,7 @@ function nacitajProjektyNazvy() {
     });
     var d = JSON.parse(resp.getContentText());
     (d.results || []).forEach(function(p) {
-      if (!p.trash && !p.template && p.order_number && p.name) out.push({ cislo: p.order_number, nazov: p.name });
+      if (!p.trash && !p.template && !p.finished && p.order_number && p.name) out.push({ cislo: p.order_number, nazov: p.name });
     });
     if (!d.next_page) break;
     page++;
