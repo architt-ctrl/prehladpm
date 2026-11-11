@@ -321,7 +321,13 @@ function syncFazy() {
       Logger.log('syncFazy: Caflou chyba na stránke ' + page + ' - ' + JSON.stringify(d.error) + ' - KONČÍM BEZ ZMENY (staré skratky ostávajú nedotknuté)');
       return;
     }
-    (d.results || []).forEach(function(p) { if (!p.trash && !p.template) projekty.push(p); });
+    // Vynechať "Interná réžia" (Firma 20XX - réžia) - ich `order_number` je len rok ("2024"...),
+    // cisloNaPrefix ho nechá nezmenené a regex '^2024\b' potom omylom nájde HOCIJAKÝ reálny
+    // projektový priečinok začínajúci daným rokom (napr. "2024-058-Zateplenie-Gymnazium...") -
+    // vznikla tak druhá, zavádzajúca skratka na ten istý cieľ (Jozef nahlásil "robia sa tam kópie"
+    // pri réžii aj gymnáziu v Studia-Architektura, 2026-11-11). Tieto pseudo-projekty nemajú
+    // vlastný priečinok ani skratku nepotrebujú (rovnaké vylúčenie ako vo Financiách v index.html).
+    (d.results || []).forEach(function(p) { if (!p.trash && !p.template && p.project_type_name !== 'Interná réžia') projekty.push(p); });
     if (!d.next_page) break;
     page++;
   }
@@ -410,6 +416,80 @@ function syncFazy() {
 
   Logger.log('syncFazy: vytvorené ' + vytvorene + ', presunuté/aktualizované ' + presunute +
     (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
+}
+
+// JEDNORAZOVÁ čistiaca funkcia (2026-11-11) - spustiť RUČNE raz z editora, nie je to trigger.
+// Jozef nahlásil "réžia firma 2024 a gymnázium v Studia-Architektúra - robia sa tam kópie, tú
+// firmu tam ani nepotrebujeme mať" - diagnostikované naostro priamo cez Drive: dve nezávislé
+// veci naraz.
+// (1) "Firma 20XX - réžia" (Interná réžia, order_number = len rok, napr. "2024") - cisloNaPrefix
+// ho nechá nezmenené, regex v syncFazy '^2024\b' preto omylom použil ako cieľ HOCIJAKÝ reálny
+// projektový priečinok začínajúci daným rokom (konkrétne "2024-058-Zateplenie-Gymnazium
+// Tajovskeho, BB") - vznikla tak druhá, zavádzajúca skratka na ten istý cieľ. Opravené v
+// syncFazy (vylúčenie typu "Interná réžia" z Caflou fetchu, rovnako ako vo Financiách v
+// index.html) - už sa znova nevytvoria, takže existujúce sa dajú rovno natrvalo zmazať, bez
+// výjimky (nie len duplicitné - tieto skratky tam nemajú čo robiť vôbec).
+// (2) Duplicity aktívnych (netrashnutých) skratiek na ten istý cieľ - pred opravou dedup logiky
+// (2026-11-06 13:05, driveApiNajdiVsetkyShortcutyPodlaTarget) `syncFazy` pri zlyhanom mazaní
+// starých skratiek (403, pozri gotchy vyššie) vytváral každú hodinu NOVÚ skratku namiesto
+// aktualizácie existujúcej - za ~1,5 dňa sa tak nahromadilo až ~10 duplicitných aktívnych
+// skratiek na jeden cieľ (potvrdené priamo cez Drive pri diagnostike tohto nahlásenia, napr.
+// práve "24-058 Zateplenie-Gymnazium..."). Z každej skupiny duplicít na ten istý cieľ v tom istom
+// _Fazy podpriečinku sa ponechá jedna (najnovšie upravená), zvyšné sa natrvalo zmažú.
+function vycistiDuplicitneSkratky() {
+  var token = ScriptApp.getOAuthToken();
+  var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
+  var fazyIt = root.getFoldersByName('_Fazy');
+  if (!fazyIt.hasNext()) { Logger.log('vycistiDuplicitneSkratky: _Fazy priečinok neexistuje'); return; }
+  var fazyRoot = fazyIt.next();
+
+  var naZmazanie = [];
+  var reziaPocet = 0;
+  var skupinyDuplicit = 0;
+
+  FAZY_PRIECINKY.forEach(function(priecinokNazov) {
+    var fi = fazyRoot.getFoldersByName(priecinokNazov);
+    if (!fi.hasNext()) return;
+    var folderId = fi.next().getId();
+
+    var subory = [];
+    var pageToken = null;
+    do {
+      var url = 'https://www.googleapis.com/drive/v3/files?corpora=drive&driveId=' + PROJECTS_DRIVE_ROOT_ID +
+        '&includeItemsFromAllDrives=true&supportsAllDrives=true&pageSize=1000' +
+        '&q=' + encodeURIComponent("'" + folderId + "' in parents and mimeType='application/vnd.google-apps.shortcut' and trashed=false") +
+        '&fields=nextPageToken,files(id,name,modifiedTime,shortcutDetails)' + (pageToken ? '&pageToken=' + pageToken : '');
+      var resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true });
+      var d = JSON.parse(resp.getContentText());
+      if (d.error) { Logger.log('vycistiDuplicitneSkratky: chyba pri liste ' + priecinokNazov + ' - ' + JSON.stringify(d.error)); return; }
+      subory = subory.concat(d.files || []);
+      pageToken = d.nextPageToken || null;
+    } while (pageToken);
+
+    var rezia = subory.filter(function(f) { return /r[ée]žia|rezia/i.test(f.name); });
+    rezia.forEach(function(f) { naZmazanie.push(f.id); reziaPocet++; });
+    var zvysne = subory.filter(function(f) { return rezia.indexOf(f) === -1; });
+
+    var podlaCiela = {};
+    zvysne.forEach(function(f) {
+      var tid = f.shortcutDetails && f.shortcutDetails.targetId;
+      if (!tid) return;
+      (podlaCiela[tid] = podlaCiela[tid] || []).push(f);
+    });
+    Object.keys(podlaCiela).forEach(function(tid) {
+      var skupina = podlaCiela[tid];
+      if (skupina.length < 2) return;
+      skupina.sort(function(a, b) { return (b.modifiedTime || '').localeCompare(a.modifiedTime || ''); });
+      skupinyDuplicit++;
+      for (var i = 1; i < skupina.length; i++) naZmazanie.push(skupina[i].id);
+    });
+  });
+
+  if (!naZmazanie.length) { Logger.log('vycistiDuplicitneSkratky: nič na zmazanie'); return; }
+  var vysledok = driveApiTrashFiles(naZmazanie, token);
+  Logger.log('vycistiDuplicitneSkratky: réžia zmazaných ' + reziaPocet + ', skupín duplicít ' + skupinyDuplicit +
+    ', spolu na zmazanie ' + naZmazanie.length + ', skutočne zmazaných ' + vysledok.zmazane +
+    (vysledok.prvaChyba ? ', prvá chyba: ' + vysledok.prvaChyba : ''));
 }
 
 // JEDNORAZOVÁ čistiaca funkcia (2026-11-05) - spustiť RUČNE raz z editora, nie je to trigger.
