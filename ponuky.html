@@ -258,6 +258,11 @@
     <div class="frow"><label>Telefón</label><input class="finput" id="mSPhone" placeholder="+421 900 000 000"></div>
     <div class="frow"><label>Reg. číslo oprávnenia</label><input class="finput" id="mSReg" placeholder="XXXX AA"></div>
   </div>
+  <div class="frow">
+    <label>Ďalšie e-maily (ďalší pracovníci tej istej firmy, čiarkou oddelené)</label>
+    <textarea class="finput" id="mSExtraEmails" rows="2" placeholder="peter@firma.sk, martin@firma.sk"></textarea>
+    <div style="font-size:11px;color:var(--text3);margin-top:2px">Maily od týchto adries sa budú triediť rovnako ako od hlavného e-mailu vyššie (rovnaká profesia).</div>
+  </div>
   <div class="frow" style="position:relative">
     <label>Caflou firma (pre výdavky)</label>
     <input class="finput" id="mSCaflouSearch" placeholder="Hľadaj firmu v Caflou..." autocomplete="off"
@@ -309,6 +314,7 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY);
 
 const cfg = JSON.parse(localStorage.getItem('pmCfg3') || '{}');
 let requests = [], specialists = [], invitations = [], quotes = [], contacts = [], caflouProjects = [];
+let specialistExtraEmails = {}; // {specialist_id: [email,...]} — ďalší pracovníci tej istej firmy, pozri CLAUDE.md "sledujPrilohy"
 let editReqId = null, editSpecId = null, inviteReqId = null;
 let _loading = false;
 
@@ -395,18 +401,23 @@ async function loadAll() {
   const t0 = performance.now();
   try {
     const tout = new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout — skontrolujte pripojenie')), 30000));
-    const [rRes, sRes, iRes, qRes] = await Promise.race([
+    const [rRes, sRes, iRes, qRes, eRes] = await Promise.race([
       Promise.all([
         sb.from('requests').select('*').order('created_at', { ascending: false }),
         sb.from('specialists').select('id,name,company,email,profession,phone,portal_token,notes,reg,caflou_company_id').order('name'),
         sb.from('invitations').select('id,request_id,specialist_id,token,status'),
         sb.from('quotes').select('id,invitation_id,prices,notes,submitted_at,deadline'),
+        sb.from('specialist_emails').select('specialist_id,email'),
       ]),
       tout,
     ]);
     console.log(`loadAll queries: ${Math.round(performance.now()-t0)}ms`);
     requests = rRes.data || []; specialists = sRes.data || [];
     invitations = iRes.data || []; quotes = qRes.data || [];
+    specialistExtraEmails = {};
+    (eRes.data || []).forEach(r => {
+      (specialistExtraEmails[r.specialist_id] = specialistExtraEmails[r.specialist_id] || []).push(r.email);
+    });
     renderRequests(); renderSpecialists();
     console.log(`loadAll render: ${Math.round(performance.now()-t0)}ms`);
   } catch(e) {
@@ -1294,6 +1305,7 @@ function openSpecModal(id) {
   document.getElementById('mSPhone').value   = s?.phone      || '';
   document.getElementById('mSReg').value     = s?.reg        || '';
   document.getElementById('mSNotes').value   = s?.notes      || '';
+  document.getElementById('mSExtraEmails').value = (s?.id && specialistExtraEmails[s.id] || []).join(', ');
   document.getElementById('mSMsg').innerHTML = '';
   document.getElementById('mSCaflouCompanyId').value = s?.caflou_company_id || '';
   document.getElementById('mSCaflouSearch').value = '';
@@ -1351,15 +1363,43 @@ async function saveSpec() {
   };
   const btn = document.querySelector('#modalSpec .btn-p');
   if (btn) { btn.disabled = true; btn.textContent = 'Ukladám...'; }
-  const { error } = editSpecId
-    ? await sb.from('specialists').update(data).eq('id', editSpecId)
-    : await sb.from('specialists').insert(data);
+  let specId = editSpecId, error;
+  if (editSpecId) {
+    ({ error } = await sb.from('specialists').update(data).eq('id', editSpecId));
+  } else {
+    const { data: inserted, error: insErr } = await sb.from('specialists').insert(data).select('id').single();
+    error = insErr; specId = inserted?.id;
+  }
+  if (!error && specId) {
+    const emailsErr = await saveSpecialistExtraEmails(specId, document.getElementById('mSExtraEmails').value);
+    if (emailsErr) error = { message: 'Profesista uložený, ale ďalšie e-maily zlyhali: ' + emailsErr };
+  }
   if (btn) { btn.disabled = false; btn.textContent = 'Uložiť'; }
   if (error) { document.getElementById('mSMsg').innerHTML = `<div class="alert alert-err">${error.message}</div>`; return; }
   closeModal('modalSpec');
   showToast(editSpecId ? 'Profesista upravený' : 'Profesista pridaný', 'ok');
   _loading = false;
   await loadAll();
+}
+
+// Diffne textarea (čiarkou oddelené e-maily) proti specialistExtraEmails cache, uloží len zmenu.
+// `specialist_emails.email` má unique constraint — ak adresu už má iný profesista, insert zlyhá
+// s čitateľnou chybou (duplicate key), nie tichým prepísaním.
+async function saveSpecialistExtraEmails(specialistId, rawText) {
+  const wanted = rawText.split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  const existing = (specialistExtraEmails[specialistId] || []).map(e => e.toLowerCase());
+  const toAdd = wanted.filter(e => !existing.includes(e));
+  const toRemove = existing.filter(e => !wanted.includes(e));
+  if (toRemove.length) {
+    const { error } = await sb.from('specialist_emails').delete().eq('specialist_id', specialistId).in('email', toRemove);
+    if (error) return error.message;
+  }
+  if (toAdd.length) {
+    const { error } = await sb.from('specialist_emails').insert(toAdd.map(email => ({ specialist_id: specialistId, email })));
+    if (error) return error.message;
+  }
+  specialistExtraEmails[specialistId] = wanted;
+  return null;
 }
 
 // ── PORTAL TOKEN ─────────────────────────────────────────────────────────────

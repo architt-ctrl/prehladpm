@@ -167,7 +167,16 @@ function chunkArray(arr, size) {
 // začalo zlyhávať so 403 Forbidden. Keďže tieto priečinky slúžia VÝHRADNE na vygenerované
 // skratky (nič iné sem nepatrí), trvalé mazanie je tu bezpečné - skratky sa aj tak každú hodinu
 // vytvárajú nanovo.
+// Gotcha (2026-11-06, Jozef nahlásil "stale ked to spustim hlasi 37774 trashnutych - stale rovnake
+// cislo"): táto funkcia donedávna vôbec nekontrolovala odpovede z `fetchAll` - ak DELETE na niektorý
+// súbor zlyhal (napr. 403), kód o tom nevedel a volajúci (`vycistiStareSkratkyVTrashi`) si napriek
+// tomu pripočítal "zmazané", takže log hlásil progres, hoci v Koši sa reálne nič neubralo. Teraz sa
+// odpovede kontrolujú a vracia sa počet skutočne zmazaných + ukážka chyby pri zlyhaní, aby bolo vidno
+// skutočnú príčinu (podozrenie: trvalé zmazanie položky zo zdieľaného disku môže vyžadovať rolu
+// "Manager", nie len "Content Manager" - tá môže presunúť do Koša, ale nie natrvalo vymazať).
 function driveApiTrashFiles(fileIds, token) {
+  var zmazane = 0;
+  var prvaChyba = null;
   chunkArray(fileIds, 50).forEach(function(chunk) {
     var requests = chunk.map(function(id) {
       return {
@@ -177,8 +186,17 @@ function driveApiTrashFiles(fileIds, token) {
         muteHttpExceptions: true
       };
     });
-    UrlFetchApp.fetchAll(requests);
+    var responses = UrlFetchApp.fetchAll(requests);
+    responses.forEach(function(r) {
+      var code = r.getResponseCode();
+      if (code === 204 || code === 200) {
+        zmazane++;
+      } else if (!prvaChyba) {
+        prvaChyba = code + ': ' + r.getContentText();
+      }
+    });
   });
+  return { zmazane: zmazane, celkom: fileIds.length, prvaChyba: prvaChyba };
 }
 
 // Paralelné vytvorenie Drive skratiek - items: [{name, parentFolderId, targetFolderId}]
@@ -205,13 +223,79 @@ function driveApiVytvorShortcuty(items, token) {
   return vysledky;
 }
 
+// Gotcha (2026-11-06, Jozef nahlásil 403 "Forbidden"/404 "File not found" pri pokuse natrvalo
+// vymazať staré skratky - potvrdené naostro aj ručne v Drive UI, že ide o skutočné obmedzenie
+// práv na zdieľanom disku, nie o bug v kóde): rola na disku umožňuje presun/premenovanie/
+// odtrashnutie existujúcej položky (PATCH), ale NIE jej trvalé vymazanie. Google Drive má limit
+// na POČET SKRATIEK SMERUJÚCICH NA JEDEN CIEĽ (projektový priečinok) a trashnuté položky sa doň
+// STÁLE počítajú - takže ani presun samotného _Fazy priečinka nabok by nepomohol, limit je väzaný
+// na cieľ, nie na to, kde skratka leží. Namiesto mazania a znova-vytvárania sa teda pre každý
+// cieľ najprv vyhľadá, či už naň NEJAKÁ skratka ukazuje (aj trashnutá) - ak áno, tá sa len
+// PRESUNIE/PREMENUJE/ODTRASHNE (čistý update, nie create ani delete), takže sa k danému cieľu
+// už nikdy nepridáva ďalšia - limit sa tak už nikdy znova nenaplní a staré duplicity v Koši
+// jednoducho ostanú tam, kde sú (ignorované, neprekážajú).
+// Vráti mapu targetId -> {id, name, trashed, parentId} (len jedna skratka na cieľ - ak existuje
+// netrashnutá, má prioritu pred trashnutou).
+function driveApiNajdiVsetkyShortcutyPodlaTarget(driveId, token) {
+  var mapa = {};
+  [false, true].forEach(function(trashed) {
+    var pageToken = null;
+    do {
+      var url = 'https://www.googleapis.com/drive/v3/files?corpora=drive&driveId=' + driveId +
+        '&includeItemsFromAllDrives=true&supportsAllDrives=true&pageSize=1000' +
+        '&q=' + encodeURIComponent("mimeType='application/vnd.google-apps.shortcut' and trashed=" + trashed) +
+        '&fields=nextPageToken,files(id,name,trashed,parents,shortcutDetails)' + (pageToken ? '&pageToken=' + pageToken : '');
+      var resp = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true });
+      var d = JSON.parse(resp.getContentText());
+      if (d.error) { Logger.log('driveApiNajdiVsetkyShortcutyPodlaTarget: chyba - ' + JSON.stringify(d.error)); return; }
+      (d.files || []).forEach(function(f) {
+        var tid = f.shortcutDetails && f.shortcutDetails.targetId;
+        if (!tid) return;
+        if (!mapa[tid]) {
+          mapa[tid] = { id: f.id, name: f.name, trashed: !!f.trashed, parentId: (f.parents || [])[0] };
+        }
+      });
+      pageToken = d.nextPageToken || null;
+    } while (pageToken);
+  });
+  return mapa;
+}
+
+// Paralelné presunutie/premenovanie/odtrashnutie existujúcich skratiek (PATCH, nikdy delete ani
+// create) - items: [{id, staryParentId, novyParentId, novyNazov, bolTrashnuty}]
+function driveApiAktualizujShortcuty(items, token) {
+  var vysledky = [];
+  chunkArray(items, 50).forEach(function(chunk) {
+    var requests = chunk.map(function(it) {
+      var params = '?supportsAllDrives=true&fields=id';
+      if (it.staryParentId && it.novyParentId && it.staryParentId !== it.novyParentId) {
+        params += '&addParents=' + it.novyParentId + '&removeParents=' + it.staryParentId;
+      }
+      var body = { name: it.novyNazov };
+      if (it.bolTrashnuty) body.trashed = false;
+      return {
+        url: 'https://www.googleapis.com/drive/v3/files/' + it.id + params,
+        method: 'patch',
+        contentType: 'application/json',
+        headers: { Authorization: 'Bearer ' + token },
+        payload: JSON.stringify(body),
+        muteHttpExceptions: true
+      };
+    });
+    UrlFetchApp.fetchAll(requests).forEach(function(r) {
+      vysledky.push({ ok: r.getResponseCode() === 200, code: r.getResponseCode(), body: r.getContentText() });
+    });
+  });
+  return vysledky;
+}
+
 function syncFazy() {
   var root = DriveApp.getFolderById(PROJECTS_DRIVE_ROOT_ID);
   var fazyRoot = ziskajAlebaVytvorPodpriecinok(root, '_Fazy');
   var token = ScriptApp.getOAuthToken();
 
-  // Len get-or-create cieľových priečinkov (nedeštruktívne) - mazanie starých skratiek sa
-  // presunulo až na koniec funkcie, pozri gotcha nižšie.
+  // Len get-or-create cieľových priečinkov (nedeštruktívne) - funkcia už vôbec nič nemaže,
+  // pozri gotcha pri driveApiNajdiVsetkyShortcutyPodlaTarget vyššie.
   var cielPriecinky = {};
   FAZY_PRIECINKY.forEach(function(name) {
     cielPriecinky[name] = ziskajAlebaVytvorPodpriecinok(fazyRoot, name);
@@ -280,34 +364,52 @@ function syncFazy() {
     }
     if (!folder) { nenajdene.push(cislo + ' (priečinok nenájdený)'); return; }
 
-    naVytvorenie.push({ name: cislo + ' ' + p.name, parentFolderId: cielPriecinky[fazaDir].getId(), targetFolderId: folder.getId() });
+    naVytvorenie.push({ cislo: cislo, name: cislo + ' ' + p.name, fazaDir: fazaDir, parentFolderId: cielPriecinky[fazaDir].getId(), targetFolderId: folder.getId() });
   });
 
-  // Mazanie starých skratiek AŽ TERAZ (pozri gotcha pri Caflou fetchi vyššie) - zoznam nových
-  // skratiek je už kompletne zostavený, takže okno medzi zmazaním a vytvorením nových je
-  // minimálne a nezávisí od toho, či Caflou fetch/mapovanie prebehlo bez problémov.
-  var naZmazanie = [];
-  FAZY_PRIECINKY.forEach(function(name) {
-    var fi = cielPriecinky[name].getFiles();
-    while (fi.hasNext()) naZmazanie.push(fi.next().getId());
-  });
-  // Zmaž VŠETKY staré súbory (nielen Drive-natívne skratky) - tieto priečinky slúžia výhradne na
-  // vygenerované skratky, takže sem nič iné nepatrí. Dôležité aj pre staré .lnk súbory
-  // (mimeType application/x-ms-shortcut) z pôvodného sync-fazy.ps1, ktoré by inak ostali
-  // navždy vedľa novej Drive skratky pre ten istý projekt (overené naostro 2026-10-14 -
-  // presne to spôsobilo "všetko 2x").
-  driveApiTrashFiles(naZmazanie, token);
+  // Gotcha (2026-11-06): pôvodne sa tu VŠETKY staré skratky zmazali a všetky nové vytvorili od
+  // nuly - pri zlyhaní trvalého mazania (nedostatočná rola na disku, pozri gotcha pri
+  // driveApiNajdiVsetkyShortcutyPodlaTarget vyššie) to viedlo k 403 "príliš veľa skratiek na
+  // jeden cieľ". Teraz sa pre každý cieľ najprv zistí, či naň už nejaká skratka ukazuje (aj
+  // trashnutá) - ak áno, len sa presunie/premenuje/odtrashne (PATCH); CREATE sa použije len pre
+  // ciele, ktoré ešte nikdy žiadnu skratku nemali. Mazanie sa už nevyužíva vôbec.
+  var mapaExistujucich = driveApiNajdiVsetkyShortcutyPodlaTarget(PROJECTS_DRIVE_ROOT_ID, token);
 
-  // Vytvor všetky skratky naraz paralelne (rovnaký dôvod ako mazanie vyššie - pri ~desiatkach
-  // sekvenčných POST volaní to bolo citeľne pomalé, Jozef nahlásil "dosť dlho to trvá")
-  var vysledky = driveApiVytvorShortcuty(naVytvorenie, token);
+  var naVytvorenieReal = [], naAktualizaciu = [];
+  naVytvorenie.forEach(function(it) {
+    var ex = mapaExistujucich[it.targetFolderId];
+    if (!ex) {
+      naVytvorenieReal.push(it);
+      return;
+    }
+    if (!ex.trashed && ex.parentId === it.parentFolderId && ex.name === it.name) return; // už v poriadku
+    naAktualizaciu.push({
+      id: ex.id,
+      staryParentId: ex.parentId,
+      novyParentId: it.parentFolderId,
+      novyNazov: it.name,
+      bolTrashnuty: ex.trashed
+    });
+  });
+
+  // Vytvor/aktualizuj všetky skratky naraz paralelne (rovnaký dôvod ako predtým pri mazaní -
+  // pri desiatkach sekvenčných volaní to bolo citeľne pomalé, Jozef nahlásil "dosť dlho to trvá")
+  var vysledky = driveApiVytvorShortcuty(naVytvorenieReal, token);
   var vytvorene = 0;
   vysledky.forEach(function(v, i) {
     if (v && v.id) vytvorene++;
-    else nenajdene.push(naVytvorenie[i].name + ' (shortcut zlyhal: ' + JSON.stringify(v).slice(0, 150) + ')');
+    else nenajdene.push(naVytvorenieReal[i].name + ' (shortcut zlyhal: ' + JSON.stringify(v).slice(0, 150) + ')');
   });
 
-  Logger.log('syncFazy: vytvorené ' + vytvorene + ' skratiek' + (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
+  var aktualizacie = driveApiAktualizujShortcuty(naAktualizaciu, token);
+  var presunute = 0;
+  aktualizacie.forEach(function(r, i) {
+    if (r.ok) presunute++;
+    else nenajdene.push(naAktualizaciu[i].novyNazov + ' (presun/update zlyhal: ' + r.code + ' ' + r.body.slice(0, 100) + ')');
+  });
+
+  Logger.log('syncFazy: vytvorené ' + vytvorene + ', presunuté/aktualizované ' + presunute +
+    (nenajdene.length ? ', chyby/preskočené: ' + nenajdene.join('; ') : ''));
 }
 
 // JEDNORAZOVÁ čistiaca funkcia (2026-11-05) - spustiť RUČNE raz z editora, nie je to trigger.
@@ -319,10 +421,33 @@ function syncFazy() {
 // nevracia, takže ich nikdy "nevidí" na zmazanie. Hľadá LEN trashnuté Drive-natívne skratky
 // (mimeType shortcut) v celom zdieľanom disku "1_PROJEKTY" - nič iné (dokumenty, fotky...),
 // čo si Jozef zámerne vyhodil, sa nedotkne.
+// Gotcha (2026-11-06, Jozef nahlásil "cleanup som niekoľko krát spustil, nezabralo"): pôvodná
+// verzia (bez časového limitu) zlyhávala ticho na objeme backlogu - priamou kontrolou cez Drive
+// zistené, že JEDEN projekt má stovky trashnutých skratiek (hodinovo od 2026-10-14, keď sa
+// syncFazy trigger prvýkrát nasadil, až do cca 2026-11-05, keď zabrala oprava na trvalé mazanie) -
+// pri ~90 projektoch to je rádovo desaťtisíce položiek v Koši naraz (sedí to s číslom "37700",
+// ktoré Jozef videl priamo v Drive UI Koši). Mazanie desaťtisícov súborov (aj po 50 naraz cez
+// fetchAll) môže ľahko prekročiť Apps Script time limit (6 min na free, 30 min na Workspace účte)
+// uprostred cyklu - vtedy Apps Script exekúciu tvrdo zabije BEZ chyby a bez posledného Logger.log
+// riadku, takže to vyzeralo ako "nič sa nestalo", hoci časť sa reálne zmazala.
+//
+// Samo-reťazenie (2026-11-06, Jozef: "nedá sa to jednoduchšie" - opakované ručné spúšťanie 5-15×
+// bolo únavné): funkcia má 4.5-min časový rozpočet a keď ho vyčerpá skôr, než je Kôš celkom čistý,
+// SAMA SI naplánuje jednorazový time-driven trigger o 1 minútu neskôr, ktorý ju znova zavolá -
+// Jozef ju teda spustí RAZ z editora a ďalšie kolá bežia samé na pozadí, kým sa nedokončí (vtedy
+// trigger zmaže a už sa nereťazí ďalej). Na začiatku vždy najprv zmaže prípadný predošlý
+// vlastný trigger (aby pri ručnom opakovanom spustení nevznikli dva súbežné reťazce).
 function vycistiStareSkratkyVTrashi() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'vycistiStareSkratkyVTrashi') ScriptApp.deleteTrigger(t);
+  });
+
+  var START = Date.now();
+  var MAX_MS = 4.5 * 60 * 1000;
   var token = ScriptApp.getOAuthToken();
   var ids = [];
   var pageToken = null;
+  var zoznamKompletny = true;
   do {
     var url = 'https://www.googleapis.com/drive/v3/files?corpora=drive&driveId=' + PROJECTS_DRIVE_ROOT_ID +
       '&includeItemsFromAllDrives=true&supportsAllDrives=true&pageSize=1000' +
@@ -333,11 +458,48 @@ function vycistiStareSkratkyVTrashi() {
     if (d.error) { Logger.log('vycistiStareSkratkyVTrashi: chyba - ' + JSON.stringify(d.error)); return; }
     (d.files || []).forEach(function(f) { ids.push(f.id); });
     pageToken = d.nextPageToken || null;
+    if (pageToken && (Date.now() - START) > MAX_MS) { zoznamKompletny = false; break; }
   } while (pageToken);
 
-  Logger.log('vycistiStareSkratkyVTrashi: našlo sa ' + ids.length + ' trashnutých skratiek, mažem natrvalo...');
-  driveApiTrashFiles(ids, token);
-  Logger.log('vycistiStareSkratkyVTrashi: hotovo (' + ids.length + ' zmazaných)');
+  Logger.log('vycistiStareSkratkyVTrashi: našlo sa ' + ids.length + ' trashnutých skratiek' +
+    (zoznamKompletny ? '' : ' (zoznam NEKOMPLETNÝ - zastavené časovým limitom pri vypisovaní, v Koši je ich ešte viac)') +
+    ', mažem natrvalo...');
+
+  var zmazane = 0;
+  var pokusy = 0;
+  var prvaChyba = null;
+  var prerusene = false;
+  for (var i = 0; i < ids.length; i += 50) {
+    if ((Date.now() - START) > MAX_MS) { prerusene = true; break; }
+    var chunk = ids.slice(i, i + 50);
+    var vysledok = driveApiTrashFiles(chunk, token);
+    zmazane += vysledok.zmazane;
+    pokusy += vysledok.celkom;
+    if (!prvaChyba && vysledok.prvaChyba) prvaChyba = vysledok.prvaChyba;
+    if (pokusy % 2000 < 50) Logger.log('vycistiStareSkratkyVTrashi: priebežne (pokus ' + pokusy + ', reálne zmazaných ' + zmazane + ')...');
+  }
+
+  // Gotcha (2026-11-06): ak sa NIČ reálne nezmazalo (zmazane===0) aj keď sme skúsili, nemá zmysel sa
+  // ďalej reťaziť do nekonečna - to by len ticho opakovalo tú istú zlyhávajúcu akciu navždy. Zastaví sa
+  // a nahlási konkrétnu chybu, aby bolo vidno skutočnú príčinu (napr. nedostatočná rola na zdieľanom disku).
+  if (pokusy > 0 && zmazane === 0) {
+    Logger.log('vycistiStareSkratkyVTrashi: ZASTAVENÉ - skúsil som zmazať ' + pokusy + ', ale ANI JEDEN sa reálne nezmazal. ' +
+      'Prvá chyba z Drive API: ' + prvaChyba + '. Pravdepodobná príčina: trvalé mazanie zo zdieľaného disku môže vyžadovať ' +
+      'rolu "Manager" (nie len "Content Manager") - over svoju rolu na disku "1_PROJEKTY" (Spravovať členov).');
+    return;
+  }
+
+  var hotovo = zoznamKompletny && !prerusene;
+  if (hotovo) {
+    Logger.log('vycistiStareSkratkyVTrashi: HOTOVO, Kôš je čistý (' + zmazane + ' zmazaných v tomto behu). Žiadny ďalší beh sa neplánuje.');
+    return;
+  }
+
+  ScriptApp.newTrigger('vycistiStareSkratkyVTrashi').timeBased().after(60 * 1000).create();
+  Logger.log('vycistiStareSkratkyVTrashi: zmazaných ' + zmazane + ' z ' + pokusy + ' pokusov (nájdených celkom ' + ids.length + ')' +
+    (zoznamKompletny ? '' : ' (zoznam bol neúplný)') +
+    (prvaChyba ? ' [POZOR, niektoré zlyhali, prvá chyba: ' + prvaChyba + ']' : '') +
+    ' - ešte nie je hotovo, ďalšie kolo sa spustí samo o 1 minútu, nič nemusíš robiť.');
 }
 
 function formatDatumSk(iso) {
@@ -1018,19 +1180,37 @@ function jePrilohaRelevantna(att) {
   return true;
 }
 
+// Mapa e-mail → zoznam profesií. Primárne z specialists.email, doplnené o specialist_emails
+// (ďalší pracovníci tej istej firmy/profesistu, pozri "ponuky.html" modal "Ďalšie e-maily") —
+// každá ďalšia adresa zdedí profesiu svojho specialistu (id join). Chýbajúca tabuľka
+// specialist_emails (pred SQL migráciou) sa tichou vráti [] a nič nedoplní.
 function nacitajSpecialistov() {
-  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/specialists?select=email,profession&email=neq.', {
+  var resp = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/specialists?select=id,email,profession&email=neq.', {
     headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY },
     muteHttpExceptions: true
   });
   if (resp.getResponseCode() >= 300) { Logger.log('Chyba načítania specialists: ' + resp.getContentText()); return {}; }
   var rows = JSON.parse(resp.getContentText());
   var map = {};
+  var profesieById = {};
   rows.forEach(function(r) {
-    if (!r.email || !r.profession) return;
+    if (!r.profession) return;
     var profesie = r.profession.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
-    if (profesie.length) map[String(r.email).toLowerCase()] = profesie;
+    if (!profesie.length) return;
+    profesieById[r.id] = profesie;
+    if (r.email) map[String(r.email).toLowerCase()] = profesie;
   });
+
+  var respExtra = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/specialist_emails?select=specialist_id,email', {
+    headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY },
+    muteHttpExceptions: true
+  });
+  if (respExtra.getResponseCode() < 300) {
+    JSON.parse(respExtra.getContentText()).forEach(function(r) {
+      var profesie = profesieById[r.specialist_id];
+      if (r.email && profesie) map[String(r.email).toLowerCase()] = profesie;
+    });
+  }
   return map;
 }
 
